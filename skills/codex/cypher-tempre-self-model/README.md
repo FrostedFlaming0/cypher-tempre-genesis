@@ -23,4 +23,17 @@ python3 timechain.py init --name Codex
 python3 selftest.py
 ```
 
+Or ask Codex to install it from the repository source ZIP:
+
+```text
+Install the Codex skill from this repository:
+
+https://github.com/cyberphysicsai/cyphertempre/archive/refs/heads/main.zip
+
+Use only this folder from the ZIP:
+skills/codex/cypher-tempre-self-model
+
+Copy that folder into my Codex skills directory as cypher-tempre-self-model, then run python3 selftest.py inside it to verify the install.
+```
+
 See `SKILL.md` for the full per-turn protocol.
