@@ -70,9 +70,14 @@ def _strings(obj):
 def block_text(ring) -> str:
     # Score/label on the block's DISTINCTIVE content, not its labels or the rolling
     # task state (objective + findings repeat across continuum blocks and would
-    # swamp the signal — that boilerplate must not pollute relevance).
-    payload = {k: v for k, v in ring.get("payload", {}).items()
-               if k not in ("labels", "state", "poq_verdict")}
+    # swamp the signal — that boilerplate must not pollute relevance). For
+    # cartographic continuum blocks, source content is the text surface; path and
+    # provenance metadata are scored separately by the retrieval cartography.
+    payload = ring.get("payload", {})
+    data = payload.get("data")
+    if isinstance(data, dict) and "content" in data:
+        return str(data.get("content") or "")
+    payload = {k: v for k, v in payload.items() if k not in ("labels", "state", "poq_verdict")}
     return " ".join(_strings(payload))
 
 
@@ -88,6 +93,22 @@ def entities(text, cap=12):
 
 def keywords(text, k=10):
     return [w for w, _ in Counter(tokens(text)).most_common(k)]
+
+
+def excerpt_text(text, query="", words=60):
+    parts = text.split()
+    if not parts:
+        return ""
+    q_terms = sorted({t for t in tokens(query or "") if len(t) > 2}, key=lambda t: (-len(t), t))
+    start = 0
+    if q_terms:
+        for term in q_terms:
+            for i, part in enumerate(parts):
+                normalized = re.sub(r"[^A-Za-z0-9_]+", "", part).lower()
+                if normalized == term or (len(term) >= 8 and term in normalized):
+                    start = max(0, i - 8)
+                    return " ".join(parts[start:start + words])
+    return " ".join(parts[start:start + words])
 
 
 def normalize_path(value):
@@ -126,6 +147,7 @@ def ring_location(ring):
         "language": data.get("language"),
         "git_commit": data.get("git_commit"),
         "content_hash": data.get("content_hash"),
+        "file_content_hash": data.get("file_content_hash"),
     }
 
 
@@ -180,9 +202,9 @@ def path_proximity(ring, filters, hints):
     return max(common_prefix_score(rel, p) for p in candidates)
 
 
-def brief_block(ring, score=None, lab=None, words=60):
+def brief_block(ring, score=None, lab=None, words=60, query=""):
     lab = lab or ring.get("payload", {}).get("labels") or {}
-    excerpt = " ".join(block_text(ring).split()[:words])
+    excerpt = excerpt_text(block_text(ring), query=query, words=words)
     out = {
         "index": ring["index"],
         "type": ring["ring_type"],
@@ -264,8 +286,14 @@ class Recall:
                 content = 9.0 * _cos(qv, bvec)
             else:                                     #  (3) lexical fallback (literal overlap only)
                 bK, bE = set(lab.get("keywords", [])), set(lab.get("entities", []))
-                btok = (bK | bE) if r.get("payload", {}).get("labels") else set(tokens(block_text(r)))
-                content = 5.0 * jaccard(qE, bE) + 3.0 * jaccard(qK, bK) + 4.0 * jaccard(qtok, btok)
+                btok = set(tokens(block_text(r)))
+                label_tokens = (bK | bE) if r.get("payload", {}).get("labels") else btok
+                content = (
+                    5.0 * jaccard(qE, bE)
+                    + 3.0 * jaccard(qK, bK)
+                    + 4.0 * jaccard(qtok, label_tokens)
+                    + 3.0 * jaccard(qtok, btok)
+                )
             if content <= 0.0:                        # no relatedness -> skip (prevents bloat)
                 continue
             bS = {s["id"] for s in lab.get("senses", [])}
@@ -322,11 +350,11 @@ class Recall:
         for score, r, lab, parts in scored:
             if len(chosen) >= appetite or score < threshold:
                 break
-            excerpt = " ".join(block_text(r).split()[:60])
+            excerpt = excerpt_text(block_text(r), query=query, words=60)
             cost = approx_tokens(excerpt)
             if used + cost > budget_tokens:
                 break
-            block = brief_block(r, score=score, lab=lab)
+            block = brief_block(r, score=score, lab=lab, query=query)
             block["score_parts"] = parts
             block["neighbors"] = []
             chosen.append(block)
@@ -355,11 +383,11 @@ class Recall:
                 for nr in sorted(neighbor_rings, key=lambda x: x["index"]):
                     if nr["index"] in chosen_indices:
                         continue
-                    excerpt = " ".join(block_text(nr).split()[:60])
+                    excerpt = excerpt_text(block_text(nr), query=query, words=60)
                     cost = approx_tokens(excerpt)
                     if used + cost > budget_tokens:
                         break
-                    block["neighbors"].append(brief_block(nr, words=45))
+                    block["neighbors"].append(brief_block(nr, words=45, query=query))
                     used += cost
         return {"query_labels": q, "dissonance": dissonance, "appetite": appetite,
                 "threshold": round(threshold, 2), "considered": len(scored),

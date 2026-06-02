@@ -73,6 +73,8 @@ def main():
         check("continuum: stores line range", wd.get("line_start") == 1 and wd.get("line_end") >= wd.get("line_start"))
         check("continuum: stores path metadata", wd.get("top_dir") == "src" and wd.get("extension") == ".py" and wd.get("language") == "python")
         check("continuum: stores git/hash metadata", "git_commit" in wd and len(wd.get("content_hash", "")) == 64)
+        check("continuum: separates chunk and file hashes",
+              len(wd.get("file_content_hash", "")) == 64 and wd.get("content_hash") != wd.get("file_content_hash"))
 
         # 5. Recall — self-label + retrieve (lexical and embedding)
         rec = recall.Recall(root, registry_root=SKILL)
@@ -83,6 +85,8 @@ def main():
         carto = rec.retrieve("wallet alpha", path="src/wallet/main.py", max_blocks=1, neighbors=1)
         check("recall: path filter returns matching path",
               carto["blocks"] and carto["blocks"][0]["location"]["relative_path"] == "src/wallet/main.py")
+        check("recall: excerpt is source text not metadata",
+              carto["blocks"] and carto["blocks"][0]["excerpt"].startswith("wallet alpha"))
         check("recall: returns neighboring chunks around a hit",
               bool(carto["blocks"][0].get("neighbors")))
 

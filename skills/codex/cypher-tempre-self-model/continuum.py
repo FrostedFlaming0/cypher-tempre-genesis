@@ -148,7 +148,6 @@ def file_metadata(base_path: Path, file_path: Path, file_index: int, content: st
         "extension": ext,
         "language": language_for_extension(ext),
         "git_commit": git_commit,
-        "content_hash": h,
         "file_content_hash": h,
     }
 
@@ -208,6 +207,7 @@ class Continuum:
         sealed = []
         for i, chunk in enumerate(chunks):
             ch = chunk["content"]
+            file_content_hash = metadata.get("file_content_hash") or metadata.get("content_hash")
             st = json.loads(json.dumps(st))   # deep copy the prior state
             last = (i == len(chunks) - 1)
             st["cursor"] = {"item_index": st["cursor"]["item_index"] + (1 if i == 0 else 0),
@@ -239,8 +239,8 @@ class Continuum:
                 "extension": metadata.get("extension") or Path(name).suffix.lower(),
                 "language": metadata.get("language"),
                 "git_commit": metadata.get("git_commit"),
-                "content_hash": metadata.get("content_hash"),
-                "file_content_hash": metadata.get("file_content_hash") or metadata.get("content_hash"),
+                "content_hash": sha256_text(ch),
+                "file_content_hash": file_content_hash,
                 "approx_tokens": approx_tokens(ch),
                 "content": ch,
             }
