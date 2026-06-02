@@ -28,7 +28,7 @@ Or ask Codex to install it from the repository source ZIP:
 ```text
 Install the Codex skill from this repository:
 
-https://github.com/cyberphysicsai/cyphertempre/archive/refs/heads/main.zip
+https://github.com/cyberphysicsai/cypher-tempre-genesis/archive/refs/heads/main.zip
 
 Use only this folder from the ZIP:
 skills/codex/cypher-tempre-self-model
