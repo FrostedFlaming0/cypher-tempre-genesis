@@ -130,6 +130,10 @@ As the chain outgrows the context window, do not reread it — recall only what 
 **YOU are the relevance judge.** This skill is always you; relevance is realized by your
 *understanding* of the labels, never by string matching.
 
+**Honest boundary.** Recall does not make your context window bigger. It gives you an
+external, queryable, verifiable map of a code body or audit history. Use it for durable
+orientation and selective recall; then validate against live source before making claims.
+
 **Self-label every block you seal.** Seal through `recall.py seal` (it PoQ-gates AND
 embeds labels), so each block carries its own handles: the senses/modalities that fire
 on it, salient keywords, identifier-like entities, salience, and dissonance.
@@ -153,8 +157,19 @@ relevance. Never let the pre-filter be the arbiter.
 
 **Codebase cartography.** For code Continuum chains, use path-aware recall:
 `recall.py retrieve "<query>" --dir src/net_processing --neighbors 1` or
-`--path src/wallet/main.cpp`. Retrieval blends semantic relevance with path proximity
-and chronological adjacency, then returns neighboring chunks around each hit.
+`--path src/wallet/main.cpp`. Add hard filters to reduce drift:
+`--role source`, `--language cpp`, `--ext .py`, `--top-dir src`, or
+`--exclude-dir tests docs`. Retrieval blends semantic relevance with path proximity
+and chronological adjacency, lightly penalizes noisy roles such as tests/docs/generated
+unless requested, then returns neighboring chunks around each hit.
+
+**Verify before trusting.** A retrieved block is an audit pointer, not proof that the live
+repo still matches. Before relying on a source hit, run:
+```
+python3 recall.py verify-source <ring_index> --repo <repo_root>
+```
+Treat `source-mismatch`, `revision-drift`, or `dirty-worktree` as a signal to re-open the
+file and re-audit from current source.
 
 **Embedding recall (sharper pre-filter).** Self-embed blocks at ingest
 (`continuum.py walk … --embed`) and retrieve by cosine (`recall.py retrieve … --embed`):
@@ -174,13 +189,21 @@ block carrying a full refresh of your task state.
 python3 continuum.py open --objective "<task>" --items <N>
 python3 continuum.py ingest --name <item> --file <path> --finding "<one-line takeaway>"
 python3 continuum.py walk --path <dir> --ext .py .ts --objective "<task>"   # ingest a whole tree
+python3 continuum.py walk --path <dir> --ext .py .ts --changed-only --objective "<task>"
 python3 continuum.py resume      # re-hydrate the WHOLE task from the head block alone
 python3 continuum.py validate    # check progress invariants + chain integrity
 ```
 
 - **Code chunks keep source coordinates**: `relative_path`, `file_index`,
   `chunk_index/chunk_of`, `line_start/line_end`, `top_dir`, `extension`,
-  `language`, `git_commit`, and SHA-256 file content hash.
+  `language`, `path_role`, `git_commit`, `git_branch`, dirty-worktree marker,
+  chunk hash, and SHA-256 file content hash.
+- **Source is redacted by default before sealing**: common API keys, tokens, passwords,
+  and private key blocks are masked; original file hashes remain stored for validation.
+  Use `--no-redact` only when you intentionally want raw content sealed.
+- **Incremental indexing is available**: `--changed-only` skips files whose stored
+  `file_content_hash` still matches, preserving long audit runs without re-ingesting
+  unchanged code.
 - **Each block = one data-height chunk** (sweet-spot band ~256–1536 tokens): large
   enough to hold real data, small enough that no single block rots your context.
 - **Each block holds a full state refresh** (objective, cursor, progress, rolling
@@ -259,8 +282,8 @@ timechain.py   init | seal | verify | log | show <id> | stat
 poq.py         audit "<thought>" | seal "<thought>"   (+ --coherence/--relevance/… 0-255)
 cambium.py     sense "<input>" | grow "<input>" | emergent
 chronosynaptic.py  think "<query>" [--seal]
-continuum.py       open | ingest | walk | resume | validate   (long-horizon tasks)
-recall.py          index | fetch | seal | label | retrieve     (self-label; YOU judge relevance; --embed for cosine)
+continuum.py       open | ingest | walk | resume | validate   (long-horizon tasks; --changed-only; redaction)
+recall.py          index | fetch | seal | label | retrieve | verify-source
 embed.py           sim | vec                                   (embeddings: hashing default | st|openai|voyage)
 consensus.py       init | attest | verify                       (quorum tamper-proofing)
 immune.py          screen | scan | lockdown | rollback | status (detect/heal compromise; molt scars)

@@ -58,11 +58,16 @@ def main():
         code_root = root / "sample-code"
         (code_root / "src" / "wallet").mkdir(parents=True)
         (code_root / "src" / "net_processing").mkdir(parents=True)
-        (code_root / "src" / "wallet" / "main.py").write_text("wallet alpha spend coin\n" * 900)
+        (code_root / "tests").mkdir(parents=True)
+        secret = "sk-proj-" + ("A" * 40)
+        (code_root / "src" / "wallet" / "main.py").write_text(
+            ("wallet alpha spend coin\n" * 900) + f"OPENAI_API_KEY={secret}\n"
+        )
         (code_root / "src" / "net_processing" / "peer.py").write_text("network peer relay message\n" * 120)
+        (code_root / "tests" / "test_wallet.py").write_text("wallet alpha test fixture\n" * 80)
         c2 = continuum.Continuum(root)
         _, walked = c2.walk(code_root, (".py",), "cartography selftest")
-        check("continuum: walked nested code paths", len(walked) == 2)
+        check("continuum: walked nested code paths", len(walked) == 3)
         wallet_blocks = [
             r for r in c2.tc.load()
             if r.get("payload", {}).get("data", {}).get("relative_path") == "src/wallet/main.py"
@@ -72,9 +77,19 @@ def main():
         check("continuum: stores file/chunk indices", wd.get("file_index") and wd.get("chunk_index") and wd.get("chunk_of"))
         check("continuum: stores line range", wd.get("line_start") == 1 and wd.get("line_end") >= wd.get("line_start"))
         check("continuum: stores path metadata", wd.get("top_dir") == "src" and wd.get("extension") == ".py" and wd.get("language") == "python")
+        check("continuum: stores path role", wd.get("path_role") == "source" and wd.get("is_test") is False)
         check("continuum: stores git/hash metadata", "git_commit" in wd and len(wd.get("content_hash", "")) == 64)
         check("continuum: separates chunk and file hashes",
               len(wd.get("file_content_hash", "")) == 64 and wd.get("content_hash") != wd.get("file_content_hash"))
+        redacted = [
+            r for r in wallet_blocks
+            if r.get("payload", {}).get("data", {}).get("redacted")
+        ]
+        check("continuum: redacts secrets before sealing",
+              redacted and secret not in redacted[0]["payload"]["data"]["content"])
+        c3 = continuum.Continuum(root)
+        _, changed = c3.walk(code_root, (".py",), "cartography changed-only", changed_only=True)
+        check("continuum: changed-only skips unchanged files", len(changed) == 0)
 
         # 5. Recall — self-label + retrieve (lexical and embedding)
         rec = recall.Recall(root, registry_root=SKILL)
@@ -82,13 +97,18 @@ def main():
         check("recall: produces labels", "keywords" in lab and lab["keywords"])
         check("recall: retrieve runs", "blocks" in rec.retrieve("alpha beta", embed=False))
         check("recall: embedding retrieve runs", "blocks" in rec.retrieve("alpha beta", embed=True))
-        carto = rec.retrieve("wallet alpha", path="src/wallet/main.py", max_blocks=1, neighbors=1)
+        carto = rec.retrieve("wallet alpha", path="src/wallet/main.py", role="source", max_blocks=1, neighbors=1)
         check("recall: path filter returns matching path",
               carto["blocks"] and carto["blocks"][0]["location"]["relative_path"] == "src/wallet/main.py")
         check("recall: excerpt is source text not metadata",
               carto["blocks"] and carto["blocks"][0]["excerpt"].startswith("wallet alpha"))
         check("recall: returns neighboring chunks around a hit",
               bool(carto["blocks"][0].get("neighbors")))
+        test_hit = rec.retrieve("wallet alpha", role="test", max_blocks=1, neighbors=0)
+        check("recall: role filter can target tests",
+              test_hit["blocks"] and test_hit["blocks"][0]["location"]["path_role"] == "test")
+        source_check = rec.verify_source(code_root, carto["blocks"][0]["index"])
+        check("recall: source validation verifies current file", source_check["verdict"] == "verified")
 
         # 6. Embed — morphology beats unrelated
         e = embed.get_embedder("hashing")

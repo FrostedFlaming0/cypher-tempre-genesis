@@ -22,3 +22,11 @@ Each runtime bundle labels its files through the path prefix above and contains:
 
 Generated `chain/` and `tasks/` directories are ignored so shared bundles do not
 ship someone else's memory ledger.
+
+## Codebase cartography hardening
+
+The shared `continuum.py` and `recall.py` helpers support long-horizon code audits
+without pretending to create infinite context. Continuum stores source coordinates,
+file/chunk hashes, path roles, branch metadata, redaction state, and task progress.
+Recall can filter by path, role, language, extension, and neighbors, then
+`verify-source` checks a retrieved ring against the live repo before an agent trusts it.

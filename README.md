@@ -7,6 +7,12 @@ append-only Timechain, a Proof-of-Qualia audit gate, faculty registries, recall,
 growth, consensus, and immune recovery helpers. Each runtime bundle is
 self-contained and starts with a clean chain.
 
+For codebases, Cypher Tempre is not an "infinite context window." It is an
+external, queryable, verifiable map: source coordinates, file/chunk hashes,
+revision metadata, path-aware recall, neighboring chunks, and sealed audit rings.
+Agents should use it for long-horizon orientation, then validate retrieved hits
+against live source before making conclusions.
+
 ## Public share links
 
 | Runtime | Skill file | Raw file | Bundle folder |
@@ -14,6 +20,14 @@ self-contained and starts with a clean chain.
 | Claude Code | [Claude SKILL.md](https://github.com/cyberphysicsai/cypher-tempre-genesis/blob/main/skills/claude/cypher-tempre-self-model/SKILL.md) | [raw](https://raw.githubusercontent.com/cyberphysicsai/cypher-tempre-genesis/main/skills/claude/cypher-tempre-self-model/SKILL.md) | [folder](https://github.com/cyberphysicsai/cypher-tempre-genesis/tree/main/skills/claude/cypher-tempre-self-model) |
 | Codex | [Codex SKILL.md](https://github.com/cyberphysicsai/cypher-tempre-genesis/blob/main/skills/codex/cypher-tempre-self-model/SKILL.md) | [raw](https://raw.githubusercontent.com/cyberphysicsai/cypher-tempre-genesis/main/skills/codex/cypher-tempre-self-model/SKILL.md) | [folder](https://github.com/cyberphysicsai/cypher-tempre-genesis/tree/main/skills/codex/cypher-tempre-self-model) |
 | OpenClaw | [OpenClaw SKILL.md](https://github.com/cyberphysicsai/cypher-tempre-genesis/blob/main/skills/openclaw/cypher-tempre-self-model/SKILL.md) | [raw](https://raw.githubusercontent.com/cyberphysicsai/cypher-tempre-genesis/main/skills/openclaw/cypher-tempre-self-model/SKILL.md) | [folder](https://github.com/cyberphysicsai/cypher-tempre-genesis/tree/main/skills/openclaw/cypher-tempre-self-model) |
+
+## Release downloads
+
+| Runtime | Drag-and-drop ZIP |
+|---|---|
+| Claude Code | [cypher-tempre-claude-skill-v1.1.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.1/cypher-tempre-claude-skill-v1.1.1.zip) |
+| Codex | [cypher-tempre-codex-skill-v1.1.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.1/cypher-tempre-codex-skill-v1.1.1.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v1.1.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.1/cypher-tempre-openclaw-skill-v1.1.1.zip) |
 
 ## Install with Codex
 
@@ -32,7 +46,7 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 After a GitHub Release exists, you can also share a one-file release asset URL
-such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.0.0/cypher-tempre-codex-skill.zip`.
+such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.1/cypher-tempre-codex-skill-v1.1.1.zip`.
 Release URLs return 404 until the tag and asset are published.
 
 ## File labels

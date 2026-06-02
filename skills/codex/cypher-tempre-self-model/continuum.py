@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +46,7 @@ TARGET_TOKENS = 1024   # the sweet spot per block
 MIN_TOKENS = 256       # below this, merge — blocks must hold real data
 MAX_TOKENS = 1536      # hard ceiling — no single block may exceed this (anti-rot)
 FINDINGS_WINDOW = 6    # rolling cap so the state refresh stays bounded
+DEFAULT_SKIP_DIRS = {".git", ".hg", ".svn", ".venv", "__pycache__", "node_modules", "vendor"}
 
 LANGUAGE_BY_EXT = {
     ".c": "c",
@@ -68,6 +70,17 @@ LANGUAGE_BY_EXT = {
     ".yaml": "yaml",
     ".yml": "yaml",
 }
+
+SECRET_PATTERNS = [
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+     "[REDACTED_PRIVATE_KEY]"),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"), "[REDACTED_GITHUB_TOKEN]"),
+    (re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b"), "[REDACTED_OPENAI_KEY]"),
+    (re.compile(
+        r"(?i)\b((?:api|access|secret|private|auth|bearer|token|password|passwd|pwd)"
+        r"[A-Za-z0-9_.-]*\s*[:=]\s*)(['\"]?)[^'\"\s]{8,}(['\"]?)"
+    ), None),
+]
 
 
 def approx_tokens(s: str) -> int:
@@ -123,23 +136,95 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def git_commit_for(path: Path):
+def redact_secrets(text: str):
+    """Return text with common secrets masked, plus the number of replacements."""
+    total = 0
+    out = text
+    for pattern, replacement in SECRET_PATTERNS:
+        if replacement is None:
+            def repl(match):
+                return f"{match.group(1)}{match.group(2)}[REDACTED_SECRET]{match.group(3)}"
+            out, count = pattern.subn(repl, out)
+        else:
+            out, count = pattern.subn(replacement, out)
+        total += count
+    return out, total
+
+
+def git_value(path: Path, *args):
     try:
         proc = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            ["git", "-C", str(path)] + list(args),
             check=False, capture_output=True, text=True,
         )
     except Exception:
         return None
-    commit = proc.stdout.strip()
-    return commit if proc.returncode == 0 and commit else None
+    value = proc.stdout.strip()
+    return value if proc.returncode == 0 and value else None
 
 
-def file_metadata(base_path: Path, file_path: Path, file_index: int, content: str, git_commit=None):
+def git_info_for(path: Path):
+    status = git_value(path, "status", "--porcelain")
+    return {
+        "git_commit": git_value(path, "rev-parse", "HEAD"),
+        "git_branch": git_value(path, "rev-parse", "--abbrev-ref", "HEAD"),
+        "git_dirty": bool(status) if status is not None else None,
+        "git_root": git_value(path, "rev-parse", "--show-toplevel"),
+        "git_remote": git_value(path, "config", "--get", "remote.origin.url"),
+    }
+
+
+def git_commit_for(path: Path):
+    return git_info_for(path).get("git_commit")
+
+
+def path_role(relative_path: str, ext: str):
+    parts = [p.lower() for p in relative_path.split("/") if p]
+    name = parts[-1] if parts else ""
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    if any(p in {"generated", "gen", "dist", "build", "out", "target"} for p in parts):
+        return "generated"
+    if any(p in {"vendor", "third_party", "node_modules"} for p in parts):
+        return "vendor"
+    if any(p in {"test", "tests", "__tests__", "spec", "specs"} for p in parts):
+        return "test"
+    if stem.startswith("test_") or stem.endswith("_test") or stem.endswith(".test") or stem.endswith(".spec"):
+        return "test"
+    if any(p in {"doc", "docs", "documentation"} for p in parts) or ext in {".md", ".rst", ".txt"}:
+        return "docs"
+    if ext in {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"} or name in {
+        "makefile", "dockerfile", ".env", ".gitignore", ".dockerignore",
+    }:
+        return "config"
+    if language_for_extension(ext):
+        return "source"
+    return "other"
+
+
+def should_skip_file(path: Path, skip_dirs):
+    parts = set(path.parts)
+    return bool(parts & set(skip_dirs or ()))
+
+
+def latest_file_hashes(timechain: Timechain):
+    latest = {}
+    for ring in timechain.load():
+        data = ring.get("payload", {}).get("data") or {}
+        rel = data.get("relative_path")
+        h = data.get("file_content_hash")
+        if rel and h:
+            latest[rel] = h
+    return latest
+
+
+def file_metadata(base_path: Path, file_path: Path, file_index: int, content: str, git_info=None,
+                  redaction_count=0):
     rel = file_path.relative_to(base_path).as_posix()
     parts = rel.split("/")
     ext = file_path.suffix.lower()
     h = sha256_text(content)
+    role = path_role(rel, ext)
+    git_info = dict(git_info or {})
     return {
         "relative_path": rel,
         "filename": file_path.name,
@@ -147,8 +232,17 @@ def file_metadata(base_path: Path, file_path: Path, file_index: int, content: st
         "top_dir": parts[0] if len(parts) > 1 else "",
         "extension": ext,
         "language": language_for_extension(ext),
-        "git_commit": git_commit,
+        "path_role": role,
+        "is_test": role == "test",
+        "is_generated": role == "generated",
+        "git_commit": git_info.get("git_commit"),
+        "git_branch": git_info.get("git_branch"),
+        "git_dirty": git_info.get("git_dirty"),
+        "git_root": git_info.get("git_root"),
+        "git_remote": git_info.get("git_remote"),
         "file_content_hash": h,
+        "redacted": redaction_count > 0,
+        "redaction_count": redaction_count,
     }
 
 
@@ -238,9 +332,18 @@ class Continuum:
                 "top_dir": metadata.get("top_dir"),
                 "extension": metadata.get("extension") or Path(name).suffix.lower(),
                 "language": metadata.get("language"),
+                "path_role": metadata.get("path_role"),
+                "is_test": metadata.get("is_test"),
+                "is_generated": metadata.get("is_generated"),
                 "git_commit": metadata.get("git_commit"),
+                "git_branch": metadata.get("git_branch"),
+                "git_dirty": metadata.get("git_dirty"),
+                "git_root": metadata.get("git_root"),
+                "git_remote": metadata.get("git_remote"),
                 "content_hash": sha256_text(ch),
                 "file_content_hash": file_content_hash,
+                "redacted": bool(metadata.get("redacted")),
+                "redaction_count": metadata.get("redaction_count", 0),
                 "approx_tokens": approx_tokens(ch),
                 "content": ch,
             }
@@ -291,20 +394,35 @@ class Continuum:
                    else "state invariants coherent: monotonic progress, +1 chunk/block, every block within data-height band")
         return ok and not issues, out
 
-    def walk(self, path, exts, objective, difficulty=0, label=True, embed=None):
+    def walk(self, path, exts, objective, difficulty=0, label=True, embed=None,
+             redact=True, changed_only=False, skip_dirs=None):
         self._embed = embed
         path = Path(path)
-        files = sorted(p for p in path.rglob("*") if p.is_file() and p.suffix in exts)
-        git_commit = git_commit_for(path)
-        self.open_task(objective, items_total=len(files), difficulty=difficulty)
-        results = []
+        skip_dirs = DEFAULT_SKIP_DIRS if skip_dirs is None else set(skip_dirs)
+        files = sorted(
+            p for p in path.rglob("*")
+            if p.is_file() and p.suffix in exts and not should_skip_file(p.relative_to(path), skip_dirs)
+        )
+        prior_hashes = latest_file_hashes(self.tc) if changed_only else {}
+        planned = []
         for file_index, f in enumerate(files, start=1):
             text = f.read_text(errors="replace")
             rel = f.relative_to(path).as_posix()
+            if changed_only and prior_hashes.get(rel) == sha256_text(text):
+                continue
+            planned.append((file_index, f, rel, text))
+        git_info = git_info_for(path)
+        self.open_task(objective, items_total=len(planned), difficulty=difficulty)
+        results = []
+        for file_index, f, rel, text in planned:
+            sealed_text, redaction_count = redact_secrets(text) if redact else (text, 0)
             ndef = text.count("def "); ncls = text.count("class ")
             finding = f"{text.count(chr(10))+1} lines, {ndef} defs, {ncls} classes"
-            meta = file_metadata(path, f, file_index, text, git_commit=git_commit)
-            sealed, _ = self.ingest(rel, text, finding=finding, difficulty=difficulty,
+            if redaction_count:
+                finding += f", {redaction_count} secret(s) redacted"
+            meta = file_metadata(path, f, file_index, text, git_info=git_info,
+                                 redaction_count=redaction_count)
+            sealed, _ = self.ingest(rel, sealed_text, finding=finding, difficulty=difficulty,
                                     label=label, metadata=meta)
             results.append((rel, len(sealed)))
         return files, results
@@ -336,17 +454,39 @@ def cmd_open(args):
 
 
 def cmd_ingest(args):
-    content = Path(args.file).read_text(errors="replace") if args.file else args.text
+    source = Path(args.file).read_text(errors="replace") if args.file else args.text
+    content, redaction_count = redact_secrets(source) if not args.no_redact else (source, 0)
+    metadata = {
+        "relative_path": args.name,
+        "filename": Path(args.name).name,
+        "extension": Path(args.name).suffix.lower(),
+        "language": language_for_extension(Path(args.name).suffix.lower()),
+        "file_content_hash": sha256_text(source),
+        "redacted": redaction_count > 0,
+        "redaction_count": redaction_count,
+    }
     c = Continuum(args.root); c._embed = args.embed
-    sealed, st = c.ingest(args.name, content, finding=args.finding, label=not args.no_label)
+    finding = args.finding
+    if redaction_count:
+        finding = (finding + "; " if finding else "") + f"{redaction_count} secret(s) redacted"
+    sealed, st = c.ingest(args.name, content, finding=finding, label=not args.no_label,
+                          metadata=metadata)
     print(f"ingested '{args.name}' -> {len(sealed)} block(s) at heights {[t for _, t in sealed]} tokens")
+    if redaction_count:
+        print(f"redacted {redaction_count} secret-like value(s) before sealing")
     _print_state(st)
 
 
 def cmd_walk(args):
     files, results = Continuum(args.root).walk(args.path, tuple(args.ext), args.objective,
-                                               label=not args.no_label, embed=args.embed)
-    print(f"walked {len(files)} files -> blocks per file:")
+                                               label=not args.no_label, embed=args.embed,
+                                               redact=not args.no_redact,
+                                               changed_only=args.changed_only,
+                                               skip_dirs=args.exclude_dir)
+    skipped = len(files) - len(results)
+    print(f"walked {len(files)} files -> indexed {len(results)} file(s)"
+          + (f", skipped {skipped} unchanged/excluded file(s)" if skipped else "")
+          + " -> blocks per file:")
     for name, n in results:
         print(f"   {name:<24} {n} block(s)")
     _print_state(Continuum(args.root).resume())
@@ -385,6 +525,7 @@ def build_parser():
     pi.add_argument("--text", default=None)
     pi.add_argument("--finding", default=None)
     pi.add_argument("--no-label", action="store_true", help="skip self-labeling at ingest")
+    pi.add_argument("--no-redact", action="store_true", help="seal raw content without secret redaction")
     pi.add_argument("--embed", nargs="?", const="hashing", default=None,
                     help="self-embed each block at ingest (provider, default hashing)")
     pi.set_defaults(func=cmd_ingest)
@@ -394,6 +535,10 @@ def build_parser():
     pw.add_argument("--objective", required=True)
     pw.add_argument("--ext", nargs="+", default=[".py"])
     pw.add_argument("--no-label", action="store_true", help="skip self-labeling at ingest")
+    pw.add_argument("--no-redact", action="store_true", help="seal raw content without secret redaction")
+    pw.add_argument("--changed-only", action="store_true", help="skip files whose file hash is already indexed")
+    pw.add_argument("--exclude-dir", nargs="+", default=sorted(DEFAULT_SKIP_DIRS),
+                    help="relative directory names to skip while walking")
     pw.add_argument("--embed", nargs="?", const="hashing", default=None,
                     help="self-embed each block at ingest (provider, default hashing)")
     pw.set_defaults(func=cmd_walk)

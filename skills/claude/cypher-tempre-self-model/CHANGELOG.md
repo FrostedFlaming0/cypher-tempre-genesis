@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.1.1 — 2026-06-02
+
+### Hardened
+- **Recall drift control** — `retrieve` now supports role/language/extension/top-dir
+  filters, source-only mode, exclusions, and a light noise penalty for tests/docs/vendor/
+  generated chunks unless those roles are requested.
+- **Source verification hook** — `recall.py verify-source <ring> --repo <repo>` checks
+  sealed source coordinates against the current file hash, chunk hash, commit, branch,
+  and dirty-worktree state before an agent trusts a recalled hit.
+- **Continuum source hygiene** — code walks redact common secrets before sealing, store
+  separate chunk/file hashes, record `path_role`, branch, dirty status, and support
+  `--changed-only` incremental indexing.
+- **Agent guidance** — the skill now frames cartography as a verifiable long-horizon map,
+  not an infinite context window, and explicitly requires fresh source validation for
+  code conclusions.
+
 ## v1.1.0 — 2026-06-02
 
 ### Added
