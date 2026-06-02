@@ -54,12 +54,37 @@ def main():
         check("continuum: ingested data-height blocks", len(sealed) >= 1)
         check("continuum: coherent", c.validate()[0])
 
+        # 4b. Codebase cartography — relative paths, line ranges, chunk ids, file hashes.
+        code_root = root / "sample-code"
+        (code_root / "src" / "wallet").mkdir(parents=True)
+        (code_root / "src" / "net_processing").mkdir(parents=True)
+        (code_root / "src" / "wallet" / "main.py").write_text("wallet alpha spend coin\n" * 900)
+        (code_root / "src" / "net_processing" / "peer.py").write_text("network peer relay message\n" * 120)
+        c2 = continuum.Continuum(root)
+        _, walked = c2.walk(code_root, (".py",), "cartography selftest")
+        check("continuum: walked nested code paths", len(walked) == 2)
+        wallet_blocks = [
+            r for r in c2.tc.load()
+            if r.get("payload", {}).get("data", {}).get("relative_path") == "src/wallet/main.py"
+        ]
+        wd = wallet_blocks[0]["payload"]["data"] if wallet_blocks else {}
+        check("continuum: stores relative_path not basename", wd.get("relative_path") == "src/wallet/main.py")
+        check("continuum: stores file/chunk indices", wd.get("file_index") and wd.get("chunk_index") and wd.get("chunk_of"))
+        check("continuum: stores line range", wd.get("line_start") == 1 and wd.get("line_end") >= wd.get("line_start"))
+        check("continuum: stores path metadata", wd.get("top_dir") == "src" and wd.get("extension") == ".py" and wd.get("language") == "python")
+        check("continuum: stores git/hash metadata", "git_commit" in wd and len(wd.get("content_hash", "")) == 64)
+
         # 5. Recall — self-label + retrieve (lexical and embedding)
         rec = recall.Recall(root, registry_root=SKILL)
         lab = rec.label("proof of work difficulty target")
         check("recall: produces labels", "keywords" in lab and lab["keywords"])
         check("recall: retrieve runs", "blocks" in rec.retrieve("alpha beta", embed=False))
         check("recall: embedding retrieve runs", "blocks" in rec.retrieve("alpha beta", embed=True))
+        carto = rec.retrieve("wallet alpha", path="src/wallet/main.py", max_blocks=1, neighbors=1)
+        check("recall: path filter returns matching path",
+              carto["blocks"] and carto["blocks"][0]["location"]["relative_path"] == "src/wallet/main.py")
+        check("recall: returns neighboring chunks around a hit",
+              bool(carto["blocks"][0].get("neighbors")))
 
         # 6. Embed — morphology beats unrelated
         e = embed.get_embedder("hashing")

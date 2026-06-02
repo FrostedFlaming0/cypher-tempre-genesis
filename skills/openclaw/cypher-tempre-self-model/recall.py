@@ -47,6 +47,7 @@ from cambium import load_corpus, detect_gap
 from poq import tokens, jaccard, clamp, gate_and_seal
 
 ENTITY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+PATH_HINT_RE = re.compile(r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\.[A-Za-z0-9]+")
 
 
 def approx_tokens(s: str) -> int:
@@ -89,6 +90,115 @@ def keywords(text, k=10):
     return [w for w, _ in Counter(tokens(text)).most_common(k)]
 
 
+def normalize_path(value):
+    if not value:
+        return None
+    value = str(value).strip().replace("\\", "/")
+    while value.startswith("./"):
+        value = value[2:]
+    return value.strip("/")
+
+
+def path_hints(text):
+    return [normalize_path(m.group(0)) for m in PATH_HINT_RE.finditer(text or "") if normalize_path(m.group(0))]
+
+
+def ring_data(ring):
+    return ring.get("payload", {}).get("data") or {}
+
+
+def ring_path(ring):
+    data = ring_data(ring)
+    return normalize_path(data.get("relative_path") or data.get("item"))
+
+
+def ring_location(ring):
+    data = ring_data(ring)
+    return {
+        "relative_path": ring_path(ring),
+        "file_index": data.get("file_index"),
+        "chunk_index": data.get("chunk_index"),
+        "chunk_of": data.get("chunk_of"),
+        "line_start": data.get("line_start"),
+        "line_end": data.get("line_end"),
+        "top_dir": data.get("top_dir"),
+        "extension": data.get("extension"),
+        "language": data.get("language"),
+        "git_commit": data.get("git_commit"),
+        "content_hash": data.get("content_hash"),
+    }
+
+
+def neighbor_group_key(ring):
+    data = ring_data(ring)
+    return (
+        ring_path(ring),
+        data.get("git_commit"),
+        data.get("file_content_hash") or data.get("content_hash"),
+    )
+
+
+def path_matches(ring, path_filter=None, dir_filter=None):
+    rel = ring_path(ring)
+    if not rel:
+        return path_filter is None and dir_filter is None
+    if path_filter:
+        pf = normalize_path(path_filter)
+        if rel != pf and not rel.startswith(pf.rstrip("/") + "/"):
+            return False
+    if dir_filter:
+        df = normalize_path(dir_filter).rstrip("/")
+        if rel != df and not rel.startswith(df + "/"):
+            return False
+    return True
+
+
+def common_prefix_score(a, b):
+    a, b = normalize_path(a), normalize_path(b)
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    ap, bp = a.split("/"), b.split("/")
+    shared = 0
+    for x, y in zip(ap, bp):
+        if x != y:
+            break
+        shared += 1
+    if shared == 0:
+        return 0.0
+    return shared / max(len(ap), len(bp))
+
+
+def path_proximity(ring, filters, hints):
+    rel = ring_path(ring)
+    if not rel:
+        return 0.0
+    candidates = [p for p in (filters or []) if p] + list(hints or [])
+    if not candidates:
+        return 0.0
+    return max(common_prefix_score(rel, p) for p in candidates)
+
+
+def brief_block(ring, score=None, lab=None, words=60):
+    lab = lab or ring.get("payload", {}).get("labels") or {}
+    excerpt = " ".join(block_text(ring).split()[:words])
+    out = {
+        "index": ring["index"],
+        "type": ring["ring_type"],
+        "location": ring_location(ring),
+        "labels": {
+            "senses": [s["name"] for s in lab.get("senses", [])[:3]],
+            "modalities": [m["name"] for m in lab.get("modalities", [])[:3]],
+            "keywords": lab.get("keywords", [])[:6],
+        },
+        "excerpt": excerpt[:260],
+    }
+    if score is not None:
+        out["score"] = round(score, 3)
+    return out
+
+
 class Recall:
     def __init__(self, chain_root, registry_root=None, embedder=None):
         self.tc = Timechain(chain_root)
@@ -118,7 +228,8 @@ class Recall:
         return ring.get("payload", {}).get("labels") or self.label(block_text(ring))
 
     def retrieve(self, query, context="", budget_tokens=1000, max_blocks=8,
-                 relevance_fn=None, embed=False):
+                 relevance_fn=None, embed=False, path=None, dir=None, neighbors=1,
+                 semantic_weight=0.70, path_weight=0.20, chronological_weight=0.10):
         if embed and self.embedder is None:           # default to the stdlib embedder
             import embed as _embmod
             self.embedder = _embmod.get_embedder("hashing")
@@ -134,11 +245,15 @@ class Recall:
         if qv is not None:
             import embed as _embmod
             _cos = _embmod.cosine
+        filters = [normalize_path(path), normalize_path(dir)]
+        hints = path_hints(query + " " + context)
 
-        scored = []
+        raw = []
         n = max(1, len(rings) - 1)
         for r in rings:
             if r["index"] == 0:                       # skip the genesis/identity block
+                continue
+            if not path_matches(r, path_filter=path, dir_filter=dir):
                 continue
             lab = self.block_labels(r)
             # CONTENT signal is the discriminator, in priority order:
@@ -156,8 +271,32 @@ class Recall:
             bS = {s["id"] for s in lab.get("senses", [])}
             bM = {m["id"] for m in lab.get("modalities", [])}
             faculty = 0.7 * len(qS & bS) + 0.7 * len(qM & bM)   # shared lenses: secondary booster
-            score = content + 0.5 * faculty + 0.4 * (lab.get("salience", 0) / 255) + 0.2 * (r["index"] / n)
-            scored.append((score, r, lab))
+            semantic = min(1.0, content / 9.0)
+            path_score = path_proximity(r, filters, hints)
+            raw.append({"ring": r, "lab": lab, "content": content, "semantic": semantic,
+                        "path": path_score, "faculty": faculty})
+
+        anchors = sorted(raw, key=lambda x: x["semantic"], reverse=True)[:3]
+        anchor_indices = [x["ring"]["index"] for x in anchors]
+        scored = []
+        for item in raw:
+            r, lab = item["ring"], item["lab"]
+            chronological = 0.0
+            if anchor_indices:
+                chronological = max(max(0.0, 1.0 - abs(r["index"] - idx) / 4.0) for idx in anchor_indices)
+            score = (
+                semantic_weight * item["semantic"]
+                + path_weight * item["path"]
+                + chronological_weight * chronological
+                + 0.05 * min(1.0, item["faculty"] / 4.0)
+                + 0.03 * (lab.get("salience", 0) / 255)
+                + 0.02 * (r["index"] / n)
+            )
+            scored.append((score, r, lab, {
+                "semantic": round(item["semantic"], 3),
+                "path": round(item["path"], 3),
+                "chronological": round(chronological, 3),
+            }))
         scored.sort(key=lambda x: x[0], reverse=True)
 
         # appetite: dissonance is the need signal. Low need -> pull little/none.
@@ -165,29 +304,70 @@ class Recall:
             appetite = 0
         else:
             appetite = max(1, round(max_blocks * dissonance / 255))
+        if (path or dir) and scored:
+            appetite = max(1, appetite)
         top = scored[0][0] if scored else 0.0
-        threshold = max(0.6, 0.5 * top)               # absolute floor + relative: no junk, no bloat
+        floor = 0.08 if (path or dir) else 0.18
+        threshold = max(floor, 0.5 * top)             # absolute floor + relative: no junk, no bloat
 
-        chosen, used = [], 0
-        for score, r, lab in scored:
+        chosen, used, chosen_indices = [], 0, set()
+        rings_by_index = {r["index"]: r for r in rings}
+        chunks_by_group = {}
+        for r in rings:
+            group = neighbor_group_key(r)
+            ci = ring_data(r).get("chunk_index")
+            if group[0] and ci is not None:
+                chunks_by_group.setdefault(group, {})[ci] = r
+
+        for score, r, lab, parts in scored:
             if len(chosen) >= appetite or score < threshold:
                 break
             excerpt = " ".join(block_text(r).split()[:60])
             cost = approx_tokens(excerpt)
             if used + cost > budget_tokens:
                 break
-            chosen.append({
-                "index": r["index"], "type": r["ring_type"], "score": round(score, 2),
-                "labels": {"senses": [s["name"] for s in lab.get("senses", [])[:3]],
-                           "modalities": [m["name"] for m in lab.get("modalities", [])[:3]],
-                           "keywords": lab.get("keywords", [])[:6]},
-                "excerpt": excerpt[:260],
-            })
+            block = brief_block(r, score=score, lab=lab)
+            block["score_parts"] = parts
+            block["neighbors"] = []
+            chosen.append(block)
+            chosen_indices.add(r["index"])
             used += cost
+        if neighbors > 0 and chosen:
+            for block in chosen:
+                r = rings_by_index[block["index"]]
+                group = neighbor_group_key(r)
+                ci = ring_data(r).get("chunk_index")
+                neighbor_rings = []
+                if group[0] and ci is not None:
+                    for offset in range(-neighbors, neighbors + 1):
+                        if offset == 0:
+                            continue
+                        nr = chunks_by_group.get(group, {}).get(ci + offset)
+                        if nr is not None:
+                            neighbor_rings.append(nr)
+                else:
+                    for offset in range(-neighbors, neighbors + 1):
+                        if offset == 0:
+                            continue
+                        nr = rings_by_index.get(r["index"] + offset)
+                        if nr is not None and nr["index"] != 0:
+                            neighbor_rings.append(nr)
+                for nr in sorted(neighbor_rings, key=lambda x: x["index"]):
+                    if nr["index"] in chosen_indices:
+                        continue
+                    excerpt = " ".join(block_text(nr).split()[:60])
+                    cost = approx_tokens(excerpt)
+                    if used + cost > budget_tokens:
+                        break
+                    block["neighbors"].append(brief_block(nr, words=45))
+                    used += cost
         return {"query_labels": q, "dissonance": dissonance, "appetite": appetite,
                 "threshold": round(threshold, 2), "considered": len(scored),
                 "returned": len(chosen), "budget": budget_tokens, "tokens_used": used,
-                "blocks": chosen}
+                "filters": {"path": normalize_path(path), "dir": normalize_path(dir), "hints": hints},
+                "weights": {"semantic": semantic_weight, "path": path_weight,
+                            "chronological": chronological_weight},
+                "neighbors": neighbors, "blocks": chosen}
 
     def seal(self, ring_type, summary, context="", external_scores=None, difficulty=0, files=None):
         labels = self.label(summary, context)
@@ -218,19 +398,35 @@ def cmd_label(args):
 def cmd_retrieve(args):
     rec = Recall(args.root, args.registry_root, embedder=(args.provider if args.embed else None))
     r = rec.retrieve(args.query, args.context or "", budget_tokens=args.budget,
-                     max_blocks=args.max, embed=args.embed)
+                     max_blocks=args.max, embed=args.embed, path=args.path, dir=args.dir,
+                     neighbors=args.neighbors, semantic_weight=args.semantic_weight,
+                     path_weight=args.path_weight, chronological_weight=args.chrono_weight)
     if args.embed:
         print(f"[embedding recall: {rec.embedder.name}]")
     print("query self-labels:")
     _print_labels(r["query_labels"])
+    if r["filters"]["path"] or r["filters"]["dir"] or r["filters"]["hints"]:
+        print(f"filters: path={r['filters']['path'] or '-'} dir={r['filters']['dir'] or '-'} "
+              f"hints={r['filters']['hints'] or '-'}")
     print(f"\nneed: dissonance {r['dissonance']} -> appetite {r['appetite']} block(s)   "
           f"(threshold {r['threshold']}; considered {r['considered']})")
     print(f"returned {r['returned']} block(s), ~{r['tokens_used']}/{r['budget']} tokens "
-          f"(label-overlap first, similarity second):")
+          f"(semantic/path/chronological blend):")
     for b in r["blocks"]:
+        loc = b.get("location") or {}
+        where = loc.get("relative_path") or "-"
+        if loc.get("line_start") is not None:
+            where += f":{loc['line_start']}-{loc['line_end']}"
         print(f"  #{b['index']:>3} [{b['type']}] score {b['score']}  "
+              f"path={where} parts={b.get('score_parts')} "
               f"senses={b['labels']['senses']} kw={b['labels']['keywords']}")
         print(f"        “{b['excerpt'][:150]}…”")
+        for nb in b.get("neighbors", []):
+            nloc = nb.get("location") or {}
+            nwhere = nloc.get("relative_path") or "-"
+            if nloc.get("line_start") is not None:
+                nwhere += f":{nloc['line_start']}-{nloc['line_end']}"
+            print(f"        neighbor #{nb['index']} {nwhere}: “{nb['excerpt'][:120]}…”")
     if not r["blocks"]:
         print("  (nothing above threshold — the agent does not need past blocks for this)")
 
@@ -260,7 +456,11 @@ def cmd_index(args):
             continue
         lab = rec.block_labels(r)
         summary = " ".join(block_text(r).split()[: args.words])
-        print(f"#{r['index']:>3} [{r['ring_type']}] need~{lab['dissonance']}  {summary[:150]}")
+        loc = ring_location(r)
+        where = loc.get("relative_path") or "-"
+        if loc.get("line_start") is not None:
+            where += f":{loc['line_start']}-{loc['line_end']}"
+        print(f"#{r['index']:>3} [{r['ring_type']}] need~{lab['dissonance']}  {where}  {summary[:150]}")
         print(f"      kw: {', '.join(lab['keywords'][:7]) or '-'}  | entities: {', '.join(lab['entities'][:5]) or '-'}")
 
 
@@ -278,7 +478,11 @@ def cmd_fetch(args):
         if used + cost > args.budget:
             print(f"(budget {args.budget} tokens reached)"); break
         used += cost
-        print(f"#{i} [{r['ring_type']}] {r['ring_hash'][:12]}..")
+        loc = ring_location(r)
+        where = loc.get("relative_path") or "-"
+        if loc.get("line_start") is not None:
+            where += f":{loc['line_start']}-{loc['line_end']}"
+        print(f"#{i} [{r['ring_type']}] {r['ring_hash'][:12]}.. {where}")
         print(f"  {ex[: args.words * 8]}\n")
     print(f"(fetched ~{used}/{args.budget} tokens)")
 
@@ -304,6 +508,12 @@ def build_parser():
     pr.add_argument("--max", type=int, default=8, help="max blocks (appetite cap)")
     pr.add_argument("--embed", action="store_true", help="rank by embedding cosine, not lexical overlap")
     pr.add_argument("--provider", default="hashing", help="embedding backend: hashing|st|openai|voyage")
+    pr.add_argument("--path", default=None, help="only retrieve hits from a relative path or path prefix")
+    pr.add_argument("--dir", default=None, help="only retrieve hits under a relative directory")
+    pr.add_argument("--neighbors", type=int, default=1, help="include nearby chunks around each hit")
+    pr.add_argument("--semantic-weight", type=float, default=0.70)
+    pr.add_argument("--path-weight", type=float, default=0.20)
+    pr.add_argument("--chrono-weight", type=float, default=0.10)
     pr.set_defaults(func=cmd_retrieve)
 
     ps = sub.add_parser("seal", parents=[common], help="self-label then PoQ-gate-seal a block")

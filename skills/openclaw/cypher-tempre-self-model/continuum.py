@@ -32,7 +32,9 @@ Stdlib only. Python 3.8+.  Companion to timechain.py.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -44,33 +46,111 @@ MIN_TOKENS = 256       # below this, merge — blocks must hold real data
 MAX_TOKENS = 1536      # hard ceiling — no single block may exceed this (anti-rot)
 FINDINGS_WINDOW = 6    # rolling cap so the state refresh stays bounded
 
+LANGUAGE_BY_EXT = {
+    ".c": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".go": "go",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".java": "java",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".json": "json",
+    ".md": "markdown",
+    ".py": "python",
+    ".rb": "ruby",
+    ".rs": "rust",
+    ".sh": "shell",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+}
+
 
 def approx_tokens(s: str) -> int:
     return max(1, len(s) // 4)
 
 
-def chunk_text(text: str, target=TARGET_TOKENS, min_=MIN_TOKENS, max_=MAX_TOKENS):
-    """Split text into chunks within [min_, max_] tokens, targeting `target`,
-    on line boundaries where possible."""
-    chunks, cur = [], ""
-    for ln in text.splitlines(keepends=True):
+def chunk_text_with_lines(text: str, target=TARGET_TOKENS, min_=MIN_TOKENS, max_=MAX_TOKENS):
+    """Split text into chunks and retain 1-based inclusive source line ranges."""
+    chunks, cur, cur_start, cur_end = [], "", None, None
+
+    def flush():
+        nonlocal cur, cur_start, cur_end
+        if cur:
+            chunks.append({"content": cur, "line_start": cur_start or 1, "line_end": cur_end or cur_start or 1})
+            cur, cur_start, cur_end = "", None, None
+
+    lines = text.splitlines(keepends=True)
+    for line_no, ln in enumerate(lines, start=1):
         if approx_tokens(ln) > max_:                      # a single oversized line
-            if cur:
-                chunks.append(cur); cur = ""
+            flush()
             step = max_ * 4
             for j in range(0, len(ln), step):
-                chunks.append(ln[j:j + step])
+                chunks.append({"content": ln[j:j + step], "line_start": line_no, "line_end": line_no})
             continue
         if cur and approx_tokens(cur + ln) > target:
-            chunks.append(cur); cur = ln
-        else:
-            cur += ln
-    if cur:
-        chunks.append(cur)
-    if (len(chunks) >= 2 and approx_tokens(chunks[-1]) < min_
-            and approx_tokens(chunks[-2] + chunks[-1]) <= max_):   # merge tiny tail, but never breach the ceiling
-        chunks[-2] += chunks[-1]; chunks.pop()
-    return chunks or [""]
+            flush()
+        if not cur:
+            cur_start = line_no
+        cur += ln
+        cur_end = line_no
+    flush()
+
+    if not chunks:
+        chunks.append({"content": "", "line_start": 1, "line_end": 1})
+    if (len(chunks) >= 2 and approx_tokens(chunks[-1]["content"]) < min_
+            and approx_tokens(chunks[-2]["content"] + chunks[-1]["content"]) <= max_):
+        chunks[-2]["content"] += chunks[-1]["content"]
+        chunks[-2]["line_end"] = chunks[-1]["line_end"]
+        chunks.pop()
+    return chunks
+
+
+def chunk_text(text: str, target=TARGET_TOKENS, min_=MIN_TOKENS, max_=MAX_TOKENS):
+    """Backward-compatible content-only chunking helper."""
+    return [c["content"] for c in chunk_text_with_lines(text, target, min_, max_)]
+
+
+def language_for_extension(ext: str):
+    return LANGUAGE_BY_EXT.get(ext.lower())
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def git_commit_for(path: Path):
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            check=False, capture_output=True, text=True,
+        )
+    except Exception:
+        return None
+    commit = proc.stdout.strip()
+    return commit if proc.returncode == 0 and commit else None
+
+
+def file_metadata(base_path: Path, file_path: Path, file_index: int, content: str, git_commit=None):
+    rel = file_path.relative_to(base_path).as_posix()
+    parts = rel.split("/")
+    ext = file_path.suffix.lower()
+    h = sha256_text(content)
+    return {
+        "relative_path": rel,
+        "filename": file_path.name,
+        "file_index": file_index,
+        "top_dir": parts[0] if len(parts) > 1 else "",
+        "extension": ext,
+        "language": language_for_extension(ext),
+        "git_commit": git_commit,
+        "content_hash": h,
+        "file_content_hash": h,
+    }
 
 
 class Continuum:
@@ -118,33 +198,54 @@ class Continuum:
         self._state = state
         return state, ring
 
-    def ingest(self, name, content, finding=None, difficulty=0, label=True):
+    def ingest(self, name, content, finding=None, difficulty=0, label=True, metadata=None):
         st = self._state if self._state is not None else self._head_state()
         if st is None:
             raise RuntimeError("No open task on this chain — run 'open' first.")
-        chunks = chunk_text(content, self.target, self.min, self.max)
+        metadata = dict(metadata or {})
+        rel_path = metadata.get("relative_path") or name
+        chunks = chunk_text_with_lines(content, self.target, self.min, self.max)
         sealed = []
-        for i, ch in enumerate(chunks):
+        for i, chunk in enumerate(chunks):
+            ch = chunk["content"]
             st = json.loads(json.dumps(st))   # deep copy the prior state
             last = (i == len(chunks) - 1)
             st["cursor"] = {"item_index": st["cursor"]["item_index"] + (1 if i == 0 else 0),
-                            "item": name, "chunk_index": i + 1, "chunk_of": len(chunks)}
+                            "item": rel_path, "file_index": metadata.get("file_index"),
+                            "chunk_index": i + 1, "chunk_of": len(chunks)}
             st["metrics"]["chunks_sealed"] += 1
             st["metrics"]["approx_tokens_ingested"] += approx_tokens(ch)
             if last:
                 st["metrics"]["items_done"] += 1
                 if finding:
-                    st["findings"] = (st["findings"] + [f"{name}: {finding}"])[-FINDINGS_WINDOW:]
+                    st["findings"] = (st["findings"] + [f"{rel_path}: {finding}"])[-FINDINGS_WINDOW:]
                     st["findings_total"] += 1
                 it = st["metrics"]["items_total"]
                 done = st["metrics"]["items_done"]
                 st["next_action"] = ("task complete" if (it and done >= it)
                                      else f"ingest next item (done {done}" + (f"/{it}" if it else "") + ")")
             else:
-                st["next_action"] = f"continue ingesting {name}: chunk {i + 2}/{len(chunks)}"
+                st["next_action"] = f"continue ingesting {rel_path}: chunk {i + 2}/{len(chunks)}"
+            data = {
+                "item": rel_path,
+                "relative_path": rel_path,
+                "filename": metadata.get("filename") or Path(name).name,
+                "file_index": metadata.get("file_index"),
+                "chunk_index": i + 1,
+                "chunk_of": len(chunks),
+                "line_start": chunk["line_start"],
+                "line_end": chunk["line_end"],
+                "top_dir": metadata.get("top_dir"),
+                "extension": metadata.get("extension") or Path(name).suffix.lower(),
+                "language": metadata.get("language"),
+                "git_commit": metadata.get("git_commit"),
+                "content_hash": metadata.get("content_hash"),
+                "file_content_hash": metadata.get("file_content_hash") or metadata.get("content_hash"),
+                "approx_tokens": approx_tokens(ch),
+                "content": ch,
+            }
             payload = {"event": "continuum", "task": st["objective"][:48], "state": st,
-                       "data": {"item": name, "chunk_index": i + 1, "chunk_of": len(chunks),
-                                "approx_tokens": approx_tokens(ch), "content": ch}}
+                       "data": data}
             if label:
                 try:
                     payload["labels"] = self._labels(ch)   # self-label at ingest -> instant recall later
@@ -194,14 +295,18 @@ class Continuum:
         self._embed = embed
         path = Path(path)
         files = sorted(p for p in path.rglob("*") if p.is_file() and p.suffix in exts)
+        git_commit = git_commit_for(path)
         self.open_task(objective, items_total=len(files), difficulty=difficulty)
         results = []
-        for f in files:
+        for file_index, f in enumerate(files, start=1):
             text = f.read_text(errors="replace")
+            rel = f.relative_to(path).as_posix()
             ndef = text.count("def "); ncls = text.count("class ")
             finding = f"{text.count(chr(10))+1} lines, {ndef} defs, {ncls} classes"
-            sealed, _ = self.ingest(f.name, text, finding=finding, difficulty=difficulty, label=label)
-            results.append((f.name, len(sealed)))
+            meta = file_metadata(path, f, file_index, text, git_commit=git_commit)
+            sealed, _ = self.ingest(rel, text, finding=finding, difficulty=difficulty,
+                                    label=label, metadata=meta)
+            results.append((rel, len(sealed)))
         return files, results
 
 

@@ -1,7 +1,7 @@
 ---
 name: cypher-tempre-self-model
 description: Persistent, verifiable Timechain memory and self-modeling workflow for AI agents using stdlib Python helpers.
-version: 1.0.0
+version: 1.1.0
 homepage: https://github.com/cyberphysicsai/cypher-tempre-genesis
 user-invocable: true
 metadata:
@@ -151,6 +151,11 @@ will not fit in context, narrow first with `recall.py retrieve "<prompt>"` — a
 PRE-FILTER. It only shortlists candidates so your index stays small; YOU still judge
 relevance. Never let the pre-filter be the arbiter.
 
+**Codebase cartography.** For code Continuum chains, use path-aware recall:
+`recall.py retrieve "<query>" --dir src/net_processing --neighbors 1` or
+`--path src/wallet/main.cpp`. Retrieval blends semantic relevance with path proximity
+and chronological adjacency, then returns neighboring chunks around each hit.
+
 **Embedding recall (sharper pre-filter).** Self-embed blocks at ingest
 (`continuum.py walk … --embed`) and retrieve by cosine (`recall.py retrieve … --embed`):
 this scores the WHOLE chunk as a vector — sharper than keyword overlap, and instant when
@@ -173,6 +178,9 @@ python3 continuum.py resume      # re-hydrate the WHOLE task from the head block
 python3 continuum.py validate    # check progress invariants + chain integrity
 ```
 
+- **Code chunks keep source coordinates**: `relative_path`, `file_index`,
+  `chunk_index/chunk_of`, `line_start/line_end`, `top_dir`, `extension`,
+  `language`, `git_commit`, and SHA-256 file content hash.
 - **Each block = one data-height chunk** (sweet-spot band ~256–1536 tokens): large
   enough to hold real data, small enough that no single block rots your context.
 - **Each block holds a full state refresh** (objective, cursor, progress, rolling

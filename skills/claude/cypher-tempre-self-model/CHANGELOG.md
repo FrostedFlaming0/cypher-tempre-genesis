@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.0 — 2026-06-02
+
+### Added
+- **Codebase cartography for Continuum** — `walk` now stores `relative_path`,
+  `file_index`, `chunk_index`, `chunk_of`, `line_start`, `line_end`, `top_dir`,
+  `extension`, `language`, `git_commit`, and SHA-256 file content hashes on
+  each sealed chunk.
+- **Path-aware Recall** — `retrieve` now supports `--path`, `--dir`, and
+  `--neighbors` so agents can pull focused code context and adjacent chunks
+  around a hit.
+- **Blended retrieval scoring** — Recall now blends semantic relevance, path
+  proximity, and chronological adjacency with tunable weights.
+
 ## v1.0.0 — 2026-06-01
 
 First complete release. Nine mechanisms, one mandatory per-turn loop, stdlib-only.
