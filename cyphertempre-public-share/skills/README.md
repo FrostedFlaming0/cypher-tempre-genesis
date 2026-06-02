@@ -1,0 +1,24 @@
+# Skills Directory
+
+This directory contains three labeled, self-contained Cypher Tempre skill
+variants. Each variant includes the same reusable stdlib Python helpers and
+registries, plus a runtime-specific `SKILL.md`.
+
+| Runtime label | Path | Notes |
+|---|---|---|
+| Claude skill version | `claude/cypher-tempre-self-model/` | Claude Code compatible `SKILL.md` bundle. |
+| Codex skill version | `codex/cypher-tempre-self-model/` | Codex compatible bundle with `agents/openai.yaml` metadata. |
+| OpenClaw skill version | `openclaw/cypher-tempre-self-model/` | OpenClaw compatible bundle with OpenClaw frontmatter and `.clawhubignore`. |
+
+## Shared file set
+
+Each runtime bundle labels its files through the path prefix above and contains:
+
+- `SKILL.md` - runtime-specific skill instructions.
+- `README.md` - runtime-specific human overview and install note.
+- `VERSION`, `LICENSE`, `CHANGELOG.md` - package metadata.
+- `timechain.py`, `poq.py`, `cambium.py`, `chronosynaptic.py`, `continuum.py`, `recall.py`, `embed.py`, `consensus.py`, `immune.py`, `selftest.py` - reusable stdlib helpers.
+- `registry/modalities.json`, `registry/senses.json`, `registry/emergent.json` - faculty registries.
+
+Generated `chain/` and `tasks/` directories are ignored so shared bundles do not
+ship someone else's memory ledger.
