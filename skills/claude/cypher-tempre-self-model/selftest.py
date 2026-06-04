@@ -121,6 +121,35 @@ def main():
         node = tree.search("what should the agent do next", "selftest")
         result, _ = tree.collapse_and_seal(node, "what next", "selftest", do_seal=False)
         check("chronosynaptic: collapses to a path", bool(result and result["chosen"]))
+        explicit_notes = {
+            "query": "audit a staking module",
+            "context": "selftest explicit perspectives",
+            "perspectives": [
+                {
+                    "name": "Accounting lens",
+                    "kind": "audit",
+                    "summary": "Bond share accounting remains internally consistent.",
+                    "score": 220,
+                    "findings": ["total shares match per-operator shares"],
+                },
+                {
+                    "name": "Queue lens",
+                    "kind": "audit",
+                    "summary": "Queue accounting needs follow-up invariant execution.",
+                    "score": 190,
+                    "evidence": ["test/helpers/InvariantAsserts.sol"],
+                },
+            ],
+        }
+        explicit, explicit_ring = tree.collapse_explicit_notes(explicit_notes, do_seal=True)
+        payload = explicit_ring["payload"] if explicit_ring else {}
+        check("chronosynaptic: explicit notes seal a synthesis",
+              explicit_ring is not None and payload.get("event") == "chronosynaptic_explicit_collapse")
+        check("chronosynaptic: explicit notes choose highest score",
+              explicit["chosen"]["name"] == "Accounting lens")
+        check("chronosynaptic: explicit notes preserve rejected perspectives",
+              len(payload.get("rejected_perspectives", [])) == 1 and
+              payload["rejected_perspectives"][0]["name"] == "Queue lens")
 
         # 8. Consensus — quorum attest + verify
         qu = consensus.Quorum(root)

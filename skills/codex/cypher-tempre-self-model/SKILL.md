@@ -104,6 +104,15 @@ faculty-lens — in a single pass, simulate their futures, and collapse to the b
 python3 chronosynaptic.py think "<query>" --context "<situation>" --seal
 ```
 
+For deep audits where you have already done the semantic work, collapse explicit
+perspective notes instead. Put model-supplied perspectives in JSON (`query`,
+`perspectives[]`, each with `name`, `summary`, and `score` or PoQ `scores`), then:
+```
+python3 chronosynaptic.py collapse-notes notes.json --seal
+```
+This seals the winning synthesis while preserving the rejected perspectives in the
+same ring payload.
+
 The tree runs MCTS in-process (no subagents): it forks parallel self-perspectives,
 scores each with PoQ against unified data — your **past** (the rings), your **training
 knowledge** (your own judgment via the seam), and **simulated futures** (rollouts) —
@@ -269,7 +278,7 @@ python3 immune.py status                                # safe height, quarantin
 timechain.py   init | seal | verify | log | show <id> | stat
 poq.py         audit "<thought>" | seal "<thought>"   (+ --coherence/--relevance/… 0-255)
 cambium.py     sense "<input>" | grow "<input>" | emergent
-chronosynaptic.py  think "<query>" [--seal]
+chronosynaptic.py  think "<query>" [--seal] | collapse-notes notes.json [--seal]
 continuum.py       open | ingest | walk | resume | validate   (long-horizon tasks; --changed-only; redaction)
 recall.py          index | fetch | seal | label | retrieve | verify-source
 embed.py           sim | vec                                   (embeddings: hashing default | st|openai|voyage)

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Explicit Chronosynaptic collapse notes** — `chronosynaptic.py collapse-notes`
+  accepts model-supplied perspective summaries, findings/evidence, and scalar or
+  PoQ scores, then seals the winning synthesis while preserving rejected
+  perspectives in the same ring payload.
+
 ## v1.1.1 — 2026-06-02
 
 ### Hardened
