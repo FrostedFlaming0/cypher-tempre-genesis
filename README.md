@@ -25,9 +25,9 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v1.1.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.1/cypher-tempre-claude-skill-v1.1.1.zip) |
-| Codex | [cypher-tempre-codex-skill-v1.1.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.1/cypher-tempre-codex-skill-v1.1.1.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v1.1.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.1/cypher-tempre-openclaw-skill-v1.1.1.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v1.1.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.2/cypher-tempre-claude-skill-v1.1.2.zip) |
+| Codex | [cypher-tempre-codex-skill-v1.1.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.2/cypher-tempre-codex-skill-v1.1.2.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v1.1.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.2/cypher-tempre-openclaw-skill-v1.1.2.zip) |
 
 ## Install with Codex
 
@@ -46,7 +46,7 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 After a GitHub Release exists, you can also share a one-file release asset URL
-such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.1/cypher-tempre-codex-skill-v1.1.1.zip`.
+such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.2/cypher-tempre-codex-skill-v1.1.2.zip`.
 Release URLs return 404 until the tag and asset are published.
 
 ## File labels

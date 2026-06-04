@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.2 — 2026-06-04
 
 ### Added
 - **Explicit Chronosynaptic collapse notes** — `chronosynaptic.py collapse-notes`
