@@ -1,6 +1,7 @@
 # Cypher Tempre
 
-Timechain-based AI self-modeling skills for Claude Code, Codex, and OpenClaw.
+Timechain-based AI self-modeling skills for Claude Code, Codex, OpenClaw,
+Hermes, and NanoClaw.
 
 Cypher Tempre gives an AI agent a persistent, verifiable cognitive self-model: an
 append-only Timechain, a Proof-of-Qualia audit gate, faculty registries, recall,
@@ -20,6 +21,8 @@ against live source before making conclusions.
 | Claude Code | [Claude SKILL.md](https://github.com/cyberphysicsai/cypher-tempre-genesis/blob/main/skills/claude/cypher-tempre-self-model/SKILL.md) | [raw](https://raw.githubusercontent.com/cyberphysicsai/cypher-tempre-genesis/main/skills/claude/cypher-tempre-self-model/SKILL.md) | [folder](https://github.com/cyberphysicsai/cypher-tempre-genesis/tree/main/skills/claude/cypher-tempre-self-model) |
 | Codex | [Codex SKILL.md](https://github.com/cyberphysicsai/cypher-tempre-genesis/blob/main/skills/codex/cypher-tempre-self-model/SKILL.md) | [raw](https://raw.githubusercontent.com/cyberphysicsai/cypher-tempre-genesis/main/skills/codex/cypher-tempre-self-model/SKILL.md) | [folder](https://github.com/cyberphysicsai/cypher-tempre-genesis/tree/main/skills/codex/cypher-tempre-self-model) |
 | OpenClaw | [OpenClaw SKILL.md](https://github.com/cyberphysicsai/cypher-tempre-genesis/blob/main/skills/openclaw/cypher-tempre-self-model/SKILL.md) | [raw](https://raw.githubusercontent.com/cyberphysicsai/cypher-tempre-genesis/main/skills/openclaw/cypher-tempre-self-model/SKILL.md) | [folder](https://github.com/cyberphysicsai/cypher-tempre-genesis/tree/main/skills/openclaw/cypher-tempre-self-model) |
+| Hermes | [Hermes SKILL.md](https://github.com/cyberphysicsai/cypher-tempre-genesis/blob/main/skills/hermes/cypher-tempre-self-model/SKILL.md) | [raw](https://raw.githubusercontent.com/cyberphysicsai/cypher-tempre-genesis/main/skills/hermes/cypher-tempre-self-model/SKILL.md) | [folder](https://github.com/cyberphysicsai/cypher-tempre-genesis/tree/main/skills/hermes/cypher-tempre-self-model) |
+| NanoClaw | [NanoClaw SKILL.md](https://github.com/cyberphysicsai/cypher-tempre-genesis/blob/main/skills/nanoclaw/cypher-tempre-self-model/SKILL.md) | [raw](https://raw.githubusercontent.com/cyberphysicsai/cypher-tempre-genesis/main/skills/nanoclaw/cypher-tempre-self-model/SKILL.md) | [folder](https://github.com/cyberphysicsai/cypher-tempre-genesis/tree/main/skills/nanoclaw/cypher-tempre-self-model) |
 
 ## Release downloads
 
@@ -85,6 +88,8 @@ Every shareable file is labeled by its runtime path:
 | Claude skill version | `skills/claude/cypher-tempre-self-model/**` |
 | Codex skill version | `skills/codex/cypher-tempre-self-model/**` |
 | OpenClaw skill version | `skills/openclaw/cypher-tempre-self-model/**` |
+| Hermes skill version | `skills/hermes/cypher-tempre-self-model/**` |
+| NanoClaw skill version | `skills/nanoclaw/cypher-tempre-self-model/**` |
 | Repository metadata | `README.md`, `LICENSE`, `.gitignore`, and `skills/README.md` |
 
 Generated memory state is intentionally not committed. A user creates their own
@@ -96,5 +101,7 @@ inside the copied skill bundle.
 - Claude Code: copy `skills/claude/cypher-tempre-self-model` into `~/.claude/skills/`.
 - Codex: copy `skills/codex/cypher-tempre-self-model` into your Codex skills directory.
 - OpenClaw: copy `skills/openclaw/cypher-tempre-self-model` into `~/.openclaw/workspace/skills/`, or publish that folder with ClawHub.
+- Hermes: copy `skills/hermes/cypher-tempre-self-model` into the Hermes skills directory configured by that agent runtime.
+- NanoClaw: copy `skills/nanoclaw/cypher-tempre-self-model` into the NanoClaw skills directory configured by that agent runtime.
 
 Run `python3 selftest.py` inside any bundle to validate the local copy.
