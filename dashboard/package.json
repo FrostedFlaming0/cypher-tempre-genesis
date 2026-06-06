@@ -9,7 +9,8 @@
     "dev": "node server.mjs",
     "bridge": "node server.mjs",
     "build:walletconnect": "esbuild src/reown-wallet.js --bundle --format=esm --target=es2020 --outfile=public/reown-wallet.js",
-    "check": "node --check server.mjs && node --check public/app.js && node --check src/reown-wallet.js && node --check public/reown-wallet.js"
+    "check": "node --check server.mjs && node --check public/app.js && node --check src/reown-wallet.js && node --check public/reown-wallet.js",
+    "test:security": "node --test test/security-gate.test.mjs"
   },
   "dependencies": {
     "@reown/appkit": "^1.8.20",

@@ -8,8 +8,9 @@ These files support the public Timechain dashboard at `https://cyphertempre.ai`.
   package users run on their own machines.
 
 The hosted site is only a static UI. The local bridge reads the user's own
-`cypher-tempre-self-model` files, verifies the Base CPHY payment locally, and
-stores redeemed payment hashes locally.
+`cypher-tempre-self-model` files, verifies the Base CPHY payment locally,
+requires a payer-wallet signature for the current session challenge, and stores
+redeemed payment hashes locally.
 
 ## Local Bridge Run Commands
 
