@@ -1,0 +1,9 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+node_modules/
+dashboard/node_modules/
+
+# Generated agent memory and long-horizon task state. These are created per user.
+**/chain/
+**/tasks/
