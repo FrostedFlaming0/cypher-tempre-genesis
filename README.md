@@ -29,6 +29,33 @@ against live source before making conclusions.
 | Codex | [cypher-tempre-codex-skill-v1.1.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.2/cypher-tempre-codex-skill-v1.1.2.zip) |
 | OpenClaw | [cypher-tempre-openclaw-skill-v1.1.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v1.1.2/cypher-tempre-openclaw-skill-v1.1.2.zip) |
 
+## Timechain Dashboard
+
+The `dashboard/` folder contains the local-first Timechain audit dashboard used
+by `https://cyphertempre.ai`. The public site is only a static UI shell; each
+user runs the bridge locally so their Timechain files stay on their machine.
+
+Downloads:
+
+| Package | Use |
+|---|---|
+| [cyphertempre-ai-hostinger-root-accountfix.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-ai-hostinger-root-accountfix.zip) | Static files for Hostinger `public_html` |
+| [cyphertempre-dashboard-local-bridge-accountfix.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge-accountfix.zip) | Local bridge users run to pair their own Timechain files |
+
+User bridge commands:
+
+```bash
+cd ~/Downloads
+curl -L -o cyphertempre-dashboard-local-bridge-accountfix.zip https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge-accountfix.zip
+unzip -o cyphertempre-dashboard-local-bridge-accountfix.zip
+cd dashboard
+npm install
+npm run bridge
+```
+
+Then open `https://cyphertempre.ai`, use bridge URL
+`http://127.0.0.1:8788`, and enter the pairing code printed in Terminal.
+
 ## Install with Codex
 
 This prompt works before any GitHub releases exist, because GitHub always serves
