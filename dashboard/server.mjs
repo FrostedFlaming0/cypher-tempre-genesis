@@ -16,6 +16,7 @@ const execFileAsync = promisify(execFile);
 
 const HOST = process.env.CT_DASHBOARD_HOST || '127.0.0.1';
 const PORT = Number(process.env.CT_DASHBOARD_PORT || 8788);
+const MAX_JSON_BODY_BYTES = Math.max(1024, Number(process.env.CT_DASHBOARD_MAX_JSON_BODY_BYTES || 20_000));
 const BASE_CHAIN_ID = 8453;
 const BASE_CHAIN_ID_HEX = '0x2105';
 const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
@@ -26,7 +27,10 @@ const REQUIRED_TOKEN_AMOUNT = process.env.CT_GATE_AMOUNT || '10000';
 const RECIPIENT_NAME = process.env.CT_GATE_RECIPIENT_NAME || 'cyberphysics.base.eth';
 const RECIPIENT_ADDRESS = checksumish(process.env.CT_GATE_RECIPIENT_ADDRESS || '0x7932CCa1BD502d6850842c423d21f527de47A0Ca');
 const REQUIRED_CONFIRMATIONS = Math.max(1, Number(process.env.CT_GATE_CONFIRMATIONS || 1));
-const PAYMENT_SESSION_GRACE_MS = Math.max(120_000, Number(process.env.CT_GATE_PAYMENT_SESSION_GRACE_MS || 24 * 60 * 60_000));
+const PAYMENT_SESSION_GRACE_MS = Math.max(60_000, Number(process.env.CT_GATE_PAYMENT_SESSION_GRACE_MS || 15 * 60_000));
+const VERIFY_RATE_LIMIT_WINDOW_MS = Math.max(5_000, Number(process.env.CT_GATE_VERIFY_RATE_LIMIT_WINDOW_MS || 60_000));
+const VERIFY_RATE_LIMIT_MAX = Math.max(1, Number(process.env.CT_GATE_VERIFY_RATE_LIMIT_MAX || 6));
+const VERIFY_IP_RATE_LIMIT_MAX = Math.max(VERIFY_RATE_LIMIT_MAX, Number(process.env.CT_GATE_VERIFY_IP_RATE_LIMIT_MAX || 30));
 const WALLETCONNECT_PROJECT_ID = process.env.CT_WALLETCONNECT_PROJECT_ID || '';
 const SESSION_TTL_MS = Math.max(10 * 60_000, Number(process.env.CT_DASHBOARD_SESSION_TTL_MS || 4 * 60 * 60_000));
 const DEV_UNLOCK = process.env.CT_DASHBOARD_DEV_UNLOCK === '1';
@@ -41,7 +45,7 @@ const PUBLIC_ORIGINS = new Set(
     .filter(Boolean),
 );
 const LOCAL_ORIGIN_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-const BRIDGE_PAIR_CODE = normalizePairingCode(process.env.CT_DASHBOARD_PAIR_CODE || crypto.randomBytes(5).toString('hex'));
+const BRIDGE_PAIR_CODE = createPairingCode(process.env.CT_DASHBOARD_PAIR_CODE || crypto.randomBytes(5).toString('hex'));
 
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const TRANSFER_SELECTOR = '0xa9059cbb';
@@ -53,6 +57,7 @@ const ERC20_CALLS = {
 
 const sessions = new Map();
 const bridgeTokens = new Map();
+const verifyRateLimits = new Map();
 let tokenMetaCache = null;
 let timechainRoot = null;
 let usedPaymentsCache = null;
@@ -107,12 +112,27 @@ function sha256Hex(buffer) {
 }
 
 function normalizePairingCode(value) {
-  const compact = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return compact.length >= 8 ? compact : compact.padEnd(8, '0');
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function createPairingCode(value) {
+  const code = normalizePairingCode(value);
+  if (code.length < 8) {
+    throw new Error('CT_DASHBOARD_PAIR_CODE must contain at least 8 letters or digits.');
+  }
+  return code;
 }
 
 function displayPairingCode(value) {
   return normalizePairingCode(value).replace(/(.{4})(?=.)/g, '$1-');
+}
+
+function timingDigest(value) {
+  return crypto.createHash('sha256').update(String(value), 'utf8').digest();
+}
+
+function pairingCodeMatches(value) {
+  return crypto.timingSafeEqual(timingDigest(normalizePairingCode(value)), timingDigest(BRIDGE_PAIR_CODE));
 }
 
 function createSession() {
@@ -175,7 +195,7 @@ function parseCookies(header) {
 
 function allowedOrigin(req) {
   const origin = req.headers.origin;
-  if (!origin) return true;
+  if (!origin) return isTrustedLocalDirectRequest(req);
   try {
     const url = new URL(origin);
     if (LOCAL_ORIGIN_HOSTS.has(url.hostname)) return true;
@@ -187,12 +207,35 @@ function allowedOrigin(req) {
 
 function isRemoteOrigin(req) {
   const origin = req.headers.origin;
-  if (!origin) return false;
+  if (!origin) return !isTrustedLocalDirectRequest(req);
   try {
     return !LOCAL_ORIGIN_HOSTS.has(new URL(origin).hostname);
   } catch {
     return true;
   }
+}
+
+function requestHostName(req) {
+  const host = String(req.headers.host || '').trim();
+  if (!host) return '';
+  try {
+    return new URL(`http://${host}`).hostname;
+  } catch {
+    return host.replace(/:\d+$/, '');
+  }
+}
+
+function isLoopbackRemoteAddress(value) {
+  const address = String(value || '');
+  return address === '127.0.0.1'
+    || address === '::1'
+    || address === '::ffff:127.0.0.1'
+    || address.startsWith('::ffff:127.');
+}
+
+function isTrustedLocalDirectRequest(req) {
+  const host = requestHostName(req);
+  return LOCAL_ORIGIN_HOSTS.has(host) && isLoopbackRemoteAddress(req.socket?.remoteAddress);
 }
 
 function applyCorsHeaders(req, res) {
@@ -356,30 +399,30 @@ async function markPaymentUsed(record) {
 
 async function verifyPayment({ session, account, txHash, signature }) {
   if (!/^0x[0-9a-fA-F]{64}$/.test(txHash || '')) throw httpError('Invalid transaction hash.');
-  await requirePaymentUnused(txHash);
+  const normalizedTxHash = lower(txHash);
 
   const signedAccount = evmAddressFrom(account);
+  if (!signedAccount) {
+    throw httpError('Wallet account is required. Connect the payer wallet and sign this session challenge before unlocking.');
+  }
   const signedMessage = usableSignature(signature);
-  if (signedAccount && signedMessage) {
-    const candidates = [
-      accessMessage(session, signedAccount, txHash),
-      account && String(account) !== signedAccount ? accessMessage(session, account, txHash) : null,
-    ].filter(Boolean);
-    const recovered = candidates.some((message) => {
-      try {
-        return lower(verifyMessage(message, signedMessage)) === lower(signedAccount);
-      } catch {
-        return false;
-      }
-    });
-    if (!recovered) {
+  if (!signedMessage) {
+    throw httpError('Wallet signature is required. Sign the dashboard access message for this session and transaction hash.');
+  }
+  try {
+    const recovered = verifyMessage(accessMessage(session, signedAccount, normalizedTxHash), signedMessage);
+    if (lower(recovered) !== lower(signedAccount)) {
       throw httpError('Wallet signature does not match the payer account.');
     }
+  } catch (error) {
+    if (error.status) throw error;
+    throw httpError('Wallet signature could not be verified.');
   }
+  await requirePaymentUnused(normalizedTxHash);
 
   const [tx, receipt, latestHex] = await Promise.all([
-    rpc('eth_getTransactionByHash', [txHash]),
-    rpc('eth_getTransactionReceipt', [txHash]),
+    rpc('eth_getTransactionByHash', [normalizedTxHash]),
+    rpc('eth_getTransactionReceipt', [normalizedTxHash]),
     rpc('eth_blockNumber', []),
   ]);
   if (!tx || !receipt) throw httpError('Transaction is not indexed on Base yet.', 404);
@@ -419,7 +462,7 @@ async function verifyPayment({ session, account, txHash, signature }) {
     throw httpError(`No ${REQUIRED_TOKEN_AMOUNT}+ ${(await getTokenMeta()).symbol} Transfer log to ${RECIPIENT_NAME}.`);
   }
   await markPaymentUsed({
-    txHash,
+    txHash: normalizedTxHash,
     account: payer,
     amountRaw: BigInt(matching.data || '0x0').toString(),
     blockNumber,
@@ -428,7 +471,7 @@ async function verifyPayment({ session, account, txHash, signature }) {
 
   session.unlocked = true;
   session.account = payer;
-  session.txHash = lower(txHash);
+  session.txHash = normalizedTxHash;
   session.expiresAt = Date.now() + SESSION_TTL_MS;
   return {
     account: session.account,
@@ -819,11 +862,46 @@ async function blobPreview(hash) {
 
 async function jsonBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_JSON_BODY_BYTES) {
+      throw httpError('Request body too large.', 413);
+    }
+    chunks.push(chunk);
+  }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw) return {};
-  if (raw.length > 20_000) throw new Error('Request body too large.');
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw httpError('Invalid JSON request body.');
+  }
+}
+
+function rateLimitHit(key, maxHits) {
+  const now = Date.now();
+  let record = verifyRateLimits.get(key);
+  if (!record || record.resetAt <= now) {
+    record = { hits: 0, resetAt: now + VERIFY_RATE_LIMIT_WINDOW_MS };
+    verifyRateLimits.set(key, record);
+  }
+  record.hits += 1;
+  if (verifyRateLimits.size > 2048) {
+    for (const [entryKey, entry] of verifyRateLimits) {
+      if (entry.resetAt <= now) verifyRateLimits.delete(entryKey);
+    }
+  }
+  if (record.hits > maxHits) {
+    const error = httpError('Too many payment verification attempts. Wait a moment and try again.', 429);
+    error.retryAfter = Math.max(1, Math.ceil((record.resetAt - now) / 1000));
+    throw error;
+  }
+}
+
+function enforceVerifyRateLimit(req, session) {
+  rateLimitHit(`session:${session.id}`, VERIFY_RATE_LIMIT_MAX);
+  rateLimitHit(`ip:${req.socket?.remoteAddress || 'unknown'}`, VERIFY_IP_RATE_LIMIT_MAX);
 }
 
 function bridgeStatus(req) {
@@ -914,7 +992,7 @@ async function handle(req, res) {
     }
     if (url.pathname === '/api/bridge/pair' && req.method === 'POST') {
       const body = await jsonBody(req);
-      if (normalizePairingCode(body.code) !== BRIDGE_PAIR_CODE) {
+      if (!pairingCodeMatches(body.code)) {
         const error = new Error('Pairing code did not match this local bridge.');
         error.status = 401;
         throw error;
@@ -957,6 +1035,7 @@ async function handle(req, res) {
       return;
     }
     if (url.pathname === '/api/gate/verify' && req.method === 'POST') {
+      enforceVerifyRateLimit(req, session);
       const body = await jsonBody(req);
       const result = await verifyPayment({ session, ...body });
       sendJson(res, 200, { ok: true, result });

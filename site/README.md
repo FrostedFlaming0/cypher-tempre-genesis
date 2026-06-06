@@ -47,7 +47,8 @@ window.CYPHER_TEMPRE_PUBLIC_CONFIG = {
 ```
 
 If `walletConnectProjectId` is blank, the site still supports browser-injected
-wallets and pasted Base transaction hashes.
+wallets. Pasted Base transaction hashes still require a signature from the
+payment sender before the local bridge unlocks.
 
 If hPanel offers Git deployment for your plan, set the deploy/publish path to
 `dashboard/public`. If it only supports File Manager/FTP, upload the contents of
@@ -97,11 +98,13 @@ file reads happen in the local `dashboard/server.mjs` process.
 3. The bridge prints a pairing code.
 4. User enters the pairing code on `cyphertempre.ai`.
 5. The hosted page calls the local bridge at `http://127.0.0.1:8788`.
-6. User connects through WalletConnect/browser wallet, or sends `10,000 CPHY`
-   on Base to `cyberphysics.base.eth` from any wallet and pastes the transaction
-   hash.
-7. The local bridge verifies the Base CPHY payment, redeems that transaction hash
-   locally once, and reads local Timechain files.
+6. User connects the payer wallet through WalletConnect/browser wallet, sends
+   `10,000 CPHY` on Base to `cyberphysics.base.eth`, or pastes that payer
+   wallet's transaction hash.
+7. The payer wallet signs the local bridge's current session challenge, binding
+   the session nonce, account, and transaction hash.
+8. The local bridge verifies the signature and Base CPHY payment, redeems that
+   transaction hash locally once, and reads local Timechain files.
 
 No hosted service stores agent Timechain data. The public site is static; the
 local bridge is the only process that reads local skill files.
