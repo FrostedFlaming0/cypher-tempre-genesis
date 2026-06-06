@@ -1,7 +1,7 @@
 ---
 name: cypher-tempre-self-model
 description: Persistent, verifiable Timechain memory and self-modeling workflow for AI agents using stdlib Python helpers.
-version: 1.1.2
+version: 1.2
 homepage: https://github.com/cyberphysicsai/cypher-tempre-genesis
 user-invocable: true
 metadata:

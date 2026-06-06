@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2 — 2026-06-06
+
+### Added
+- **Runtime bundle expansion** — release ZIPs now cover Claude Code, Codex, OpenClaw, Hermes, and NanoClaw so each platform can discover the same full Cypher Tempre Timechain skill.
+- **Dashboard distribution links** — the repository documents the local-first Timechain dashboard and bridge downloads used by `cyphertempre.ai` without committing any user memory state.
+
+### Validated
+- Clean v1.2 bundle packaging keeps generated `chain/`, `tasks/`, and `__pycache__/` state out of shared release assets.
+
 ## v1.1.2 — 2026-06-04
 
 ### Added
