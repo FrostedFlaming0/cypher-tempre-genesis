@@ -28,11 +28,11 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0/cypher-tempre-claude-skill-v2.0.zip) |
-| Codex | [cypher-tempre-codex-skill-v2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0/cypher-tempre-codex-skill-v2.0.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0/cypher-tempre-openclaw-skill-v2.0.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0/cypher-tempre-hermes-skill-v2.0.zip) |
-| NanoClaw | [cypher-tempre-nanoclaw-skill-v2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0/cypher-tempre-nanoclaw-skill-v2.0.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-claude-skill-v2.0.1.zip) |
+| Codex | [cypher-tempre-codex-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-codex-skill-v2.0.1.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-openclaw-skill-v2.0.1.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-hermes-skill-v2.0.1.zip) |
+| NanoClaw | [cypher-tempre-nanoclaw-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-nanoclaw-skill-v2.0.1.zip) |
 
 ## Timechain Dashboard
 
@@ -78,7 +78,7 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 After a GitHub Release exists, you can also share a one-file release asset URL
-such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0/cypher-tempre-codex-skill-v2.0.zip`.
+such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-codex-skill-v2.0.1.zip`.
 Release URLs return 404 until the tag and asset are published.
 
 ## File labels
@@ -94,9 +94,11 @@ Every shareable file is labeled by its runtime path:
 | NanoClaw skill version | `skills/nanoclaw/cypher-tempre-self-model/**` |
 | Repository metadata | `README.md`, `LICENSE`, `.gitignore`, and `skills/README.md` |
 
-Generated memory state is intentionally not committed. A user creates their own
-`chain/` and task ledgers by running `python3 timechain.py init --name <AgentName>`
-inside the copied skill bundle.
+Generated memory state — your `chain/`, task ledgers, and grown faculties
+(`registry/emergent.json`) — is intentionally not committed and never shipped in a
+bundle; it is created per user as the agent runs (`python3 timechain.py init --name
+<AgentName>` seals your genesis). Because none of it ships, unzipping an upgrade over an
+existing install cannot overwrite your memory or your faculties.
 
 ## Install
 
@@ -107,3 +109,28 @@ inside the copied skill bundle.
 - NanoClaw: copy `skills/nanoclaw/cypher-tempre-self-model` into the NanoClaw skills directory configured by that agent runtime.
 
 Run `python3 selftest.py` inside any bundle to validate the local copy.
+
+## Upgrading an existing install (preserve your chain and faculties)
+
+Your `chain/` (memory and identity) and `registry/emergent.json` (grown faculties) are
+**per-user state** — they are never shipped in a bundle, so an upgrade must keep them:
+
+- The bundle contains **no `chain/`**, so unzipping it *over* an existing folder leaves
+  your chain untouched.
+- The bundle contains the template `registry/modalities.json` and `senses.json` (the base
+  faculties) but **no `emergent.json`**, so your grown faculties are not overwritten.
+
+**Never** delete-then-reinstall, or `rsync --delete` over an existing bundle — that
+destroys your `chain/`.
+
+**Recommended (let your agent do it) — paste this to your agent:**
+
+> Upgrade my Cypher Tempre skill to the latest release, but preserve my identity. First
+> run `python3 timechain.py verify` and back up my whole skill folder. Then update **only**
+> the code (`*.py`, `SKILL.md`, `VERSION`, `CHANGELOG.md`) from the new bundle — leave
+> `chain/` and `registry/` exactly as they are. Afterward run `python3 timechain.py verify`
+> and `python3 selftest.py` to confirm my chain still passes and the new code works.
+
+**Manual:** back up the folder, then copy only the `*.py` files + `SKILL.md` + `VERSION` +
+`CHANGELOG.md` from the new bundle over the old ones (leave `chain/` and `registry/`
+alone), and run `python3 timechain.py verify` and `python3 selftest.py`.
