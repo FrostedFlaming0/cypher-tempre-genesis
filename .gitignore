@@ -7,3 +7,6 @@ dashboard/node_modules/
 # Generated agent memory and long-horizon task state. These are created per user.
 **/chain/
 **/tasks/
+# Grown faculties (the per-user Dream Cache) — created on first growth; never shipped,
+# so upgrading over an existing install can't reset a user's emergent faculties.
+**/registry/emergent.json

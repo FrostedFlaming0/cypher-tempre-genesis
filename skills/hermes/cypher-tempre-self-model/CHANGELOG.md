@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.0.1 — 2026-06-09
+
+### Fixed
+- **Upgrades no longer reset grown faculties** — release bundles no longer ship `registry/emergent.json` (the per-user Dream Cache of grown faculties). The code already defaults to an empty faculty set when the file is absent, so fresh installs are unaffected, but unzipping an upgrade over an existing install no longer overwrites a user's emergent faculties. `emergent.json` is now treated as per-user runtime state (like `chain/`) and is gitignored.
+
+### Docs
+- **"Upgrading an existing install" guide** — the README now documents how to upgrade while preserving `chain/` (memory) and `registry/` (faculties), with a copy-paste agent prompt, the manual steps, and an explicit warning never to delete-then-reinstall.
+
 ## v2.0 — 2026-06-09
 
 ### Added
