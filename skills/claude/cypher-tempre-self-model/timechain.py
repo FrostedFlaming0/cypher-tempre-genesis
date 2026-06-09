@@ -132,7 +132,6 @@ class Timechain:
         self.rings_path = self.dir / "rings.jsonl"
         self.dir.mkdir(parents=True, exist_ok=True)
         self.blockspace = Blockspace(self.dir / "blockspace")
-        self._head = None          # cached chain head -> O(1) incremental seals (no full reload)
 
     # ---- persistence ----
     def load(self) -> list:
@@ -141,14 +140,45 @@ class Timechain:
         rings = []
         for line in self.rings_path.read_text().splitlines():
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 rings.append(json.loads(line))
+            except Exception:
+                continue   # tolerate a torn line; verify() reports it explicitly
         return rings
+
+    def tail_rings(self, k: int) -> list:
+        """Return the last k rings in chain order, reading only the file TAIL — O(k),
+        not O(n). This is the bounded-window reader that lets recall/PoQ/chronosynaptic
+        scale like the Continuum: score against a bounded recent window instead of the
+        whole chain. k <= 0 or k >= height returns the same set the equivalent full
+        load would (so behavior is identical for chains that fit the window)."""
+        if k is None or k <= 0 or not self.rings_path.exists():
+            return self.load() if (k is None or k <= 0) else []
+        with open(self.rings_path, "rb") as f:
+            f.seek(0, 2)
+            pos = f.tell()
+            data = b""
+            while pos > 0 and data.count(b"\n") <= k:   # need k+1 newlines => k whole trailing lines
+                step = min(65536, pos)
+                pos -= step
+                f.seek(pos)
+                data = f.read(step) + data
+        rings = []
+        for line in data.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rings.append(json.loads(line))
+            except Exception:
+                continue   # a torn leading fragment from mid-block read — skip it
+        return rings[-k:]
 
     def _append(self, ring: dict):
         with self.rings_path.open("a") as f:
             f.write(json.dumps(ring, ensure_ascii=False) + "\n")
-        self._head = ring                      # update head cache
         self._auto_attest(ring)
 
     def _tail_ring(self):
@@ -169,9 +199,11 @@ class Timechain:
         return None
 
     def _current_head(self):
-        if self._head is None:
-            self._head = self._tail_ring()
-        return self._head
+        # Always read the TRUE tail (O(1) file-tail read), never a cached head. The skill
+        # creates many Timechain instances over one chain (poq / recall / cambium / continuum
+        # / dormancy …); a cached head would go stale the moment another instance appends,
+        # yielding a duplicate index and a broken prev_hash. Correctness over saving one read.
+        return self._tail_ring()
 
     def _auto_attest(self, ring: dict):
         """If a consensus quorum is initialized, EVERY seal is auto-attested — defense
@@ -257,6 +289,9 @@ class Timechain:
         if (self.dir / "LOCKED").exists() and ring_type not in ("recovery", "quarantine"):
             raise RuntimeError("immune lockdown active: the self is wounded — only a "
                                "'recovery' ring may be sealed until it rolls back to a clean state")
+        if (self.dir / "PAUSED").exists() and ring_type not in ("resume", "recovery", "quarantine"):
+            raise RuntimeError("self-model is paused (dormant): the chain is intentionally halted — "
+                               "run 'python3 dormancy.py resume' to wake it before sealing")
         refs = []
         for fp in (files or []):
             refs.append({"hash": self.blockspace.put_file(fp), "role": Path(fp).name})
@@ -275,39 +310,58 @@ class Timechain:
 
     # ---- verification (tamper-evidence) ----
     def verify(self):
-        rings = self.load()
-        report = []
-        if not rings:
+        """Stream the chain one ring at a time — O(1) memory regardless of height, so
+        verification scales to millions of rings. A torn/unreadable line is reported
+        rather than crashing the walk."""
+        if not self.rings_path.exists():
             return True, ["empty chain"]
+        report = []
         ok = True
         prev_hash = GENESIS_PREV
-        for i, ring in enumerate(rings):
-            if ring.get("index") != i:
-                ok = False
-                report.append(f"ring {i}: index mismatch (got {ring.get('index')})")
-            if ring.get("prev_hash") != prev_hash:
-                ok = False
-                report.append(f"ring {i}: prev_hash broken (expected {prev_hash[:12]}..)")
-            recomputed = compute_ring_hash(ring)
-            if recomputed != ring.get("ring_hash"):
-                ok = False
-                report.append(f"ring {i}: ring_hash mismatch -> TAMPERED "
-                               f"(stored {str(ring.get('ring_hash'))[:12]}.., recomputed {recomputed[:12]}..)")
-            diff = ring.get("difficulty", 0)
-            if diff and not str(ring.get("ring_hash", "")).startswith("0" * diff):
-                ok = False
-                report.append(f"ring {i}: does not meet stated difficulty {diff}")
-            for ref in ring.get("blockspace_refs", []):
-                h = ref.get("hash")
-                if not self.blockspace.has(h):
+        i = 0
+        count = 0
+        with self.rings_path.open("r") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    ring = json.loads(line)
+                except Exception as exc:
                     ok = False
-                    report.append(f"ring {i}: blockspace blob {str(h)[:12]}.. missing ({ref.get('role')})")
-                elif not self.blockspace.verify_blob(h):
+                    report.append(f"ring {i}: unreadable/torn line -> TAMPERED ({exc})")
+                    i += 1
+                    continue
+                if ring.get("index") != i:
                     ok = False
-                    report.append(f"ring {i}: blockspace blob {str(h)[:12]}.. corrupted ({ref.get('role')})")
-            prev_hash = ring.get("ring_hash")
+                    report.append(f"ring {i}: index mismatch (got {ring.get('index')})")
+                if ring.get("prev_hash") != prev_hash:
+                    ok = False
+                    report.append(f"ring {i}: prev_hash broken (expected {prev_hash[:12]}..)")
+                recomputed = compute_ring_hash(ring)
+                if recomputed != ring.get("ring_hash"):
+                    ok = False
+                    report.append(f"ring {i}: ring_hash mismatch -> TAMPERED "
+                                   f"(stored {str(ring.get('ring_hash'))[:12]}.., recomputed {recomputed[:12]}..)")
+                diff = ring.get("difficulty", 0)
+                if diff and not str(ring.get("ring_hash", "")).startswith("0" * diff):
+                    ok = False
+                    report.append(f"ring {i}: does not meet stated difficulty {diff}")
+                for ref in ring.get("blockspace_refs", []):
+                    h = ref.get("hash")
+                    if not self.blockspace.has(h):
+                        ok = False
+                        report.append(f"ring {i}: blockspace blob {str(h)[:12]}.. missing ({ref.get('role')})")
+                    elif not self.blockspace.verify_blob(h):
+                        ok = False
+                        report.append(f"ring {i}: blockspace blob {str(h)[:12]}.. corrupted ({ref.get('role')})")
+                prev_hash = ring.get("ring_hash")
+                i += 1
+                count += 1
+        if count == 0:
+            return True, ["empty chain"]
         if ok:
-            report.append(f"verified {len(rings)} rings -> chain intact, all hashes link, blockspace consistent")
+            report.append(f"verified {count} rings -> chain intact, all hashes link, blockspace consistent")
         return ok, report
 
 

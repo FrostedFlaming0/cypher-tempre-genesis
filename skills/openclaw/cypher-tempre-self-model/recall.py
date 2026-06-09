@@ -46,7 +46,7 @@ from pathlib import Path
 
 from timechain import Timechain
 from cambium import load_corpus, detect_gap
-from poq import tokens, jaccard, clamp, gate_and_seal
+from poq import tokens, jaccard, clamp, gate_and_seal, POQ_WINDOW
 
 ENTITY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 PATH_HINT_RE = re.compile(r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\.[A-Za-z0-9]+")
@@ -313,12 +313,26 @@ class Recall:
                  relevance_fn=None, embed=False, path=None, dir=None, neighbors=1,
                  semantic_weight=0.70, path_weight=0.20, chronological_weight=0.10,
                  language=None, extension=None, role=None, top_dir=None,
-                 exclude_path=None, exclude_dir=None, source_only=False):
+                 exclude_path=None, exclude_dir=None, source_only=False,
+                 scan_window=None, use_index=False, index_limit=300):
         if embed and self.embedder is None:           # default to the stdlib embedder
             import embed as _embmod
             self.embedder = _embmod.get_embedder("hashing")
-        rings = self.tc.load()
         q = self.label(query, context)                # also embeds the query if embedder is set
+        # Candidate source: the persistent Hippocampus (sub-linear shortlist) when use_index,
+        # a bounded recent tail when scan_window, else the whole chain. The path/metadata
+        # filters and scorer below still judge — the index only narrows the field.
+        if use_index:
+            from hippocampus import Hippocampus
+            hippo = Hippocampus(self.tc.root, embedder=self.embedder)
+            hippo.ensure_current()
+            rings = hippo.candidates(query, context,
+                                     query_embedding=(q.get("embedding") if embed else None),
+                                     limit=index_limit)
+        elif scan_window:
+            rings = self.tc.tail_rings(scan_window)
+        else:
+            rings = self.tc.load()
         qS = {s["id"] for s in q["senses"]}
         qM = {m["id"] for m in q["modalities"]}
         qK, qE = set(q["keywords"]), set(q["entities"])
@@ -333,7 +347,6 @@ class Recall:
         hints = path_hints(query + " " + context)
 
         raw = []
-        n = max(1, len(rings) - 1)
         for r in rings:
             if r["index"] == 0:                       # skip the genesis/identity block
                 continue
@@ -393,8 +406,8 @@ class Recall:
                 + chronological_weight * chronological
                 + 0.05 * min(1.0, item["faculty"] / 4.0)
                 + 0.03 * (lab.get("salience", 0) / 255)
-                + 0.02 * (r["index"] / n)
-                - item["noise_penalty"]
+                - item["noise_penalty"]   # no recency term: relevance/path/anchors decide selection;
+                #                            time is for orientation only (chain-order presentation below)
             )
             scored.append((score, r, lab, {
                 "semantic": round(item["semantic"], 3),
@@ -468,6 +481,9 @@ class Recall:
                         break
                     block["neighbors"].append(brief_block(nr, words=45, query=query))
                     used += cost
+        # ORIENTATION: relevance + path/anchor proximity selected WHICH blocks; present the
+        # top-level hits in chain order (the arrow of time) so the model reads them in sequence.
+        chosen.sort(key=lambda b: b["index"])
         return {"query_labels": q, "dissonance": dissonance, "appetite": appetite,
                 "threshold": round(threshold, 2), "considered": len(scored),
                 "returned": len(chosen), "budget": budget_tokens, "tokens_used": used,
@@ -546,11 +562,13 @@ class Recall:
         result["ok"] = verdict == "verified"
         return result
 
-    def seal(self, ring_type, summary, context="", external_scores=None, difficulty=0, files=None):
+    def seal(self, ring_type, summary, context="", external_scores=None, difficulty=0, files=None,
+             window=POQ_WINDOW, relevant_rings=None, use_index=False):
         labels = self.label(summary, context)
         verdict, ring = gate_and_seal(self.tc, summary, context, ring_type=ring_type,
                                       difficulty=difficulty, external_scores=external_scores,
-                                      files=files, extra_payload={"labels": labels})
+                                      files=files, extra_payload={"labels": labels},
+                                      window=window, relevant_rings=relevant_rings, use_index=use_index)
         return verdict, ring, labels
 
 
@@ -580,7 +598,8 @@ def cmd_retrieve(args):
                      path_weight=args.path_weight, chronological_weight=args.chrono_weight,
                      language=args.language, extension=args.ext, role=args.role,
                      top_dir=args.top_dir, exclude_path=args.exclude_path,
-                     exclude_dir=args.exclude_dir, source_only=args.source_only)
+                     exclude_dir=args.exclude_dir, source_only=args.source_only,
+                     scan_window=args.scan_window, use_index=args.index, index_limit=args.index_limit)
     if args.embed:
         print(f"[embedding recall: {rec.embedder.name}]")
     print("query self-labels:")
@@ -641,7 +660,7 @@ def cmd_seal(args):
            if getattr(args, d) is not None}
     verdict, ring, labels = Recall(args.root, args.registry_root).seal(
         args.type, args.summary, context=args.context or "",
-        external_scores=poq or None, difficulty=args.difficulty)
+        external_scores=poq or None, difficulty=args.difficulty, use_index=args.index)
     print(f"PoQ decision: {verdict['decision']}")
     if ring:
         print(f"sealed self-labeled Ring {ring['index']}  {ring['ring_hash'][:16]}..")
@@ -727,6 +746,12 @@ def build_parser():
     pr.add_argument("--semantic-weight", type=float, default=0.70)
     pr.add_argument("--path-weight", type=float, default=0.20)
     pr.add_argument("--chrono-weight", type=float, default=0.10)
+    pr.add_argument("--scan-window", type=int, default=None,
+                    help="bound the candidate scan to the last N rings (default: scan all)")
+    pr.add_argument("--index", action="store_true",
+                    help="use the persistent Hippocampus index for a sub-linear candidate shortlist")
+    pr.add_argument("--index-limit", type=int, default=300,
+                    help="max candidates the index returns before the scorer/model judge (default 300)")
     pr.set_defaults(func=cmd_retrieve)
 
     pv = sub.add_parser("verify-source", parents=[common], help="verify a retrieved source ring against a live repo")
@@ -741,6 +766,8 @@ def build_parser():
     ps.add_argument("--difficulty", type=int, default=0)
     for d in ["coherence", "relevance", "novelty", "consistency", "depth", "covenant"]:
         ps.add_argument(f"--{d}", type=int, default=None)
+    ps.add_argument("--index", action="store_true",
+                    help="ground the conscience against the most-relevant rings via the Hippocampus index")
     ps.set_defaults(func=cmd_seal)
 
     pi = sub.add_parser("index", parents=[common], help="model-facing map: summary+labels per block (the model judges relevance from this)")
