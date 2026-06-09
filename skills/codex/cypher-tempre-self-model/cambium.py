@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -53,12 +54,78 @@ def short(text: str, n: int = 70) -> str:
 # Faculty corpus + gap detection
 # --------------------------------------------------------------------------- #
 
+def _atomic_write_json(path: Path, obj):
+    """Write JSON via temp + rename so a crash never leaves a half-written registry."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False))
+    tmp.replace(path)
+
+
+def load_grown(root: Path) -> dict:
+    """The per-user store of PROMOTED faculties. Kept OUT of the shipped base registries
+    (modalities.json / senses.json) and gitignored — like emergent.json and chain/ — so an
+    upgrade that overwrites the base files can never lose a user's promoted faculties."""
+    p = root / "registry" / "grown.json"
+    if p.exists():
+        try:
+            data = json.loads(p.read_text())
+            data.setdefault("modalities", [])
+            data.setdefault("senses", [])
+            return data
+        except Exception:
+            pass
+    return {"registry": "grown", "modalities": [], "senses": []}
+
+
+def save_grown(root: Path, data: dict):
+    _atomic_write_json(root / "registry" / "grown.json", data)
+
+
+def migrate_legacy_promotions(root: Path) -> bool:
+    """One-time, idempotent: older versions appended promoted faculties directly into the
+    shipped base registries. Move any such entries (marked by a 'promoted' origin) into the
+    per-user grown.json and restore the base files to pristine, so the base can never carry
+    a user's promotions. No-op once the base files are clean. Best-effort and atomic."""
+    grown = None
+    moved = False
+    for key, fname in (("modalities", "modalities.json"), ("senses", "senses.json")):
+        p = root / "registry" / fname
+        if not p.exists():
+            continue
+        try:
+            data = json.loads(p.read_text())
+        except Exception:
+            continue
+        entries = data.get(key, [])
+        promoted = [e for e in entries if "promoted" in str(e.get("origin", "")).lower()]
+        if not promoted:
+            continue
+        if grown is None:
+            grown = load_grown(root)
+        have = {(g.get("id"), g.get("name")) for g in grown.get(key, [])}
+        for e in promoted:
+            if (e.get("id"), e.get("name")) not in have:
+                grown.setdefault(key, []).append(e)
+        data[key] = [e for e in entries if "promoted" not in str(e.get("origin", "")).lower()]
+        _atomic_write_json(p, data)
+        moved = True
+    if grown is not None and moved:
+        save_grown(root, grown)
+    return moved
+
+
 def load_corpus(root: Path):
+    try:
+        migrate_legacy_promotions(root)        # best-effort; the merge below is loss-proof regardless
+    except Exception:
+        pass
+    grown = load_grown(root)
     corpus = []
     for kind, fname, key in [("modality", "registry/modalities.json", "modalities"),
                              ("sense", "registry/senses.json", "senses")]:
         data = json.loads((root / fname).read_text())
-        for f in data[key]:
+        for f in list(data.get(key, [])) + list(grown.get(key, [])):   # base + per-user promotions
             corpus.append({
                 "kind": kind, "id": f["id"], "name": f["name"],
                 "function": f["function"], "category": f["category"],
@@ -179,27 +246,28 @@ def faculty_poq(gap: dict, function: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
-    fname = "registry/modalities.json" if e["kind"] == "modality" else "registry/senses.json"
     key = "modalities" if e["kind"] == "modality" else "senses"
-    p = root / fname
-    data = json.loads(p.read_text())
-    new_id = max(it["id"] for it in data[key]) + 1
-    data[key].append({
+    base = json.loads((root / "registry" / f"{key}.json").read_text()).get(key, [])
+    grown = load_grown(root)
+    existing_ids = [it["id"] for it in base] + [it["id"] for it in grown.get(key, [])]
+    new_id = (max(existing_ids) if existing_ids else 0) + 1
+    grown.setdefault(key, []).append({
         "id": new_id,
         "name": e["name"],
         "origin": f"emergent {e['eid']} (promoted after {e['recurrence']} recurrences)",
         "function": e["function"],
         "category": e["category"],
     })
-    p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    save_grown(root, grown)                    # promotions live in the per-user grown.json, not the base
     e["promoted_to_id"] = new_id
 
+    grown_path = root / "registry" / "grown.json"
     payload = {"event": "faculty_promotion", "emergent": e["eid"], "name": e["name"],
                "kind": e["kind"], "promoted_to_id": new_id, "recurrence": e["recurrence"],
-               "registry": fname}
+               "registry": "registry/grown.json"}
     poq = {"coherence": 210, "relevance": 205, "novelty": 175,
            "consistency": 220, "depth": 205, "covenant": 255}
-    return tc.seal("promotion", payload, files=[str(p)], poq=poq, difficulty=difficulty)
+    return tc.seal("promotion", payload, files=[str(grown_path)], poq=poq, difficulty=difficulty)
 
 
 # --------------------------------------------------------------------------- #
