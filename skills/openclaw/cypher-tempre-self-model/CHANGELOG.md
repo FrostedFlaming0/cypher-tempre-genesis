@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.0 — 2026-06-09
+
+### Added
+- **Hippocampus recall index (`hippocampus.py`)** — a persistent, rebuildable, sub-linear candidate index over the Timechain (memory-index theory). Built entirely from each ring's own sealed labels, incremental (`update` is O(new)), local + stdlib (inverted postings + sign-random-projection LSH), and strictly subordinate: it returns a candidate shortlist that recall's scorer and the model still judge, with dissonance still gating appetite. Wire it in with `recall retrieve --index`. Turns O(n) recall over millions of rings into a sub-linear shortlist (~52x faster at 2k rings, the gap widening with size) while losing none of recall's benefits, and is rebuildable from the chain so it adds no trust surface.
+- **Manual dormancy / pause (`dormancy.py`)** — `pause` / `resume` / `status` let the co-evolver halt the per-turn loop for simple tasks: no recall, no PoQ gating, no Cambium growth, no seals. The chain stays frozen and still verifies; `timechain.seal` refuses normal rings while paused. Voluntary and reversible — distinct from involuntary immune lockdown.
+- **Relevance-driven conscience** — `gate_and_seal` and `recall seal --index` can ground a new thought against the *most relevant* rings (surfaced by the Hippocampus) instead of defaulting to recent ones.
+
+### Changed
+- **Bounded relevance window (`POQ_WINDOW = 121`, relevance-first)** — PoQ now scores a candidate against the 121 most-relevant rings (model-supplied relevant rings first, then recent) rather than the whole chain. The gate is O(window) not O(height), and grounding no longer inflates as the chain grows, so the anti-hallucination `FORCE_UNCERTAINTY` gate stays as sharp at ring 3,000,000 as at ring 3.
+- **Recency demoted to orientation** — `recall.retrieve` no longer biases selection toward recent rings (the context window already holds recency). Relevance alone decides *which* rings are retrieved; chain order is used only for *orientation* — results are presented in chronological order with `prev_hash -> ring_hash` lineage.
+- **Streaming verification** — `timechain verify` streams ring-by-ring (O(1) memory) and tolerates a torn trailing line instead of crashing, so verification scales to millions of rings.
+
+### Hardened / Fixed
+- **Cross-instance head-cache bug** — the per-instance cached chain head could go stale when multiple `Timechain` instances wrote the same chain (duplicate index + broken `prev_hash`). `_current_head` now always reads the true tail (still O(1) per seal); interleaved multi-instance seals produce a valid chain and 10,000 sequential seals run in ~1s.
+- **Torn-line tolerance** — `load` and the tail reader skip an unreadable trailing line rather than failing every read.
+
+### Validated
+- Eleven-mechanism `selftest` passes on every platform bundle (Claude, Codex, OpenClaw, Hermes, NanoClaw), covering the new Hippocampus and dormancy mechanisms alongside the full v1.x cartography, secret-redaction, and explicit-notes feature set.
+
 ## v1.2 — 2026-06-06
 
 ### Added

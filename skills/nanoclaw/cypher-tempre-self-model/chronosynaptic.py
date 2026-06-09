@@ -46,7 +46,7 @@ import sys
 from pathlib import Path
 
 from timechain import Timechain, POQ_DIMENSIONS
-from poq import PoQGate, tokens, jaccard, ring_text
+from poq import PoQGate, tokens, jaccard, ring_text, POQ_WINDOW
 
 
 def short(s: str, n: int = 48) -> str:
@@ -211,10 +211,15 @@ class Node:
 
 
 class ChronosynapticTree:
-    def __init__(self, root_path, iterations=16, forks=4, max_depth=2, c=1.2):
+    def __init__(self, root_path, iterations=16, forks=4, max_depth=2, c=1.2, window=POQ_WINDOW):
         self.root_path = Path(root_path)
         self.tc = Timechain(self.root_path)
-        self.chain = self.tc.load()
+        # Bounded relevance window (O(window) tail read): ground the search against recent
+        # memory, not the whole chain.
+        self.chain = self.tc.tail_rings(window) if (window and window > 0) else self.tc.load()
+        # Tokenize the window ONCE and reuse for every PoQ evaluation in the search; otherwise
+        # the MCTS re-tokenizes the whole window iterations x depth x forks times.
+        self._ring_token_sets = [set(tokens(ring_text(r))) for r in self.chain]
         self.gate = PoQGate()
         self.faculties = load_faculties(self.root_path)
         self.iterations = iterations
@@ -235,7 +240,8 @@ class ChronosynapticTree:
     # ---- PoQ valuation against unified data (past chain + training seam) ----
     def value(self, path, query, context, external=None):
         text = self.compose(path, query)
-        verdict = self.gate.evaluate(text, self.chain, context, external)
+        verdict = self.gate.evaluate(text, self.chain, context, external,
+                                     ring_token_sets=self._ring_token_sets)
         return verdict, text
 
     def compose(self, path, query):
@@ -414,7 +420,7 @@ class ChronosynapticTree:
 
 def cmd_think(args):
     tree = ChronosynapticTree(args.root, iterations=args.iterations,
-                              forks=args.forks, max_depth=args.depth)
+                              forks=args.forks, max_depth=args.depth, window=args.window)
     if len(tree.chain) == 0:
         print("No chain yet — run 'python3 timechain.py init' first.")
         sys.exit(1)
@@ -489,6 +495,8 @@ def build_parser():
     pt.add_argument("--iterations", type=int, default=16)
     pt.add_argument("--forks", type=int, default=4)
     pt.add_argument("--depth", type=int, default=2)
+    pt.add_argument("--window", type=int, default=POQ_WINDOW,
+                    help=f"bounded relevance window of recent rings to ground against (default {POQ_WINDOW}; 0 = whole chain)")
     pt.add_argument("--seal", action="store_true", help="seal the collapsed highest-truth path into the chain")
     pt.add_argument("--difficulty", type=int, default=0)
     pt.set_defaults(func=cmd_think)

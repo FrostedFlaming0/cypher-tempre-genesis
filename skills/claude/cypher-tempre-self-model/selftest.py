@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Self-test — exercise all nine mechanisms end-to-end on a throwaway chain and assert the
+Self-test — exercise all eleven mechanisms end-to-end on a throwaway chain and assert the
 core invariants. Run from the skill directory:  python3 selftest.py
 Exit 0 = all green. Stdlib only.
 """
@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-import timechain, poq, cambium, chronosynaptic, continuum, recall, consensus, immune, embed
+import timechain, poq, cambium, chronosynaptic, continuum, recall, consensus, immune, embed, hippocampus, dormancy
 
 SKILL = Path(__file__).resolve().parent
 _ok = True
@@ -160,6 +160,29 @@ def main():
         # 9. Immune — scan a clean chain
         d = immune.Immune(root).detect()
         check("immune: scan runs, chain clean", d.get("compromised") is False)
+
+        # 10. Hippocampus — persistent, rebuildable, sub-linear recall index (derived from the chain)
+        hp = hippocampus.Hippocampus(root)
+        built = hp.build()
+        check("hippocampus: index builds from chain", built["indexed"] >= 1)
+        check("hippocampus: not stale after build", hp.status()["stale"] is False)
+        cand = hp.search("wallet alpha")              # 'wallet'/'alpha' live in the cartography blocks above
+        check("hippocampus: sub-linear search returns candidates", isinstance(cand, list) and len(cand) >= 1)
+        check("hippocampus: index loss does not affect chain integrity", tc.verify()[0])
+
+        # 11. Dormancy — manual pause halts sealing; resume restores it; chain stays intact
+        dm = dormancy.Dormancy(root)
+        dm.pause(reason="selftest")
+        check("dormancy: pause sets dormant state", dm.is_paused())
+        check("dormancy: chain still verifies while paused", tc.verify()[0])
+        try:
+            tc.seal("experience", {"summary": "refused while paused"}); refused = False
+        except RuntimeError:
+            refused = True
+        check("dormancy: seal refused while paused", refused)
+        dm.resume()
+        check("dormancy: resume clears dormant state", not dm.is_paused())
+        check("dormancy: sealing works again after resume", tc.seal("experience", {"summary": "after resume"})["index"] >= 1)
 
         check("timechain: final verify", tc.verify()[0])
     finally:

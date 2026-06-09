@@ -168,6 +168,17 @@ def measure_assertiveness(text: str) -> int:
 # The gate
 # --------------------------------------------------------------------------- #
 
+# Bounded relevance window. PoQ scores a candidate against the POQ_WINDOW MOST
+# RELEVANT rings — model-judged relevant blocks first, then the most recent ones
+# fill the remaining budget — never the whole chain. Two payoffs: (1) the gate is
+# O(window), not O(height); (2) grounding no longer INFLATES as the chain grows.
+# Grounding = coverage(candidate, context + scored-rings); if "scored-rings" were
+# the whole chain, a long chain would contain nearly every token and grounding ->
+# 255 for anything, silently disabling the FORCE_UNCERTAINTY anti-hallucination
+# gate. Bounding keeps the conscience as sharp at ring 3,000,000 as at ring 3. For
+# chains <= POQ_WINDOW this is identical to scoring the whole chain.
+POQ_WINDOW = 121
+
 DEFAULT_THRESHOLDS = {
     "brightness_target": 150,
     "covenant_floor": 150,
@@ -181,11 +192,15 @@ class PoQGate:
     def __init__(self, thresholds=None):
         self.t = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
 
-    def evaluate(self, candidate: str, chain, context: str = "", external_scores=None) -> dict:
+    def evaluate(self, candidate: str, chain, context: str = "", external_scores=None,
+                 ring_token_sets=None) -> dict:
         ext = external_scores or {}
         cand = set(tokens(candidate))
         ctx = set(tokens(context))
-        ring_token_sets = [set(tokens(ring_text(r))) for r in chain]
+        if ring_token_sets is None:                      # caching seam: a caller that scores
+            ring_token_sets = [set(tokens(ring_text(r))) for r in chain]   # the same chain many
+        # times (e.g. chronosynaptic's MCTS) tokenizes the window ONCE and passes it in,
+        # turning O(iterations x depth x forks x height) into O(height) + O(evals).
         support = set().union(ctx, *ring_token_sets) if (ctx or ring_token_sets) else set()
 
         s = {
@@ -234,13 +249,60 @@ class PoQGate:
         }
 
 
+def _ring_index(r):
+    idx = r.get("index")
+    return idx if idx is not None else 0
+
+
+def relevance_window(tc: Timechain, window: int = POQ_WINDOW, relevant_rings=None) -> list:
+    """The bounded set of AT MOST `window` rings the gate scores against — RELEVANCE
+    FIRST. Model-judged `relevant_rings` (blocks the model recalled as pertinent) are
+    taken first, because the model is the relevance judge; the remaining budget is then
+    filled with the most recent rings (recency is only the default proxy for relevance
+    when the model supplies none). So the window holds the `window` MOST RELEVANT rings,
+    not merely the newest. Read is O(window) from the tail. window <= 0 -> whole chain
+    (with any relevant_rings merged in)."""
+    if not window or window <= 0:
+        base = tc.load()
+        if not relevant_rings:
+            return base
+        seen = {_ring_index(r) for r in base}
+        return sorted(base + [r for r in relevant_rings if _ring_index(r) not in seen],
+                      key=_ring_index)
+    relevant = list(relevant_rings or [])[:window]            # model's picks, capped to the budget
+    seen = {_ring_index(r) for r in relevant}
+    fill = window - len(relevant)
+    recent = []
+    if fill > 0:
+        for r in tc.tail_rings(window + len(relevant)):       # over-read so dedupe still leaves `fill`
+            if _ring_index(r) not in seen:
+                recent.append(r)
+        recent = recent[-fill:]                               # the `fill` most-recent non-duplicates
+    return sorted(relevant + recent, key=_ring_index)
+
+
 def gate_and_seal(tc: Timechain, candidate: str, context: str = "",
                   ring_type: str = "experience", difficulty: int = 0,
-                  external_scores=None, files=None, extra_payload=None, gate: PoQGate = None):
+                  external_scores=None, files=None, extra_payload=None, gate: PoQGate = None,
+                  window: int = POQ_WINDOW, relevant_rings=None, use_index: bool = False):
     """Run the gate; seal only if the verdict is SEAL. Returns (verdict, ring|None).
-    `extra_payload` (e.g. self-labels from recall.py) is merged into the sealed payload."""
+    `extra_payload` (e.g. self-labels from recall.py) is merged into the sealed payload.
+    The gate scores against a BOUNDED relevance window (relevant rings first, then recent),
+    not the whole chain — O(window) at any height, and grounding stays honest no matter how
+    long the chain has grown. With `use_index`, the Hippocampus surfaces the MOST RELEVANT
+    rings to FILL that window — a relevance-driven conscience — instead of the window
+    defaulting to the recent tail."""
     gate = gate or PoQGate()
-    verdict = gate.evaluate(candidate, tc.load(), context, external_scores)
+    if use_index and not relevant_rings:
+        try:                                           # ground the claim against the most-relevant
+            from hippocampus import Hippocampus         # history, not merely the newest rings
+            hippo = Hippocampus(tc.root)
+            hippo.ensure_current()
+            relevant_rings = hippo.candidates(candidate, context, limit=window)
+        except Exception:
+            relevant_rings = None
+    verdict = gate.evaluate(candidate, relevance_window(tc, window, relevant_rings),
+                            context, external_scores)
     if verdict["decision"] == "SEAL":
         payload = {"summary": candidate}
         if context:
@@ -274,7 +336,7 @@ def _print_verdict(v):
 def cmd_audit(args):
     tc = Timechain(args.root)
     ext = {d: getattr(args, d) for d in POQ_DIMENSIONS if getattr(args, d) is not None}
-    v = PoQGate().evaluate(args.candidate, tc.load(), args.context or "", ext or None)
+    v = PoQGate().evaluate(args.candidate, relevance_window(tc, args.window), args.context or "", ext or None)
     _print_verdict(v)
 
 
@@ -283,7 +345,8 @@ def cmd_seal(args):
     ext = {d: getattr(args, d) for d in POQ_DIMENSIONS if getattr(args, d) is not None}
     v, ring = gate_and_seal(tc, args.candidate, args.context or "",
                             ring_type=args.type, difficulty=args.difficulty,
-                            external_scores=ext or None, files=args.file)
+                            external_scores=ext or None, files=args.file, window=args.window,
+                            use_index=args.index)
     _print_verdict(v)
     if ring:
         print(f"  -> SEALED Ring {ring['index']}  {ring['ring_hash'][:16]}..")
@@ -297,6 +360,8 @@ def build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--root", type=Path, default=default_root)
     common.add_argument("--context", default=None, help="the prompt / situation the candidate responds to")
+    common.add_argument("--window", type=int, default=POQ_WINDOW,
+                        help=f"bounded relevance window: score against the last N rings (default {POQ_WINDOW}; 0 = whole chain)")
     for d in POQ_DIMENSIONS:
         common.add_argument(f"--{d}", type=int, default=None, help=f"override {d} with a model-supplied score 0-255")
 
@@ -312,6 +377,8 @@ def build_parser():
     ps.add_argument("--type", default="experience")
     ps.add_argument("--difficulty", type=int, default=0)
     ps.add_argument("--file", action="append", help="attach a file to blockspace (repeatable)")
+    ps.add_argument("--index", action="store_true",
+                    help="ground the conscience against the most-relevant rings via the Hippocampus index (relevance-driven, not recency-defaulted)")
     ps.set_defaults(func=cmd_seal)
     return p
 
