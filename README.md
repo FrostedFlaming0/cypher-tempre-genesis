@@ -112,13 +112,17 @@ Run `python3 selftest.py` inside any bundle to validate the local copy.
 
 ## Upgrading an existing install (preserve your chain and faculties)
 
-Your `chain/` (memory and identity) and `registry/emergent.json` (grown faculties) are
-**per-user state** — they are never shipped in a bundle, so an upgrade must keep them:
+Your `chain/` (memory and identity) and your **faculties** are per-user state that an
+upgrade must preserve. Grown faculties come in two kinds, and **both live in `registry/`**:
+*emergent* ones in `registry/emergent.json`, and *promoted* ones appended into
+`registry/modalities.json` / `senses.json` once a gap recurs. **The rule is simple: never
+overwrite `registry/` (or `chain/`) on an upgrade** — both methods below leave them alone.
 
-- The bundle contains **no `chain/`**, so unzipping it *over* an existing folder leaves
-  your chain untouched.
-- The bundle contains the template `registry/modalities.json` and `senses.json` (the base
-  faculties) but **no `emergent.json`**, so your grown faculties are not overwritten.
+- The bundle ships **no `chain/`** and **no `emergent.json`**, so unzipping it *over* an
+  existing folder leaves your chain and your emergent faculties untouched.
+- It *does* ship the base `registry/modalities.json` and `senses.json` (a fresh install
+  needs them) — so a naive unzip-over **would overwrite those and lose any _promoted_
+  faculties** you have grown. Do not extract the registry over an existing install.
 
 **Never** delete-then-reinstall, or `rsync --delete` over an existing bundle — that
 destroys your `chain/`.
