@@ -47,6 +47,7 @@ from pathlib import Path
 
 from timechain import Timechain, POQ_DIMENSIONS
 from poq import PoQGate, tokens, jaccard, ring_text, POQ_WINDOW
+from cambium import load_corpus
 
 
 def short(s: str, n: int = 48) -> str:
@@ -54,15 +55,10 @@ def short(s: str, n: int = 48) -> str:
 
 
 def load_faculties(root: Path):
-    fac = []
-    for kind, fname, key in [("modality", "registry/modalities.json", "modalities"),
-                             ("sense", "registry/senses.json", "senses")]:
-        data = json.loads((root / fname).read_text())
-        for f in data[key]:
-            fac.append({"kind": kind, "id": f["id"], "name": f["name"],
-                        "function": f["function"], "category": f["category"],
-                        "tokens": set(tokens(f["name"] + " " + f["function"]))})
-    return fac
+    # base modalities/senses + the user's promoted faculties (grown.json), with one-time
+    # migration of any legacy in-base promotions. Shares cambium's loader so the merge
+    # logic lives in one place (v2.1).
+    return load_corpus(root)
 
 
 def frame(perspective: dict, query: str) -> str:

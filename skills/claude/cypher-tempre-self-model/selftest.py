@@ -47,6 +47,16 @@ def main():
         gap = cambium.detect_gap(corpus, "quaternion slerp gimbal kinematics actuator torque encoder")
         check("cambium: detects dissonance on foreign input", gap["dissonance"] > 100)
 
+        # 3b. Promotion lands in the per-user grown.json (never the shipped base) — v2.1 faculty safety
+        base_n = len(cambium.load_corpus(root))              # 84 modalities + 107 senses = 191, pristine
+        for _ in range(cambium.PROMOTE_AT):
+            cambium.grow(root, "quaternion slerp gimbal kinematics actuator torque encoder rotor", mode="sprout")
+        grown = cambium.load_grown(root)
+        n_promoted = len(grown.get("modalities", [])) + len(grown.get("senses", []))
+        check("cambium: promotion recorded in per-user grown.json, not the base", n_promoted >= 1)
+        check("cambium: grown faculties merge into the corpus and base stays pristine",
+              len(cambium.load_corpus(root)) == base_n + n_promoted)
+
         # 4. Continuum — ingest + task-aware validate
         c = continuum.Continuum(root)
         c.open_task("selftest task", items_total=1)

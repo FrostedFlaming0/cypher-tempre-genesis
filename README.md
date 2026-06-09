@@ -28,11 +28,11 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-claude-skill-v2.0.1.zip) |
-| Codex | [cypher-tempre-codex-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-codex-skill-v2.0.1.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-openclaw-skill-v2.0.1.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-hermes-skill-v2.0.1.zip) |
-| NanoClaw | [cypher-tempre-nanoclaw-skill-v2.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-nanoclaw-skill-v2.0.1.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v2.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.1/cypher-tempre-claude-skill-v2.1.zip) |
+| Codex | [cypher-tempre-codex-skill-v2.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.1/cypher-tempre-codex-skill-v2.1.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v2.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.1/cypher-tempre-openclaw-skill-v2.1.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v2.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.1/cypher-tempre-hermes-skill-v2.1.zip) |
+| NanoClaw | [cypher-tempre-nanoclaw-skill-v2.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.1/cypher-tempre-nanoclaw-skill-v2.1.zip) |
 
 ## Timechain Dashboard
 
@@ -78,7 +78,7 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 After a GitHub Release exists, you can also share a one-file release asset URL
-such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.0.1/cypher-tempre-codex-skill-v2.0.1.zip`.
+such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.1/cypher-tempre-codex-skill-v2.1.zip`.
 Release URLs return 404 until the tag and asset are published.
 
 ## File labels
@@ -121,8 +121,11 @@ overwrite `registry/` (or `chain/`) on an upgrade** — both methods below leave
 - The bundle ships **no `chain/`** and **no `emergent.json`**, so unzipping it *over* an
   existing folder leaves your chain and your emergent faculties untouched.
 - It *does* ship the base `registry/modalities.json` and `senses.json` (a fresh install
-  needs them) — so a naive unzip-over **would overwrite those and lose any _promoted_
-  faculties** you have grown. Do not extract the registry over an existing install.
+  needs them). As of **v2.1**, *new* promotions are written to a per-user
+  `registry/grown.json` (gitignored, never shipped), so once you are on v2.1 your grown
+  faculties survive any unzip-over. But promotions made by an **older** version still live
+  in the base files, so a naive unzip-over during this upgrade could overwrite them — don't
+  extract the registry over an existing install; the steps below leave it alone.
 
 **Never** delete-then-reinstall, or `rsync --delete` over an existing bundle — that
 destroys your `chain/`.

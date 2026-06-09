@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.1 — 2026-06-09
+
+### Changed
+- **Promoted faculties are now per-user and never shipped.** When Cambium promotes an emergent faculty (after it recurs `PROMOTE_AT` times), it now writes the new faculty into a per-user `registry/grown.json` instead of appending it to the shipped base `registry/modalities.json` / `senses.json`. `load_corpus` and Chronosynaptic's faculty loader merge base + grown at read time, so behaviour is unchanged — but the shipped base registries stay pristine, so **upgrading over an existing install can no longer overwrite a user's promoted faculties.** (v2.0.1 already protected emergent faculties; this closes the gap for promoted ones.) `grown.json` is gitignored and created on first promotion.
+- **One-time migration** — on load, any promotions an older version had appended into the base registries are automatically moved into `grown.json` and the base files restored to pristine. Idempotent, atomic, and loss-proof (the merge reads both regardless), so existing users keep every faculty and gain the same protection.
+
+### Validated
+- Eleven mechanisms plus a new promotion-safety check pass on all five bundles: promotions land in `grown.json`, the base stays at 84 modalities / 107 senses, the corpus merges base + grown, and a legacy in-base promotion is migrated out without loss.
+
 ## v2.0.1 — 2026-06-09
 
 ### Fixed
