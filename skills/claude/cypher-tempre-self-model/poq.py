@@ -188,12 +188,34 @@ DEFAULT_THRESHOLDS = {
 }
 
 
+def policy_thresholds():
+    """Thresholds split by KIND (the Phase B doctrine): the VALUES floors come from
+    policy — they may only ever TIGHTEN, and are never trained (policy.py enforces
+    the guard). The grounding floor may be CALIBRATED by the learner from
+    sealed-then-falsified outcomes, positioned at the covenant's tolerated
+    false-seal rate — data places the threshold, policy sets the tolerance."""
+    t = dict(DEFAULT_THRESHOLDS)
+    try:
+        import policy as policymod
+        pol = policymod.load_policy()
+        t["covenant_floor"] = max(t["covenant_floor"], int(pol["values"]["covenant_floor"]))
+        t["consistency_floor"] = max(t["consistency_floor"], int(pol["values"]["consistency_floor"]))
+        cal = (pol.get("poq") or {}).get("calibrated")
+        if cal and cal.get("grounding_floor") is not None:
+            t["grounding_floor"] = int(cal["grounding_floor"])
+        if cal and cal.get("assertive_ceiling") is not None:
+            t["assertive_ceiling"] = int(cal["assertive_ceiling"])
+    except Exception:
+        pass                       # a broken policy file must never disable the gate
+    return t
+
+
 class PoQGate:
     def __init__(self, thresholds=None):
-        self.t = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+        self.t = {**policy_thresholds(), **(thresholds or {})}
 
     def evaluate(self, candidate: str, chain, context: str = "", external_scores=None,
-                 ring_token_sets=None) -> dict:
+                 ring_token_sets=None, span_guard=False) -> dict:
         ext = external_scores or {}
         cand = set(tokens(candidate))
         ctx = set(tokens(context))
@@ -238,7 +260,7 @@ class PoQGate:
             decision = "SEAL"
             reasons.append(f"brightness {brightness} >= target {self.t['brightness_target']}; covenant & consistency intact; grounding {grounding}, assertiveness {assertive} (uncertainty gate not triggered).")
 
-        return {
+        verdict = {
             "scores": s,
             "brightness": brightness,
             "grounding": grounding,
@@ -247,6 +269,23 @@ class PoQGate:
             "reasons": reasons,
             "cited_rings": cited,
         }
+        if span_guard:
+            # The HallucinationGuard microscope: ground each clause-sized span
+            # against the window, so FORCE_UNCERTAINTY can demand hedging on the
+            # SPECIFIC unsupported assertions (not smear doubt over the answer),
+            # and so the sealed verdict carries computed span->ring credit.
+            try:
+                import guard as guardmod
+                report = guardmod.guard_report(candidate, chain, context)
+                verdict["span_grounding"] = guardmod.compact(report)
+                if decision == "FORCE_UNCERTAINTY" and report["unsupported"]:
+                    names = "; ".join(f"“{u[:70]}…”" if len(u) > 70 else f"“{u}”"
+                                      for u in report["unsupported"][:3])
+                    verdict["reasons"].append(
+                        f"unsupported span(s) — hedge or evidence THESE specifically: {names}")
+            except Exception:
+                pass            # the microscope must never break the gate itself
+        return verdict
 
 
 def _ring_index(r):
@@ -302,13 +341,15 @@ def gate_and_seal(tc: Timechain, candidate: str, context: str = "",
         except Exception:
             relevant_rings = None
     verdict = gate.evaluate(candidate, relevance_window(tc, window, relevant_rings),
-                            context, external_scores)
+                            context, external_scores, span_guard=True)
     if verdict["decision"] == "SEAL":
         payload = {"summary": candidate}
         if context:
             payload["context"] = context
         payload["poq_verdict"] = {"decision": verdict["decision"],
                                   "cited_rings": verdict["cited_rings"]}
+        if verdict.get("span_grounding"):
+            payload["poq_verdict"]["span_grounding"] = verdict["span_grounding"]
         if extra_payload:
             payload.update(extra_payload)
         ring = tc.seal(ring_type, payload, files=files, poq=verdict["scores"], difficulty=difficulty)

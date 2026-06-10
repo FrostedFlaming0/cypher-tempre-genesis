@@ -34,6 +34,7 @@ import hashlib
 import hmac
 import json
 import mimetypes
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,20 @@ def compute_ring_hash(ring: dict) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def atomic_write_json(path, obj, compact=False):
+    """Write JSON via temp + rename so a crash never leaves a half-written file.
+    Every DERIVED store (indexes, registries, ledgers) writes through this; the
+    chain itself stays append-only and never rewrites."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    if compact:
+        tmp.write_text(json.dumps(obj, separators=(",", ":"), ensure_ascii=False))
+    else:
+        tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False))
+    tmp.replace(path)
 
 
 # --------------------------------------------------------------------------- #
@@ -232,6 +247,13 @@ class Timechain:
         """Compute brightness from PoQ scores, mine a nonce to the difficulty
         target (leading hex zeros), then fix the ring_hash. This is the
         'Calculate PoQ Brightness -> Mine Reply -> Seal Ring' step."""
+        # HASH WHAT YOU WRITE: normalize the ring through a JSON round-trip BEFORE
+        # hashing, so the hashed object is byte-for-byte what re-reading the disk
+        # yields. Without this, payloads containing non-string dict keys hash over
+        # a different canonical ordering (int keys sort numerically; their JSON
+        # forms sort lexically) and the sealed ring is born unverifiable — found
+        # in production when a span-credit map keyed by ring index broke a seal.
+        ring = json.loads(json.dumps(ring, ensure_ascii=False))
         poq = ring.get("poq") or {}
         scores = [poq[d] for d in POQ_DIMENSIONS if isinstance(poq.get(d), (int, float))]
         poq["brightness"] = round(sum(scores) / len(scores), 3) if scores else None

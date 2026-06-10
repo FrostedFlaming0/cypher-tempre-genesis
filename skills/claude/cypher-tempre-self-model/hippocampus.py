@@ -44,7 +44,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from timechain import Timechain
+from timechain import Timechain, atomic_write_json
+import embed as embmod
 
 WORD_RE = re.compile(r"[a-z0-9']+")
 
@@ -54,11 +55,7 @@ def _toks(text):
 
 
 def _atomic_write(path: Path, obj):
-    """Write JSON via temp + rename so a crash never leaves a half-written index."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(obj, separators=(",", ":"), ensure_ascii=False))
-    tmp.replace(path)
+    atomic_write_json(path, obj, compact=True)
 
 
 def _block_text(ring):
@@ -171,9 +168,21 @@ class Hippocampus:
         self._offsets[str(idx)] = off
         for t in _ring_terms(ring):
             self._postings.setdefault(t, []).append(idx)
-        emb = (ring.get("payload", {}).get("labels") or {}).get("embedding")
+        labels = ring.get("payload", {}).get("labels") or {}
+        emb = labels.get("embedding")
         if emb:
-            self._lsh.setdefault(str(self._signature(emb)), []).append(idx)
+            # ONE vector space per LSH bank: signatures over vectors from different
+            # embedders/models/dims are meaningless neighbours. The bank adopts the
+            # first fingerprint it sees (unstamped = legacy default) and foreign
+            # vectors are counted but never bucketed.
+            fp = labels.get("embedding_fingerprint") or embmod.LEGACY_FINGERPRINT
+            bank = self._meta.get("embedding_fingerprint")
+            if bank is None:
+                self._meta["embedding_fingerprint"] = bank = fp
+            if fp == bank:
+                self._lsh.setdefault(str(self._signature(emb)), []).append(idx)
+            else:
+                self._meta["lsh_skipped_foreign"] = self._meta.get("lsh_skipped_foreign", 0) + 1
 
     # ---- build / update ----
     def build(self):
@@ -181,8 +190,11 @@ class Hippocampus:
         regenerate at any time; the chain remains the only source of truth."""
         self.dir.mkdir(parents=True, exist_ok=True)
         self._postings, self._offsets, self._lsh = {}, {}, {}
-        self._meta = {"lsh_seed": self.LSH_SEED, "lsh_bits": self.LSH_BITS}
+        self._meta = {"lsh_seed": self.LSH_SEED, "lsh_bits": self.LSH_BITS,
+                      "embedding_fingerprint": (embmod.fingerprint_of(self.embedder)
+                                                if self.embedder is not None else None)}
         self._loaded = True
+        self._planes = None                  # new bank, possibly new dim -> regrow planes
         self._end_offset = 0
         count = 0
         if self.tc.rings_path.exists():
@@ -223,16 +235,23 @@ class Hippocampus:
         return self._meta.get("head_hash") != cur
 
     def ensure_current(self):
-        """Lazily bring the index to the chain head (build if absent, else incremental)."""
+        """Lazily bring the index to the chain head (build if absent, else incremental).
+        A bank built for a different embedder's vector space is rebuilt, not patched —
+        the index is derived, so a rebuild is always safe and always sound."""
         self._load()
         if not self._meta:
             return self.build()
+        if self.embedder is not None:
+            bank = self._meta.get("embedding_fingerprint")
+            if bank is not None and bank != embmod.fingerprint_of(self.embedder):
+                return self.build()
         if self.stale():
             return self.update()
         return {"added": 0}
 
     # ---- search (SUB-LINEAR: touches only query-term postings + LSH neighbours) ----
-    def search(self, query_text, context="", query_embedding=None, limit=300):
+    def search(self, query_text, context="", query_embedding=None, limit=300,
+               query_fingerprint=None):
         """Return a candidate list of ring indices — NOT ranked by relevance (that is
         recall.py's and the model's job). Sub-linear in chain height: it visits only
         the postings lists of the query's terms (skipping non-selective ones) and the
@@ -246,6 +265,11 @@ class Hippocampus:
             w = 1.0 + 1.0 / math.log(2 + len(posting))      # rarer term -> slightly higher weight
             for idx in posting:
                 scores[idx] += w
+        if query_embedding and query_fingerprint:
+            bank = self._meta.get("embedding_fingerprint")
+            if bank is not None and query_fingerprint != bank:
+                query_embedding = None       # foreign space: LSH neighbours would be noise;
+                #                              the lexical postings still serve the query
         if query_embedding:
             sig = self._signature(query_embedding)
             nbits = self._meta.get("lsh_bits", self.LSH_BITS)
@@ -274,9 +298,11 @@ class Hippocampus:
                     continue
         return out
 
-    def candidates(self, query_text, context="", query_embedding=None, limit=300):
+    def candidates(self, query_text, context="", query_embedding=None, limit=300,
+                   query_fingerprint=None):
         """Convenience: search + fetch -> the candidate rings recall.py will judge."""
-        return self.fetch(self.search(query_text, context, query_embedding, limit))
+        return self.fetch(self.search(query_text, context, query_embedding, limit,
+                                      query_fingerprint=query_fingerprint))
 
     def status(self):
         self._load()
@@ -286,6 +312,8 @@ class Hippocampus:
                 "chain_head": head.get("index") if head else None,
                 "terms": len(self._postings or {}),
                 "lsh_buckets": len(self._lsh or {}),
+                "embedding_fingerprint": self._meta.get("embedding_fingerprint"),
+                "lsh_skipped_foreign": self._meta.get("lsh_skipped_foreign", 0),
                 "stale": self.stale(),
                 "dir": str(self.dir)}
 
@@ -316,7 +344,10 @@ def cmd_status(args):
     st = Hippocampus(args.root).status()
     print(f"indexed_count: {st['indexed_count']}   indexed_head: {st['indexed_head']}   "
           f"chain_head: {st['chain_head']}   stale: {st['stale']}")
-    print(f"terms: {st['terms']}   lsh_buckets: {st['lsh_buckets']}")
+    print(f"terms: {st['terms']}   lsh_buckets: {st['lsh_buckets']}   "
+          f"vector space: {st['embedding_fingerprint'] or '-'}"
+          + (f"   (foreign vectors skipped: {st['lsh_skipped_foreign']})"
+             if st['lsh_skipped_foreign'] else ""))
     print(f"dir: {st['dir']}")
 
 

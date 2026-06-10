@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import random
 import re
 import subprocess
 import sys
@@ -47,9 +48,22 @@ from pathlib import Path
 from timechain import Timechain
 from cambium import load_corpus, detect_gap
 from poq import tokens, jaccard, clamp, gate_and_seal, POQ_WINDOW
+import embed as embmod
+import telemetry as telem
+import policy as policymod
+import learner as learnermod
 
 ENTITY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 PATH_HINT_RE = re.compile(r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\.[A-Za-z0-9]+")
+
+# Identifier for the active decision-weight regime (the hand-tuned v2.1 constants).
+# Telemetry stamps it on every offer so trained scorers (Phase B+) can be evaluated
+# against — and rolled back to — exactly the regime that produced each event.
+SCORER_VERSION = "hand-2.1"
+
+# Cap on NON-CHOSEN candidates logged per offer event: enough hard negatives to
+# train on, bounded so a 10k-ring retrieve can't bloat the log.
+OFFER_LOG_CAP = 24
 
 
 def approx_tokens(s: str) -> int:
@@ -285,10 +299,29 @@ class Recall:
     def __init__(self, chain_root, registry_root=None, embedder=None):
         self.tc = Timechain(chain_root)
         self.corpus = load_corpus(registry_root or Path(__file__).resolve().parent)
+        self.telemetry = telem.Telemetry(chain_root)
+        self.policy = policymod.load_policy(registry_root)
+        self.trained_scorer = learnermod.load_scorer(registry_root)
+        self.scorer_version = (self.trained_scorer["scorer_version"]
+                               if self.trained_scorer else SCORER_VERSION)
+        import extractor as extractormod
+        self._extractor = extractormod
+        self.labeler = extractormod.load_labeler(registry_root)
         self.embedder = embedder
         if isinstance(self.embedder, str):
-            import embed as _embmod
-            self.embedder = _embmod.get_embedder(self.embedder)
+            self.embedder = embmod.get_embedder(self.embedder)
+
+    def _emit(self, event_type, data):
+        """Record a loop side-effect. Best-effort: telemetry must never break
+        the cognition it observes."""
+        try:
+            self.telemetry.emit(
+                event_type, data,
+                embedder_fingerprint=(embmod.fingerprint_of(self.embedder)
+                                      if self.embedder is not None else None),
+                scorer_version=self.scorer_version)
+        except Exception:
+            pass
 
     def label(self, content, context=""):
         """Self-label content: which senses/modalities fire, plus keywords,
@@ -297,13 +330,33 @@ class Recall:
         acts = gap["_acts"]
         senses = [{"id": f["id"], "name": f["name"]} for n, f in acts if f["kind"] == "sense"][:5]
         mods = [{"id": f["id"], "name": f["name"]} for n, f in acts if f["kind"] == "modality"][:5]
+        distilled_version = None
+        if self.labeler is not None:
+            # The distilled labeler fires faculties the lexical matcher cannot
+            # see (no shared tokens needed) — model-taught associations augment,
+            # never replace, the cheap activations. Stamped for provenance.
+            base = embmod.get_embedder("hashing")
+            if embmod.compatible(self.labeler.get("base_fingerprint"), base.fingerprint):
+                for x in self._extractor.predict_with(self.labeler, base.embed(content)):
+                    target = senses if x["kind"] == "sense" else mods
+                    if not any(e["id"] == x["id"] for e in target):
+                        # model-taught associations outrank weak lexical hits:
+                        # lead the list, and the cap trims the lexical tail
+                        target.insert(0, {"id": x["id"], "name": x["name"], "distilled": x["p"]})
+                        del target[6:]
+                distilled_version = self.labeler["labeler_version"]
         ents = entities(content)
         kws = keywords(content)
         salience = clamp(50 + 9 * len(ents) + min(120, 3 * len(set(tokens(content)))))
         lab = {"senses": senses, "modalities": mods, "keywords": kws,
                "entities": ents, "salience": salience, "dissonance": gap["dissonance"]}
+        if distilled_version:
+            lab["labeler_version"] = distilled_version
         if self.embedder is not None:          # self-embed at ingest -> instant cosine recall later
             lab["embedding"] = self.embedder.embed(content)
+            # Stamp the vector space: a sealed vector is only comparable to vectors
+            # from the SAME embedder/model/dim/algorithm (see embed.compatible).
+            lab["embedding_fingerprint"] = embmod.fingerprint_of(self.embedder)
         return lab
 
     def block_labels(self, ring):
@@ -314,10 +367,9 @@ class Recall:
                  semantic_weight=0.70, path_weight=0.20, chronological_weight=0.10,
                  language=None, extension=None, role=None, top_dir=None,
                  exclude_path=None, exclude_dir=None, source_only=False,
-                 scan_window=None, use_index=False, index_limit=300):
+                 scan_window=None, use_index=False, index_limit=300, scorer="auto"):
         if embed and self.embedder is None:           # default to the stdlib embedder
-            import embed as _embmod
-            self.embedder = _embmod.get_embedder("hashing")
+            self.embedder = embmod.get_embedder("hashing")
         q = self.label(query, context)                # also embeds the query if embedder is set
         # Candidate source: the persistent Hippocampus (sub-linear shortlist) when use_index,
         # a bounded recent tail when scan_window, else the whole chain. The path/metadata
@@ -326,9 +378,18 @@ class Recall:
             from hippocampus import Hippocampus
             hippo = Hippocampus(self.tc.root, embedder=self.embedder)
             hippo.ensure_current()
+            hippo_vec = q.get("embedding") if embed else None
+            hippo_fp = (embmod.fingerprint_of(self.embedder)
+                        if (embed and self.embedder is not None) else None)
+            if embed and hasattr(self.embedder, "base"):
+                # The LSH bank lives in the BASE space (sealed vectors are base);
+                # query it there — the lens re-ranks afterwards in its own space.
+                hippo_vec = self.embedder.base.embed(query)
+                hippo_fp = embmod.fingerprint_of(self.embedder.base)
             rings = hippo.candidates(query, context,
-                                     query_embedding=(q.get("embedding") if embed else None),
-                                     limit=index_limit)
+                                     query_embedding=hippo_vec,
+                                     limit=index_limit,
+                                     query_fingerprint=hippo_fp)
         elif scan_window:
             rings = self.tc.tail_rings(scan_window)
         else:
@@ -340,9 +401,9 @@ class Recall:
         dissonance = q["dissonance"]
         qv = q.get("embedding") if embed else None
         _cos = None
+        cur_fp = embmod.fingerprint_of(self.embedder) if self.embedder is not None else None
         if qv is not None:
-            import embed as _embmod
-            _cos = _embmod.cosine
+            _cos = embmod.cosine
         filters = [normalize_path(path), normalize_path(dir)]
         hints = path_hints(query + " " + context)
 
@@ -361,7 +422,17 @@ class Recall:
             if relevance_fn is not None:              #  (1) explicit model/embedding judge
                 content = 9.0 * float(relevance_fn(query, block_text(r), lab))
             elif qv is not None:                      #  (2) EMBEDDING cosine (sealed vector, else on the fly)
-                bvec = lab.get("embedding") or self.embedder.embed(block_text(r))
+                bvec = lab.get("embedding")
+                # A sealed vector is only sound in the CURRENT embedder's space;
+                # cross-space cosines are garbage. A lens can LIFT sealed BASE
+                # vectors into its space (one sparse matvec — no re-embedding);
+                # anything else mismatched re-embeds on the fly.
+                if bvec is not None and not embmod.compatible(
+                        lab.get("embedding_fingerprint"), cur_fp):
+                    bvec = (self.embedder.lift(bvec, lab.get("embedding_fingerprint"))
+                            if hasattr(self.embedder, "lift") else None)
+                if bvec is None:
+                    bvec = self.embedder.embed(block_text(r))
                 content = 9.0 * _cos(qv, bvec)
             else:                                     #  (3) lexical fallback (literal overlap only)
                 bK, bE = set(lab.get("keywords", [])), set(lab.get("entities", []))
@@ -394,31 +465,53 @@ class Recall:
 
         anchors = sorted(raw, key=lambda x: x["semantic"], reverse=True)[:3]
         anchor_indices = [x["ring"]["index"] for x in anchors]
+        # The TRAINED scorer (an adopted operator) replaces the hand blend when
+        # active — unless the caller forces `scorer="hand"` or passes explicit
+        # weight overrides (a co-evolver override always wins over a learner).
+        hand_weights_default = (semantic_weight, path_weight, chronological_weight) == (0.70, 0.20, 0.10)
+        use_trained = (scorer == "auto" and self.trained_scorer is not None
+                       and hand_weights_default)
         scored = []
         for item in raw:
             r, lab = item["ring"], item["lab"]
             chronological = 0.0
             if anchor_indices:
                 chronological = max(max(0.0, 1.0 - abs(r["index"] - idx) / 4.0) for idx in anchor_indices)
-            score = (
-                semantic_weight * item["semantic"]
-                + path_weight * item["path"]
-                + chronological_weight * chronological
-                + 0.05 * min(1.0, item["faculty"] / 4.0)
-                + 0.03 * (lab.get("salience", 0) / 255)
-                - item["noise_penalty"]   # no recency term: relevance/path/anchors decide selection;
-                #                            time is for orientation only (chain-order presentation below)
-            )
-            scored.append((score, r, lab, {
+            parts = {
                 "semantic": round(item["semantic"], 3),
                 "path": round(item["path"], 3),
                 "chronological": round(chronological, 3),
+                "faculty": round(min(1.0, item["faculty"] / 4.0), 3),
                 "noise_penalty": round(item["noise_penalty"], 3),
-            }))
+            }
+            if use_trained:
+                score = learnermod.apply_scorer(self.trained_scorer, parts,
+                                                lab.get("salience", 0))
+            else:
+                score = (
+                    semantic_weight * item["semantic"]
+                    + path_weight * item["path"]
+                    + chronological_weight * chronological
+                    + 0.05 * parts["faculty"]
+                    + 0.03 * (lab.get("salience", 0) / 255)
+                    - item["noise_penalty"]   # no recency term: relevance/path/anchors decide
+                    #                            selection; time is orientation only (below)
+                )
+            scored.append((score, r, lab, parts))
         scored.sort(key=lambda x: x[0], reverse=True)
 
         # appetite: dissonance is the need signal. Low need -> pull little/none.
-        if dissonance < 50:
+        # When the learner has CALIBRATED the curve (P(blocks fetched | dissonance)
+        # from real fetch behaviour, adopted under policy guards), it replaces the
+        # hand formula; otherwise the formula stands.
+        appetite_curve = (self.policy.get("appetite") or {}).get("calibrated")
+        bucket = None
+        if appetite_curve:
+            bucket = next((b for b in appetite_curve.get("curve", [])
+                           if b["lo"] <= dissonance <= b["hi"]), None)
+        if bucket is not None:
+            appetite = min(max_blocks, max(0, round(bucket["mean_fetched"])))
+        elif dissonance < 50:
             appetite = 0
         else:
             appetite = max(1, round(max_blocks * dissonance / 255))
@@ -427,8 +520,12 @@ class Recall:
         if has_hard_filter and scored:
             appetite = max(1, appetite)
         top = scored[0][0] if scored else 0.0
-        floor = 0.08 if has_hard_filter else 0.18
-        threshold = max(floor, 0.5 * top)             # absolute floor + relative: no junk, no bloat
+        if use_trained:
+            threshold = 0.5 * top    # trained scores are probability-shaped: the hand
+            #                          absolute floor doesn't translate; relative cut only
+        else:
+            floor = 0.08 if has_hard_filter else 0.18
+            threshold = max(floor, 0.5 * top)         # absolute floor + relative: no junk, no bloat
 
         chosen, used, chosen_indices = [], 0, set()
         rings_by_index = {r["index"]: r for r in rings}
@@ -481,9 +578,74 @@ class Recall:
                         break
                     block["neighbors"].append(brief_block(nr, words=45, query=query))
                     used += cost
+        # ε-EXPLORATION (counterfactuals for the learner): with probability ε, ADD one
+        # below-top-k candidate to the offered set. Strictly additive — it never displaces
+        # a top hit and never exceeds the budget, so retrieval quality cannot degrade.
+        # Its inclusion propensity is logged so training importance-weights the update
+        # (IPS) instead of mistaking exploration luck for relevance.
+        explore_info = {}
+        eps = float((self.policy.get("exploration") or {}).get("epsilon", 0.0))
+        ewin = int((self.policy.get("exploration") or {}).get("window", 20))
+        if eps > 0 and scored and random.random() < eps:
+            pool = [(s, r, lab, parts) for (s, r, lab, parts)
+                    in scored[len(chosen):len(chosen) + ewin]
+                    if r["index"] not in chosen_indices]
+            if pool:
+                s, r, lab, parts = random.choice(pool)
+                excerpt = excerpt_text(block_text(r), query=query, words=60)
+                cost = approx_tokens(excerpt)
+                if used + cost <= budget_tokens:
+                    block = brief_block(r, score=s, lab=lab, query=query)
+                    block["score_parts"] = parts
+                    block["neighbors"] = []
+                    block["explore"] = True
+                    propensity = round(eps / len(pool), 6)
+                    block["propensity"] = propensity
+                    chosen.append(block)
+                    chosen_indices.add(r["index"])
+                    used += cost
+                    explore_info[r["index"]] = propensity
+
         # ORIENTATION: relevance + path/anchor proximity selected WHICH blocks; present the
         # top-level hits in chain order (the arrow of time) so the model reads them in sequence.
         chosen.sort(key=lambda b: b["index"])
+
+        # TELEMETRY (offer): the choice set this retrieval produced — every chosen
+        # candidate plus the top non-chosen ones (the informative near-misses), each
+        # with the features the scorer saw. This is the raw material learner three
+        # trains on ("was this ring later fetched and used?"); the query itself is
+        # never logged, only its hash and redacted label terms.
+        cand_log, logged_neg = [], 0
+        for rank, (score, r, lab, parts) in enumerate(scored):
+            is_chosen = r["index"] in chosen_indices
+            if not is_chosen and logged_neg >= OFFER_LOG_CAP:
+                continue
+            if not is_chosen:
+                logged_neg += 1
+            entry = {"i": r["index"], "rank": rank, "score": round(score, 4),
+                     "parts": parts, "salience": lab.get("salience"),
+                     "chosen": is_chosen}
+            if r["index"] in explore_info:
+                entry["explore"] = True
+                entry["propensity"] = explore_info[r["index"]]
+            cand_log.append(entry)
+        self._emit("offer", {
+            "query_hash": telem.query_hash(query, context),
+            "query_keywords": telem.redact_terms(q["keywords"][:8]),
+            "query_entities": telem.redact_terms(q["entities"][:6]),
+            "dissonance": dissonance, "appetite": appetite,
+            "threshold": round(threshold, 3), "considered": len(scored),
+            "returned": len(chosen), "embed": bool(qv is not None),
+            "use_index": bool(use_index), "scan_window": scan_window,
+            "scorer": ("trained" if use_trained else "hand"),
+            "weights": ({"semantic": semantic_weight, "path": path_weight,
+                         "chronological": chronological_weight} if not use_trained
+                        else self.trained_scorer["weights"]),
+            "policy": ("topk+epsilon" if explore_info else "topk-deterministic"),
+            "epsilon": eps,
+            "filters_active": has_hard_filter,
+            "candidates": cand_log,
+        })
         return {"query_labels": q, "dissonance": dissonance, "appetite": appetite,
                 "threshold": round(threshold, 2), "considered": len(scored),
                 "returned": len(chosen), "budget": budget_tokens, "tokens_used": used,
@@ -494,6 +656,8 @@ class Recall:
                                      "source_only": source_only},
                 "weights": {"semantic": semantic_weight, "path": path_weight,
                             "chronological": chronological_weight},
+                "scorer": ("trained:" + self.scorer_version if use_trained else "hand:" + SCORER_VERSION),
+                "explored": bool(explore_info),
                 "neighbors": neighbors, "blocks": chosen}
 
     def verify_source(self, repo_path, ring_index):
@@ -527,6 +691,7 @@ class Recall:
         }
         if not file_path.exists():
             result.update({"verdict": "missing-source-file", "ok": False})
+            self._emit("falsify", {"ring_index": ring_index, "verdict": "missing-source-file"})
             return result
 
         text = file_path.read_text(errors="replace")
@@ -560,15 +725,48 @@ class Recall:
             verdict = "verified"
         result["verdict"] = verdict
         result["ok"] = verdict == "verified"
+        if not result["ok"]:
+            # TELEMETRY (falsify): a sealed memory failed against live source —
+            # negative resonance. Severity is in the verdict: 'source-mismatch'
+            # is a hard falsification; drift/dirty are softer staleness signals.
+            self._emit("falsify", {"ring_index": ring_index, "verdict": verdict,
+                                   "file_hash_match": result.get("file_hash_match"),
+                                   "chunk_hash_match": result.get("chunk_hash_match"),
+                                   "revision_match": result.get("revision_match")})
         return result
 
     def seal(self, ring_type, summary, context="", external_scores=None, difficulty=0, files=None,
-             window=POQ_WINDOW, relevant_rings=None, use_index=False):
+             window=POQ_WINDOW, relevant_rings=None, use_index=False, used_rings=None):
+        """`used_rings` is the model's DECLARED credit assignment: the ring indices
+        whose content actually grounded this thought. Declaring them (a) fills the
+        PoQ relevance window with exactly that evidence, so the conscience audits
+        the claim against what the model says it relied on, and (b) logs the `use`
+        telemetry that turns this turn into a training example."""
         labels = self.label(summary, context)
+        if used_rings and not relevant_rings:
+            by_idx = {r["index"]: r for r in self.tc.load()}
+            relevant_rings = [by_idx[i] for i in used_rings if i in by_idx]
         verdict, ring = gate_and_seal(self.tc, summary, context, ring_type=ring_type,
                                       difficulty=difficulty, external_scores=external_scores,
                                       files=files, extra_payload={"labels": labels},
                                       window=window, relevant_rings=relevant_rings, use_index=use_index)
+        # TELEMETRY (use): the turn's outcome — every gate decision is a labeled
+        # event (a REVISE/FORCE_UNCERTAINTY is signal too, not just a SEAL).
+        self._emit("use", {
+            "decision": verdict["decision"],
+            "sealed_ring": ring["index"] if ring else None,
+            "used_rings": list(used_rings or []),
+            "cited_rings": [c["index"] for c in verdict.get("cited_rings", [])
+                            if isinstance(c, dict)],
+            # computed_credit: which rings the TEXT actually leaned on, span by
+            # span (the guard's map) — alongside what the model DECLARED it used.
+            "computed_credit": (verdict.get("span_grounding") or {}).get("credit"),
+            "span_unsupported": (verdict.get("span_grounding") or {}).get("n_unsupported"),
+            "grounding": verdict.get("grounding"),
+            "assertiveness": verdict.get("assertiveness"),
+            "brightness": verdict.get("brightness"),
+            "external_scores": bool(external_scores),
+        })
         return verdict, ring, labels
 
 
@@ -599,9 +797,11 @@ def cmd_retrieve(args):
                      language=args.language, extension=args.ext, role=args.role,
                      top_dir=args.top_dir, exclude_path=args.exclude_path,
                      exclude_dir=args.exclude_dir, source_only=args.source_only,
-                     scan_window=args.scan_window, use_index=args.index, index_limit=args.index_limit)
+                     scan_window=args.scan_window, use_index=args.index, index_limit=args.index_limit,
+                     scorer=args.scorer)
     if args.embed:
         print(f"[embedding recall: {rec.embedder.name}]")
+    print(f"[scorer: {r['scorer']}{'  +ε-explored' if r['explored'] else ''}]")
     print("query self-labels:")
     _print_labels(r["query_labels"])
     if r["filters"]["path"] or r["filters"]["dir"] or r["filters"]["hints"]:
@@ -660,7 +860,8 @@ def cmd_seal(args):
            if getattr(args, d) is not None}
     verdict, ring, labels = Recall(args.root, args.registry_root).seal(
         args.type, args.summary, context=args.context or "",
-        external_scores=poq or None, difficulty=args.difficulty, use_index=args.index)
+        external_scores=poq or None, difficulty=args.difficulty, use_index=args.index,
+        used_rings=args.used_rings)
     print(f"PoQ decision: {verdict['decision']}")
     if ring:
         print(f"sealed self-labeled Ring {ring['index']}  {ring['ring_hash'][:16]}..")
@@ -692,16 +893,17 @@ def cmd_fetch(args):
     """Pull the full content of the blocks the model judged relevant (budget-bounded)."""
     rec = Recall(args.root, args.registry_root)
     rings = {r["index"]: r for r in rec.tc.load()}
-    used = 0
+    used, fetched, missing = 0, [], []
     for i in args.ids:
         r = rings.get(i)
         if not r:
-            print(f"#{i}: not found"); continue
+            print(f"#{i}: not found"); missing.append(i); continue
         ex = " ".join(block_text(r).split()[: args.words])
         cost = approx_tokens(ex)
         if used + cost > args.budget:
             print(f"(budget {args.budget} tokens reached)"); break
         used += cost
+        fetched.append(i)
         loc = ring_location(r)
         where = loc.get("relative_path") or "-"
         if loc.get("line_start") is not None:
@@ -709,6 +911,10 @@ def cmd_fetch(args):
         print(f"#{i} [{r['ring_type']}] {r['ring_hash'][:12]}.. {where}")
         print(f"  {ex[: args.words * 8]}\n")
     print(f"(fetched ~{used}/{args.budget} tokens)")
+    # TELEMETRY (fetch): which blocks the MODEL chose to pull — its relevance
+    # judgment over the index, the key annotation retrieval learns from.
+    rec._emit("fetch", {"ids": fetched, "missing": missing,
+                        "tokens_used": used, "budget": args.budget})
 
 
 def build_parser():
@@ -752,6 +958,8 @@ def build_parser():
                     help="use the persistent Hippocampus index for a sub-linear candidate shortlist")
     pr.add_argument("--index-limit", type=int, default=300,
                     help="max candidates the index returns before the scorer/model judge (default 300)")
+    pr.add_argument("--scorer", choices=["auto", "hand"], default="auto",
+                    help="auto = adopted trained operator when one is active; hand = force the hand weights")
     pr.set_defaults(func=cmd_retrieve)
 
     pv = sub.add_parser("verify-source", parents=[common], help="verify a retrieved source ring against a live repo")
@@ -768,6 +976,9 @@ def build_parser():
         ps.add_argument(f"--{d}", type=int, default=None)
     ps.add_argument("--index", action="store_true",
                     help="ground the conscience against the most-relevant rings via the Hippocampus index")
+    ps.add_argument("--used-rings", nargs="*", type=int, default=None,
+                    help="declare the ring indices whose content actually grounded this thought "
+                         "(fills the PoQ window with that evidence + logs `use` telemetry)")
     ps.set_defaults(func=cmd_seal)
 
     pi = sub.add_parser("index", parents=[common], help="model-facing map: summary+labels per block (the model judges relevance from this)")

@@ -12,3 +12,10 @@ dashboard/node_modules/
 # reset a user's emergent OR promoted faculties.
 **/registry/emergent.json
 **/registry/grown.json
+# Per-user learner state (Phases B-E) — trained operators and covenant-tolerance
+# overrides belong to each agent, never to the shipped base. The chain/-rooted
+# ledgers (telemetry, salience, replay, dream state) are covered by **/chain/.
+**/registry/policy.json
+**/registry/scorer.json
+**/registry/labeler.json
+**/registry/lens/

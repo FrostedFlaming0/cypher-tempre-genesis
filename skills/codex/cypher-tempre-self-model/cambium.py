@@ -36,7 +36,7 @@ import os
 import sys
 from pathlib import Path
 
-from timechain import Timechain, now_iso
+from timechain import Timechain, now_iso, atomic_write_json
 from poq import tokens, jaccard, coverage, clamp
 
 DISSONANCE_FLOOR = 150     # below this, existing faculties cover the input -> no growth
@@ -55,11 +55,7 @@ def short(text: str, n: int = 70) -> str:
 # --------------------------------------------------------------------------- #
 
 def _atomic_write_json(path: Path, obj):
-    """Write JSON via temp + rename so a crash never leaves a half-written registry."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False))
-    tmp.replace(path)
+    atomic_write_json(path, obj)
 
 
 def load_grown(root: Path) -> dict:
