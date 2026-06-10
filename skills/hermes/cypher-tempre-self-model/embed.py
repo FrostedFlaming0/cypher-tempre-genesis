@@ -12,8 +12,18 @@ meaning ('back up a claim' will not match 'ungrounded'). For genuine semantic re
 plug in a real model with the SAME interface via `get_embedder('st'|'openai'|'voyage')`
 — those adapters need a library and/or API key (not present here by default).
 
-Interface: every embedder has `.embed(text) -> list[float]` (L2-normalized) and there
-is a module-level `cosine(a, b)`. Stdlib only for the default.
+Interface: every embedder has `.embed(text) -> list[float]` (L2-normalized), a
+`.fingerprint` identifying the vector space it produces, and there is a module-level
+`cosine(a, b)`. Stdlib only for the default.
+
+FINGERPRINTS (vector-space provenance): vectors from different embedders — or
+different models, dims, or algorithm revisions of the same embedder — live in
+DIFFERENT spaces; comparing across them silently produces garbage cosines. Every
+embedder therefore exposes `.fingerprint` (e.g. "hashing:256:v1",
+"openai:text-embedding-3-small"), recall seals it beside every vector it embeds,
+and consumers (recall, hippocampus) refuse or re-embed on mismatch. Vectors sealed
+before fingerprinting existed are treated as LEGACY_FINGERPRINT — the stdlib
+default was the only embedder shipped, so that is the only sound assumption.
 """
 
 from __future__ import annotations
@@ -45,9 +55,14 @@ def _h(feat):
 
 class HashingEmbedder:
     name = "hashing"
+    ALGO_VERSION = "v1"     # bump if _features/_h/signing ever change: that is a NEW space
 
     def __init__(self, dim=256):
         self.dim = dim
+
+    @property
+    def fingerprint(self):
+        return f"{self.name}:{self.dim}:{self.ALGO_VERSION}"
 
     def embed(self, text):
         v = [0.0] * self.dim
@@ -64,6 +79,25 @@ def cosine(a, b):
     return max(0.0, sum(x * y for x, y in zip(a, b)))   # both L2-normed -> dot == cosine
 
 
+# The space all pre-fingerprint sealed vectors belong to: the stdlib default was the
+# only zero-dep embedder shipped, so unstamped == hashing:256:v1 is the sound reading.
+LEGACY_FINGERPRINT = "hashing:256:v1"
+
+
+def fingerprint_of(embedder):
+    """Fingerprint of any embedder object; 'unknown' for foreign ones without the attr."""
+    return getattr(embedder, "fingerprint", None) or "unknown"
+
+
+def compatible(sealed_fp, current_fp):
+    """May a SEALED vector (stamp `sealed_fp`, possibly None=pre-fingerprint legacy)
+    be compared against vectors from the CURRENT embedder? Unstamped vectors are
+    only sound under the legacy default space."""
+    if sealed_fp is None:
+        return current_fp == LEGACY_FINGERPRINT
+    return sealed_fp == current_fp
+
+
 # --- real-model adapters (same .embed interface); used only if the dep/key is present ---
 
 class _STEmbedder:
@@ -71,7 +105,11 @@ class _STEmbedder:
 
     def __init__(self, model="all-MiniLM-L6-v2"):
         from sentence_transformers import SentenceTransformer
-        self.m = SentenceTransformer(model)
+        self.m, self.model = SentenceTransformer(model), model
+
+    @property
+    def fingerprint(self):
+        return f"st:{self.model}"
 
     def embed(self, text):
         return [float(x) for x in self.m.encode(text, normalize_embeddings=True)]
@@ -83,6 +121,10 @@ class _OpenAIEmbedder:
     def __init__(self, model="text-embedding-3-small"):
         import openai
         self.c, self.model = openai.OpenAI(), model
+
+    @property
+    def fingerprint(self):
+        return f"openai:{self.model}"
 
     def embed(self, text):
         v = self.c.embeddings.create(model=self.model, input=text).data[0].embedding
@@ -97,6 +139,10 @@ class _VoyageEmbedder:
         import voyageai
         self.c, self.model = voyageai.Client(), model
 
+    @property
+    def fingerprint(self):
+        return f"voyage:{self.model}"
+
     def embed(self, text):
         v = self.c.embed([text], model=self.model).embeddings[0]
         n = math.sqrt(sum(x * x for x in v)) or 1.0
@@ -106,6 +152,13 @@ class _VoyageEmbedder:
 def get_embedder(name="hashing", **kw):
     if name == "hashing":
         return HashingEmbedder(**kw)
+    if name == "lens":
+        import lens as lensmod                  # lazy: lens imports embed (one-way at runtime)
+        e = lensmod.load_active(kw.get("registry_root"))
+        if e is None:
+            raise RuntimeError("provider 'lens' needs an ACTIVE trained lens — "
+                               "run: python3 lens.py train --adopt (or python3 dream.py run)")
+        return e
     if name in ("st", "sentence-transformers"):
         try:
             import sentence_transformers  # noqa: F401
@@ -135,7 +188,7 @@ def cmd_sim(args):
 def cmd_vec(args):
     e = get_embedder(args.provider)
     v = e.embed(args.text)
-    print(f"{e.name}: dim={len(v)}  first8={[round(x,3) for x in v[:8]]}")
+    print(f"{e.name} [{fingerprint_of(e)}]: dim={len(v)}  first8={[round(x,3) for x in v[:8]]}")
 
 
 def build_parser():

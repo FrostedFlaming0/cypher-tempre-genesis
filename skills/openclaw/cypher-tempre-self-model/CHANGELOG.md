@@ -1,5 +1,283 @@
 # Changelog
 
+## v2.7 — 2026-06-10
+
+Pre-release hygiene pass: the whole-repo review's findings, fixed. No new
+organs — this release makes the five-phase membrane safe to ship and one
+codebase across all five runtimes.
+
+### Fixed
+- **Dream-growth recurrence ratchet (review-proven):** repeated dreams over the
+  SAME unchanged window walked a faculty born → recurrence → PROMOTED on zero
+  new evidence. Growth now keeps a high-water mark (like missed-positive
+  mining): only blocks sealed since the last growth pass may propose, so
+  recurrence again means "this gap keeps arriving in NEW experience."
+  Regression-tested.
+- **`.gitignore` now covers per-user learner state** (`registry/policy.json`,
+  `scorer.json`, `labeler.json`, `lens/`): a lived-in tree can no longer commit
+  an agent's trained operators or covenant-tolerance overrides. Chain-rooted
+  ledgers were already covered by `**/chain/`.
+
+### Changed (deduplication — behavior identical, 126 checks green)
+- **`operators.py`** — the shared guarantee machinery: sealed-adopt /
+  sealed-rollback ring helpers, chain-derived version numbering, and the
+  logistic squash, written once and consumed by all three learners
+  (`learner.py`, `lens.py`, `extractor.py`). The no-silent-self-modification
+  promise can no longer drift apart between learners.
+- **`telemetry.join_offers`** — the canonical offer→fetch/use/replay credit
+  join, consumed by both the decisions learner and the representation lens;
+  credit assignment is now definitionally identical across learners.
+- **`timechain.atomic_write_json`** — one crash-safe JSON writer for every
+  derived store (registries, indexes, ledgers); cambium and hippocampus
+  delegate to it.
+- Per-turn loop doc: Perceive now points at the extractor teach loop.
+
+### Ported
+- **All five runtimes at parity:** codex, hermes, nanoclaw, and openclaw skills
+  updated from v2.1 to the full v2.7 module set (Phases A–E + hygiene), keeping
+  each platform's own SKILL.md framing.
+
+
+## v2.6 — 2026-06-10
+
+Phase E of the learning membrane — the final phase of the V3 design: the
+extractor learner and dream-proposed label-space growth. All five learning
+phases (A-E) are now complete: the loop labels its own data, every judgment
+constant is either covenant policy or a calibrated quantity, and the whole
+ascent is sealed, attested, and reversible.
+
+### Added
+- **Extractor (`extractor.py`)** — the model teaches its own cheap replacement.
+  Confidence-scored cheap labeling (coverage x activation separation); texts
+  below `extractor.route_confidence` ROUTE to the model as teach opportunities
+  (`route` telemetry events — the routing-rate curve is the deliverable). `teach`
+  records (one-way base-embedder vector + model labels + cheap baseline) pairs —
+  raw text never enters the log. Dream cycles distill per-faculty sparse logistic
+  heads from the teach corpus; adoption requires beating the CHEAP labeler at
+  matching model labels on a temporal holdout (micro-F1), seals an `operator`
+  ring with weights in blockspace, and `rollback` reverts (restoring from
+  blockspace). Once active, distilled predictions augment every sealed label —
+  leading the list, stamped `labeler_version` — and confidence rises, so routing
+  falls: annotation economics mirror replay's generation economics.
+- **Dream-proposed growth (`dream.py propose_growth`)** — stdlib k-means over
+  recent block embeddings each dream; a cluster TIGHT in embedding space but
+  INCOHERENT in fired labels (empty label sets read as maximally eligible —
+  unnamed experience is what growth is for) sends its exemplar through
+  `cambium.grow`. Recurrence and PROMOTE_AT govern promotion as ever; policy
+  `growth.*` caps proposals per dream. The faculty registry is the label-space
+  learner, now fed by dreams.
+- **Dream report** gains growth and routing-rate sections; the dream ring
+  summary announces grown faculties by name.
+
+### Policy
+- New `extractor` (min_pairs 40, switchover_margin 0.02, route_confidence 0.45,
+  top_k 5) and `growth` (window 64, min_cluster 3, min_intra_sim 0.35,
+  max_label_agreement 0.34, max_proposals_per_dream 2) sections.
+
+
+## v2.5 — 2026-06-10
+
+Phase D of the learning membrane: the representation learner and the dream
+cadence. The first rung of recursive self-improvement now executes end-to-end —
+with the core frozen and every step sealed.
+
+### Added
+- **Lens (`lens.py`)** — the representation learner: a small projection head
+  trained OVER the frozen stdlib embedder on the chain's own telemetry pairs
+  (fetched/used positives, offered-unfetched soft negatives, replay-reject hard
+  negatives; query side = the offer's redacted label keywords, so raw queries
+  never leave the log). Pairwise-logistic triplet loss, sparse stdlib SGD, no
+  dependencies. The trained head is a NEW vector space with a composed
+  fingerprint (`hashing:256:v1+lens-v1`): sealed vectors stay base-space forever
+  and `lift` into lens space with one sparse matvec — the record never changes,
+  the lens it is read through does. Adoption is policy-guarded (`lens.min_pairs`,
+  `lens.switchover_margin`): the lens must beat the BASE embedder on a temporal
+  holdout or the base remains. Every adoption seals an `operator` ring with the
+  weights blob in blockspace; `rollback` reverts the ACTIVE pointer (restoring
+  weights from blockspace if needed) and seals the reversion. Proven in selftest:
+  the lens LEARNS an association with ZERO lexical overlap (alpha-beta queries →
+  zebra ring) that the frozen base provably cannot see.
+- **Dream (`dream.py`)** — meditation made executable, the one offline cadence:
+  (1) verify chain + consensus (never train on a corrupt chain), (2) mine
+  missed-positives (a used ring retrieval never offered — the strongest failure
+  signal; high-water-marked O(new)), (3) train all four learners each behind its
+  own policy gate (scorer, lens, appetite, PoQ grounding) where a refusal is
+  cold-start health, (4) bidirectional salience overlay (`chain/salience.json`:
+  fetch +1, use +2, replay-accept +3, falsify −4; derived and rebuildable, sealed
+  history untouched), (5) replay token-economics accounting, (6) telemetry digest,
+  (7) ONE sealed `dream` ring carrying the entire report. Honors dormancy: a
+  paused self does not dream.
+- **`recall retrieve --provider lens`** — recall through the learned space; the
+  Hippocampus LSH bank is queried in BASE space (sealed vectors live there) and
+  candidates re-rank through the lens via `lift`.
+
+### Policy
+- New `lens` section: `min_pairs` 80, `switchover_margin` 0.02, `d_out` 32,
+  `epochs` 12, `lr` 0.05 — geometry and guards, co-evolver-ownable like the rest.
+
+
+## v2.4 — 2026-06-10
+
+Phase C of the learning membrane: the replay loop (the indexer economics made
+executable) and the span-level HallucinationGuard (uncertainty applied to the
+specific fabricated clause, not smeared over the answer).
+
+### Added
+- **Replay (`replay.py`)** — before generating from scratch, ask whether the chain
+  already holds the answer. `match` offers sealed antecedents above a threshold
+  (Hippocampus-narrowed; lexical coverage blended with embedding cosine where sealed
+  vectors exist); the MODEL confirms — replay is offered, never imposed. `accept`
+  logs a `replay-accept` (certified positive pair) with the tokens regeneration
+  would have cost; `reject` logs the `replay-reject` hard negative contrastive
+  training starves for. `calibrate --adopt` fits P(accept | match score) on logged
+  outcomes and places the threshold at the covenant's tolerated false-replay rate
+  (policy `replay.target_false_replay_rate`) — the values layer governs the cache's
+  permitted deception rate. **Self-fulfilling-replay guard:** after
+  `max_chain_depth` consecutive accepts a ring is flagged re-derivation due
+  (`refresh` records the fresh derivation) — a replay-accept must never become the
+  only evidence for the next replay. `stats` reports acceptance rate and total
+  tokens saved: the token-economics ledger, measured.
+- **Guard (`guard.py`)** — span-level grounding, the actual HallucinationGuard.
+  Splits a candidate into clause-sized assertion spans and grounds EACH against the
+  PoQ relevance window + context (lexical content-word coverage, optionally
+  supplemented by embedding cosine), yielding per-span grounded/weak/unsupported
+  verdicts and a span→ring CREDIT map. Wired into the conscience: `gate_and_seal`
+  runs the guard on every seal, the sealed `poq_verdict` carries the compact span
+  map, **FORCE_UNCERTAINTY now names the specific unsupported spans** to hedge or
+  evidence, and `use` telemetry gains `computed_credit` — what the text actually
+  leaned on, alongside what the model declared. CLI: `guard.py audit "<text>"`.
+  Honest ceiling: the stdlib embedder cannot bridge true synonymy, so the guard
+  names spans for the model (the final judge) to re-examine; it never unilaterally
+  rejects.
+- Policy gains the `replay` section (match threshold, false-replay tolerance,
+  min events, max chain depth).
+
+### Fixed
+- **Canonical-hash stability ("hash what you write")** — a ring payload containing
+  a dict with INT keys mixing 1- and 2-digit values (the guard's span-credit map)
+  hashed over a different key ordering than the JSON written to disk (ints sort
+  numerically in memory; their JSON string forms sort lexically), sealing a ring
+  that was born unverifiable. Found in production minutes after shipping — the
+  chain's own `verify` caught it on the very next walk. Root cause fixed twice
+  over: `timechain._seal` now normalizes every ring through a JSON round-trip
+  BEFORE hashing (the hashed object is byte-for-byte what disk re-reading yields),
+  and the guard's credit map uses string keys at the source. Regression-tested
+  with an int-keyed payload probe.
+
+### Validated
+- Eighteen mechanisms, 101 checks green (17 added): span splitting/merging,
+  grounded-vs-unsupported separation with ring credit, FORCE_UNCERTAINTY naming the
+  fabricated span, sealed verdicts carrying the span map, use events carrying
+  computed credit, antecedent matching above threshold, accept/reject telemetry with
+  token economics, the depth cap flagging re-derivation (and `refresh` resetting it),
+  and threshold calibration landing exactly at the covenant's false-replay tolerance
+  on mixed real+synthetic outcomes.
+
+## v2.3 — 2026-06-10
+
+Phase B of the learning membrane: the first learner goes live — retrieval weights
+become a trained, sealed, rollback-able operator; thresholds become calibrated
+quantities inside covenant-set tolerances; and grown faculties become shareable
+packs. Recursive self-improvement's first rung, with provenance at every step.
+
+### Added
+- **Policy (`policy.py`)** — the values layer's grip on the machinery. Defaults live
+  in code (never shipped as a file, so upgrades can't clobber edits — the grown.json
+  lesson); `registry/policy.json` overrides them, with the covenant guard:
+  `values.covenant_floor`/`consistency_floor` apply as max(default, user) — the
+  conscience can be made stricter, never looser, by anyone, including the learner.
+  The learner's only write path is the `calibrated` subsections, preserving user keys.
+- **Decisions learner (`learner.py`)** — `train` joins offer→fetch/use telemetry along
+  the arrow of time into labeled examples ("was this offered ring later fetched or
+  declared as evidence?"), trains a stdlib logistic scorer over the same features the
+  retrieval scorer computes (IPS-weighted where ε-explored), and evaluates on a
+  temporal split against the hand weights. `--adopt` is guarded by policy (min events
+  + switchover margin; cold start never degrades the agent) and **seals an `operator`
+  ring** with weights, training range, and holdout evals — falsifiable by re-running.
+  `rollback` reverts to the previous sealed operator and seals the reversion.
+  `appetite` calibrates the dissonance→blocks curve from real fetch behaviour;
+  `calibrate-poq` positions `grounding_floor` from sealed-then-falsified outcomes at
+  the covenant's tolerated false-seal rate. `covenant_floor` is never trained.
+- **ε-exploration in retrieval** — with policy-set probability, `recall.retrieve` ADDS
+  one below-top-k candidate (never displacing a top hit, never exceeding budget),
+  flagged `explore` with its logged inclusion propensity — counterfactuals for the
+  learner without quality loss.
+- **Trained scorer in retrieval** — an adopted operator replaces the hand blend
+  automatically; `--scorer hand` (recall + bench) forces the hand weights anytime — a
+  co-evolver override always outranks a learner. Offer events and bench reports stamp
+  whichever scorer actually ran.
+- **Faculty packs (`faculties.py`)** — `export` bundles grown (and optionally
+  emergent) modalities/senses with provenance (donor chain head; per-faculty
+  `born_ring`, recurrence, birth context) and a pack SHA-256; `import` verifies the
+  hash, immune-screens every faculty text at the membrane, skips near-duplicates by
+  coverage, enforces flood guards (max 50 faculties, 800-char functions), lands
+  imports in per-user `grown.json` tagged `imported:<pack>@<version> by <author>`,
+  and seals a `faculty-import` ring. Tools travel; histories don't — the
+  fresh-genesis directive holds.
+
+### Validated
+- Sixteen mechanisms, 84 checks green (22 added; earlier drafts undercounted from a truncated test log): all v2.2 checks unchanged, plus the covenant
+  guard (floors can't be loosened), trained-beats-hand on a synthetic holdout where
+  the truth contradicts the hand weights, guarded adoption sealing an operator ring,
+  trained scorer driving retrieval with hand-override, ε=1.0 exploration with
+  propensity, rollback to hand, appetite + grounding-floor calibration with the
+  covenant floor untouched, pack export/hash-verify, screened + deduped + sealed
+  import, covenant-violating faculty blocked at the membrane, and tampered-pack
+  refusal.
+
+## v2.2 — 2026-06-09
+
+Phase A of the learning membrane (the v3 design): telemetry capture, embedder
+fingerprints, and sealed retrieval baselines. Nothing learns yet — this release
+makes every future learner trainable and falsifiable.
+
+### Added
+- **Telemetry (`telemetry.py`)** — the loop's notarized side-effects, captured as a
+  side effect of operating: `offer` (the candidates retrieval offered, with the full
+  feature vector the scorer saw), `fetch` (which blocks the model pulled from the
+  index — its relevance judgment), `use` (each seal attempt's decision, grounding,
+  and declared evidence), `falsify` (a sealed memory failing `verify-source` —
+  negative resonance). Events append to `chain/telemetry.jsonl` — derived data
+  beside the chain, never inside it — and each is stamped with the chain head,
+  embedder fingerprint, and scorer version, so temporal-split training/eval comes
+  for free. `digest` seals a `telemetry-digest` ring (segment SHA-256 + counts)
+  notarizing the log in batches; `verify` re-hashes every digested segment and
+  catches post-hoc edits. Emission is best-effort (never breaks cognition), skips
+  while dormant, masks secret-shaped terms via continuum's redaction patterns, and
+  honors a `CT_TELEMETRY=off` kill switch. Reserved event types (`replay-accept`,
+  `replay-reject`, `missed-positive`, `route`) fix the schema for later phases.
+- **`recall seal --used-rings`** — declare the ring indices whose content actually
+  grounded a thought. The declared evidence fills the PoQ relevance window (the
+  conscience audits the claim against what the model says it relied on) and is
+  logged as `use` telemetry — credit assignment, written down.
+- **Bench (`bench.py`)** — sealed, repeatable retrieval baselines: deterministic
+  probes generated from the chain's own blocks (`verbatim` span, `degraded` span
+  with the block's distinctive sealed labels removed, shuffled `keywords`), plus
+  hand-written gold probes via `--pairs-file`. Reports hit@1 / hit@k / MRR /
+  zero-return count / timing per probe kind; `--seal` notarizes the report as a
+  `bench` ring (optionally into a different chain via `--seal-root`); `--after N`
+  gives temporal-split evaluation. Telemetry is suppressed for the duration —
+  synthetic probes must never contaminate the training log.
+
+### Fixed
+- **Embedder fingerprints** — every embedder now exposes `.fingerprint`
+  (`hashing:256:v1`, `openai:text-embedding-3-small`, …); `recall.label` seals it
+  beside every vector. Previously sealed vectors carried no provenance, so switching
+  embedding providers silently compared vectors across incompatible spaces. Now:
+  recall re-embeds on the fly when a sealed vector's space doesn't match the current
+  embedder; the Hippocampus LSH keeps **one vector space per bank** (foreign vectors
+  are counted and excluded, mismatched banks rebuild automatically — the index is
+  derived, so a rebuild is always safe); unstamped legacy vectors are treated as the
+  stdlib default space, the only sound reading.
+
+### Validated
+- Thirteen mechanisms, 62 checks green (19 added; earlier drafts undercounted from a truncated test log): all v2.1 checks unchanged, plus telemetry
+  head-stamping, offer/use capture, dormancy + kill-switch suppression, digest
+  notarization catching a log edit, fingerprint stamping and legacy compatibility,
+  per-bank vector-space enforcement with automatic rebuild, probe generation,
+  bounded bench metrics, verbatim-probe retrieval, telemetry-clean benching, and
+  baseline sealing.
+
 ## v2.1 — 2026-06-09
 
 ### Changed
