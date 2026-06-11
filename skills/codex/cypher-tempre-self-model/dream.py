@@ -166,12 +166,10 @@ class Dream:
         PROMOTE_AT govern the rest — the registry IS the label-space learner."""
         pol = policymod.load_policy(self.registry_root)["growth"]
         from recall import block_text
-        from cambium import load_corpus, detect_gap, grow
+        from cambium import load_corpus, detect_gap, grow, registry_home
         import embed as embmod
         base = embmod.get_embedder("hashing")
-        skill_dir = (Path(self.registry_root) if self.registry_root
-                     else Path(__file__).resolve().parent)
-        corpus = load_corpus(skill_dir)
+        corpus = load_corpus(registry_home(self.root, self.registry_root))
 
         # High-water mark: only blocks sealed since the last growth pass may
         # propose. Recurrence must mean "this gap keeps arriving in NEW lived
@@ -241,7 +239,8 @@ class Dream:
             exemplar = members[max(idx, key=lambda i: embmod.cosine(members[i]["vec"], centroids[c]))]
             try:
                 res, _ring = grow(self.root, exemplar["text"][:400],
-                                  context="dream growth proposal: tight unlabeled cluster")
+                                  context="dream growth proposal: tight unlabeled cluster",
+                                  registry_root=self.registry_root)
                 fac = res.get("faculty") or {}
                 proposals.append({"cluster_size": len(idx), "intra_sim": round(intra, 3),
                                   "label_agreement": round(agreement, 3),

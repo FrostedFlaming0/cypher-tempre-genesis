@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.7.1 — 2026-06-10
+
+Field-reported bugfix (thank you to the reporter).
+
+### Fixed
+- **Registry-less `--root` crashed growth (reproducible):** a bare per-task
+  chain root (`--root <task_dir>`, chain-only by design per the long-horizon
+  docs) made `cambium.grow` crash with `FileNotFoundError` on
+  `registry/modalities.json` — and a dream cycle on such a root sealed the raw
+  error string into the dream ring instead of growing. New
+  `cambium.registry_home(root, registry_root=None)` resolves where faculties
+  LIVE: explicit `registry_root` wins; else the chain root when it carries the
+  base registries; else the skill's own registry. Faculties belong to the
+  self, not the task ledger — rings still seal into the task chain. Routed
+  through `grow`/`sense`/`emergent` (new `--registry-root` flag),
+  `chronosynaptic.load_faculties`, `faculties` pack import/export, and
+  `dream.propose_growth`. Four regression checks added (130 total).
+
+
 ## v2.7 — 2026-06-10
 
 Pre-release hygiene pass: the whole-repo review's findings, fixed. No new

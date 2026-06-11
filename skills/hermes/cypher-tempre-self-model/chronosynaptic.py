@@ -47,7 +47,7 @@ from pathlib import Path
 
 from timechain import Timechain, POQ_DIMENSIONS
 from poq import PoQGate, tokens, jaccard, ring_text, POQ_WINDOW
-from cambium import load_corpus
+from cambium import load_corpus, registry_home
 
 
 def short(s: str, n: int = 48) -> str:
@@ -57,8 +57,9 @@ def short(s: str, n: int = 48) -> str:
 def load_faculties(root: Path):
     # base modalities/senses + the user's promoted faculties (grown.json), with one-time
     # migration of any legacy in-base promotions. Shares cambium's loader so the merge
-    # logic lives in one place (v2.1).
-    return load_corpus(root)
+    # logic lives in one place (v2.1); registry_home falls back to the skill registry
+    # when the chain root is a bare per-task ledger (v2.7.1).
+    return load_corpus(registry_home(root))
 
 
 def frame(perspective: dict, query: str) -> str:
