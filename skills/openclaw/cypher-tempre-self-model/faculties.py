@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 from timechain import Timechain, now_iso
-from cambium import load_corpus, load_grown, save_grown, detect_gap
+from cambium import load_corpus, load_grown, save_grown, detect_gap, registry_home
 from immune import Immune
 
 PACK_FORMAT = 1
@@ -85,7 +85,7 @@ def export_pack(root, name, domain="", version="0.1", author=None,
     author = author or _genesis_name(tc) or "unknown"
     faculties = []
 
-    grown = load_grown(root)
+    grown = load_grown(registry_home(root))
     for key, kind in (("modalities", "modality"), ("senses", "sense")):
         if kind not in kinds:
             continue
@@ -168,7 +168,7 @@ def import_pack(root, pack, dry_run=False, dedup_floor=DEDUP_FLOOR,
                    else f"covenant {verdict['covenant']} below floor")
             report["blocked"].append({"name": fname, "reason": why})
             continue
-        corpus = load_corpus(root)        # reload each pass: ids + coverage include prior imports
+        corpus = load_corpus(registry_home(root))        # reload each pass: ids + coverage include prior imports
         gap = detect_gap(corpus, _faculty_text(f))
         if gap["dissonance"] < dedup_floor:
             report["skipped_covered"].append({"name": fname, "dissonance": gap["dissonance"]})
@@ -178,7 +178,7 @@ def import_pack(root, pack, dry_run=False, dedup_floor=DEDUP_FLOOR,
             continue
         key = "modalities" if f.get("kind") == "modality" else "senses"
         base = json.loads((root / "registry" / f"{key}.json").read_text()).get(key, [])
-        grown = load_grown(root)
+        grown = load_grown(registry_home(root))
         existing_ids = [it["id"] for it in base] + [it["id"] for it in grown.get(key, [])]
         new_id = (max(existing_ids) if existing_ids else 0) + 1
         grown.setdefault(key, []).append({
@@ -188,7 +188,7 @@ def import_pack(root, pack, dry_run=False, dedup_floor=DEDUP_FLOOR,
                            "pack_sha256": pack.get("pack_sha256"),
                            "donor": pack.get("donor"), "status_at_export": f.get("status")},
         })
-        save_grown(root, grown)
+        save_grown(registry_home(root), grown)
         report["imported"].append({"name": fname, "kind": f.get("kind"), "id": new_id})
 
     if do_seal and not dry_run and (report["imported"] or report["blocked"]):

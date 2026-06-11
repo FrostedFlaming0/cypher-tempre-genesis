@@ -58,6 +58,25 @@ def _atomic_write_json(path: Path, obj):
     atomic_write_json(path, obj)
 
 
+SKILL_DIR = Path(__file__).resolve().parent
+
+
+def registry_home(root: Path, registry_root=None) -> Path:
+    """Where this agent's faculties LIVE. Explicit registry_root wins; else the
+    chain root itself when it carries the base registries (the classic layout);
+    else the skill's own registry. A bare per-task chain root (--root <task_dir>
+    is chain-only BY DESIGN) therefore grows into the agent's home instead of
+    crashing with FileNotFoundError — faculties belong to the self, not to the
+    task ledger; the rings still seal into the task chain."""
+    if registry_root:
+        return Path(registry_root)
+    root = Path(root)
+    if (root / "registry" / "modalities.json").exists() and \
+       (root / "registry" / "senses.json").exists():
+        return root
+    return SKILL_DIR
+
+
 def load_grown(root: Path) -> dict:
     """The per-user store of PROMOTED faculties. Kept OUT of the shipped base registries
     (modalities.json / senses.json) and gitignored — like emergent.json and chain/ — so an
@@ -271,9 +290,10 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
 # --------------------------------------------------------------------------- #
 
 def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
-         kind_override=None, difficulty: int = 0):
+         kind_override=None, difficulty: int = 0, registry_root=None):
     tc = Timechain(root)
-    corpus = load_corpus(root)
+    home = registry_home(root, registry_root)   # faculties live here; rings seal to root
+    corpus = load_corpus(home)
     gap = detect_gap(corpus, input_text, context)
     result = {"gap": gap, "grew": False}
 
@@ -284,7 +304,7 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
         return result, None
 
     prop = propose(gap, input_text, mode=mode, kind_override=kind_override)
-    data = load_emergent(root)
+    data = load_emergent(home)
     existing = match_emergent(data, prop)
 
     if existing:
@@ -292,12 +312,12 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
         existing.setdefault("history", []).append(
             {"ts": now_iso(), "dissonance": gap["dissonance"], "context": short(input_text, 120)})
         if existing["recurrence"] >= PROMOTE_AT and existing["status"] == "emergent":
-            ring = promote(root, tc, existing, difficulty=difficulty)
+            ring = promote(home, tc, existing, difficulty=difficulty)
             existing["status"] = "promoted"
-            save_emergent(root, data)
+            save_emergent(home, data)
             result.update(grew=True, action="promoted", faculty=existing)
             return result, ring
-        save_emergent(root, data)
+        save_emergent(home, data)
         payload = {"event": "faculty_recurrence", "emergent": existing["eid"],
                    "name": existing["name"], "recurrence": existing["recurrence"],
                    "dissonance": gap["dissonance"], "trigger": short(input_text, 200)}
@@ -319,7 +339,7 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
     ring = tc.seal("faculty", payload, poq=faculty_poq(gap, fac["function"]), difficulty=difficulty)
     fac["born_ring"] = ring["ring_hash"]
     data["faculties"].append(fac)
-    save_emergent(root, data)
+    save_emergent(home, data)
     result.update(grew=True, action="born", faculty=fac)
     return result, ring
 
@@ -352,7 +372,7 @@ def _announce(fac, action):
 
 
 def cmd_sense(args):
-    corpus = load_corpus(args.root)
+    corpus = load_corpus(registry_home(args.root, args.registry_root))
     gap = detect_gap(corpus, args.input, args.context or "")
     _print_gap(gap)
     print(f"  verdict: {'GAP — growth would fire' if gap['dissonance'] > DISSONANCE_FLOOR else 'covered — no growth needed'}")
@@ -360,7 +380,8 @@ def cmd_sense(args):
 
 def cmd_grow(args):
     result, ring = grow(args.root, args.input, args.context or "", mode=args.mode,
-                        kind_override=args.kind, difficulty=args.difficulty)
+                        kind_override=args.kind, difficulty=args.difficulty,
+                        registry_root=args.registry_root)
     _print_gap(result["gap"])
     if not result["grew"]:
         print(f"  -> {result['reason']}")
@@ -370,7 +391,7 @@ def cmd_grow(args):
 
 
 def cmd_emergent(args):
-    data = load_emergent(args.root)
+    data = load_emergent(registry_home(args.root, args.registry_root))
     if not data["faculties"]:
         print("  (Dream Cache empty — no emergent faculties yet)")
         return
@@ -383,6 +404,8 @@ def build_parser():
     default_root = Path(__file__).resolve().parent
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--root", type=Path, default=default_root)
+    common.add_argument("--registry-root", type=Path, default=None,
+                        help="faculty registry home (default: --root if it has one, else the skill dir)")
     common.add_argument("--context", default=None)
 
     p = argparse.ArgumentParser(description="Cambium Engine — endogenous faculty evolution.")

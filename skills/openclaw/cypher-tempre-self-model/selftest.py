@@ -614,6 +614,33 @@ def main():
               len([p for p in r_g2["growth"]["proposals"]
                    if p.get("action") in ("born", "recurrence", "promoted")]) == 0)
 
+        # 25. Registry-less per-task roots (v2.7.1): a bare --root (chain-only,
+        # the documented long-horizon layout) must GROW via the agent's registry
+        # home, not crash with FileNotFoundError sealed into the dream ring.
+        bare = root / "bare-task-root"
+        tcb = timechain.Timechain(bare)
+        tcb.genesis(name="bare-task", attach_registries=False)
+        for i in range(4):
+            tcb.seal("experience", {"summary": f"hyperledger fabric chaincode endorsement gossip ordering {i}"})
+        res_explicit, _ = cambium.grow(bare, "hyperledger fabric chaincode endorsement gossip",
+                                       registry_root=root)
+        check("cambium: bare root + explicit registry home grows without crash",
+              res_explicit.get("action") in ("born", "recurrence", "promoted", "covered"))
+        old_home = cambium.SKILL_DIR
+        cambium.SKILL_DIR = root            # isolate the fallback target off the real skill dir
+        try:
+            res_fb, _ = cambium.grow(bare, "hyperledger fabric chaincode endorsement gossip")
+            check("cambium: bare root falls back to the skill registry home",
+                  res_fb.get("action") in ("born", "recurrence", "promoted", "covered"))
+            r_bare = dream.Dream(bare, registry_root=root).run()
+            clean = ("error" not in r_bare.get("growth", {})
+                     and all("error" not in p for p in r_bare.get("growth", {}).get("proposals", [])))
+            check("dream: bare root dreams without sealing errors into the ring",
+                  r_bare.get("ran") is True and clean)
+        finally:
+            cambium.SKILL_DIR = old_home
+        check("timechain: bare task chain verifies", tcb.verify()[0])
+
         check("timechain: final verify", tc.verify()[0])
     finally:
         shutil.rmtree(root, ignore_errors=True)
