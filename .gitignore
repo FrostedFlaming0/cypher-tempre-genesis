@@ -19,3 +19,6 @@ dashboard/node_modules/
 **/registry/scorer.json
 **/registry/labeler.json
 **/registry/lens/
+
+# Local tooling
+.claude/
