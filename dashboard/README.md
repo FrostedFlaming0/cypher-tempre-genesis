@@ -1,8 +1,10 @@
 # Cypher Tempre Dashboard
 
 Local-first dashboard for auditing a Cypher Tempre `cypher-tempre-self-model`
-skill directory. The server binds to `127.0.0.1` by default, reads only the
-configured local Timechain root, and keeps unlock state in memory.
+skill directory — **free, frictionless, and private**. There is no payment
+gate, no account, no wallet, and no outbound network call of any kind: the
+server binds to `127.0.0.1`, reads only the configured local Timechain root,
+and nothing ever leaves the machine.
 
 ## Local Run
 
@@ -12,7 +14,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:8788`.
+Open `http://127.0.0.1:8788` — the dashboard loads immediately.
 
 To point at a specific skill instance:
 
@@ -20,117 +22,59 @@ To point at a specific skill instance:
 CT_DASHBOARD_ROOT=/path/to/cypher-tempre-self-model npm run dev
 ```
 
-## Token Gate
+Without `CT_DASHBOARD_ROOT` the bridge auto-discovers an installed skill
+(`~/.codex`, `~/.claude`, `~/.openclaw`, then the repo's bundled copy).
 
-The dashboard requires a fresh Base-chain ERC-20 transfer and a payer-wallet
-signature before serving local Timechain data:
+## What It Audits
 
-- Token: `0x08Df470d41C11Ba5Cb60242747D76C65Ca52c94c`
-- Amount: `10,000`
-- Recipient name: `cyberphysics.base.eth`
-- Default recipient address: `0x7932CCa1BD502d6850842c423d21f527de47A0Ca`
+- **Summary** — ring counts, faculties, blockspace, domain context, with the
+  chain re-verified live by the canonical hash walk.
+- **Learning Membrane** — the v2.2+ self-improvement provenance:
+  - *Integrity triptych*: hash chain, witness quorum (HMAC attestations
+    re-verified), and telemetry digests (sealed segment hashes re-computed) —
+    three independent trust layers, each checked live.
+  - *Operators timeline*: every learner adoption/rollback ring with its
+    holdout evals.
+  - *Dream cycles*: missed-positives mined, per-learner adopt/held outcomes,
+    growth proposals.
+  - *Economics*: cumulative tokens saved by replay, telemetry event counts,
+    replay ledger.
+  - *Seal quality*: PoQ brightness and span-grounding over chain height.
+- **Rings & Blockspace** — searchable ring list with full detail panels and
+  content-addressed blob previews.
 
-The server verifies:
+## Privacy Posture
 
-- A pasted Base transaction hash points to a fresh payment for the current
-  dashboard session.
-- The unlock request includes a `personal_sign` signature over the current
-  session nonce, payer account, transaction hash, token, recipient, amount, and
-  Base chain id.
-- The recovered signer matches the submitted account, and the on-chain
-  transaction sender matches that same account.
-- The transaction is on Base and succeeded.
-- The transaction is a direct ERC-20 `transfer`.
-- The token emitted a `Transfer` log to the configured recipient.
-- The value is at least `10,000` tokens using the token contract decimals.
-- The block timestamp is not older than the local session challenge grace
-  window, which defaults to 15 minutes.
-- The transaction hash has not already been redeemed by this local bridge.
+- The hosted site (`cyphertempre.ai`) is a static shell; the only process that
+  reads Timechain data is the local bridge on your machine.
+- A hosted page must **pair** with the bridge using the code printed in your
+  terminal; hostile origins are refused; the static handler is traversal-proof.
+- The bridge makes **zero outbound requests** — the Content-Security-Policy is
+  `connect-src 'self'`.
+- No cookies persist anything sensitive; no telemetry about you exists at all.
 
-No Timechain content is uploaded or persisted by the dashboard. Payment unlocks
-are in-memory only for the local server process. Redeemed payment transaction
-hashes are stored locally in the configured Timechain root at
-`chain/dashboard-used-payments.json` so a payment hash cannot be reused by the
-same local bridge after restart.
-
-Environment overrides:
+## Remote (hosted) Use
 
 ```bash
-BASE_RPC_URL=https://mainnet.base.org
-CT_GATE_RECIPIENT_ADDRESS=0x...
-CT_GATE_RECIPIENT_NAME=cyberphysics.base.eth
-CT_GATE_AMOUNT=10000
-CT_GATE_CONFIRMATIONS=1
-CT_GATE_PAYMENT_SESSION_GRACE_MS=900000
-CT_WALLETCONNECT_PROJECT_ID=your_reown_project_id
-CT_GATE_VERIFY_RATE_LIMIT_MAX=6
-CT_GATE_VERIFY_IP_RATE_LIMIT_MAX=30
-```
-
-For local UI development only:
-
-```bash
-CT_DASHBOARD_DEV_UNLOCK=1 npm run dev
-```
-
-## cyphertempre.ai Deployment Model
-
-Deploy `dashboard/public` as the static website for `https://cyphertempre.ai`.
-The hosted site is only the UI shell. Each user runs the local bridge on their
-own machine:
-
-```bash
-cd dashboard
-npm install
 npm run bridge
 ```
 
-The bridge prints a one-time pairing code. The code must contain at least eight
-letters or digits and is compared in constant time. The user enters that code on
-`cyphertempre.ai`; the site receives an in-memory local bridge token and then
-calls `http://127.0.0.1:8788/api/...` from the browser. Chain data is read by
-the local bridge and rendered in the user's browser. It is not uploaded to the
-hosted site.
+Enter the printed pairing code on `https://cyphertempre.ai`. The hosted page
+talks only to `http://127.0.0.1:8788` after pairing.
 
-Requests from `https://cyphertempre.ai` and other configured public origins must
-pair with the local bridge. Direct same-origin requests to the loopback bridge
-without an `Origin` header are treated as local development/direct-local mode
-only when both the Host header and socket address are loopback.
-
-WalletConnect/Reown AppKit is supported for desktop wallet connection. Create a
-project at `https://cloud.reown.com`, then put the public project ID in
-`dashboard/public/config.js` before uploading the static files:
-
-```js
-window.CYPHER_TEMPRE_PUBLIC_CONFIG = {
-  walletConnectProjectId: 'your_reown_project_id',
-};
-```
-
-If the project ID is blank, the dashboard still works with any injected browser
-wallet already present on the page. A wallet signature from the payment sender
-is required even when the transaction hash is pasted manually.
-After dependency updates, rebuild the WalletConnect bundle before publishing:
+## Tests
 
 ```bash
-npm run build:walletconnect
+npm test          # bridge security posture + learning overview rendering
+npm run check     # syntax checks
 ```
 
-Default public origins allowed by the bridge:
+## Environment
 
-```text
-https://cyphertempre.ai
-https://www.cyphertempre.ai
-```
-
-Override them for staging:
-
-```bash
-CT_DASHBOARD_PUBLIC_ORIGINS=https://staging.cyphertempre.ai,http://localhost:4173 npm run bridge
-```
-
-The static publish directory includes `_headers` with a CSP that permits the
-hosted page to call the local bridge on `127.0.0.1:8788`, Base RPCs, and the
-WalletConnect/Reown relays used by AppKit. For Hostinger/Apache hosting,
-`dashboard/public/.htaccess` provides equivalent security headers and the
-static-app fallback.
+| Variable | Default | Purpose |
+|---|---|---|
+| `CT_DASHBOARD_ROOT` | auto-discover | skill directory to audit |
+| `CT_DASHBOARD_HOST` | `127.0.0.1` | bind address |
+| `CT_DASHBOARD_PORT` | `8788` | port |
+| `CT_DASHBOARD_PUBLIC_ORIGINS` | cyphertempre.ai | origins allowed to pair |
+| `CT_DASHBOARD_PAIR_CODE` | random per run | fixed pairing code (≥8 chars) |
