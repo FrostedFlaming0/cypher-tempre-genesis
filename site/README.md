@@ -25,8 +25,22 @@ Timechain data stays on the user's machine, read by their own local bridge.
 5. Visit `https://cyphertempre.ai` and hard-refresh (Cmd/Ctrl+Shift+R) so the
    new `?v=` asset versions bypass any cache.
 
-If hPanel offers Git deployment for your plan, set the publish path to
-`dashboard/public` instead of uploading by hand.
+### Git deployment (recommended)
+
+Hostinger's GIT feature deploys a **branch root** into `public_html` — it
+cannot publish a repo subdirectory. Deploying `main` therefore 403s (no root
+`index.html`) and exposes the whole repo over HTTP. Use the dedicated
+`site-deploy` branch instead, whose root IS the static site:
+
+1. Run `./site/deploy.sh` (splits `dashboard/public` into the `site-deploy`
+   branch and pushes it).
+2. hPanel → **Advanced → GIT**: remove any existing deployment of `main`.
+3. File Manager → `public_html` → delete all previously deployed files
+   (Hostinger needs a clean target).
+4. Add the repository again with **branch `site-deploy`** and install path
+   blank (deploys into `public_html`), then **Deploy**.
+5. Optional: enable the auto-deploy webhook so every `site-deploy` push goes
+   live automatically.
 
 ## Cloudflare Pages Alternative
 
