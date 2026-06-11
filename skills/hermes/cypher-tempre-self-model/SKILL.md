@@ -383,6 +383,8 @@ into shareable packs and imports others', without ever violating the fresh-genes
 directive: tools are gifted, histories are not inherited.
 
 ```
+python3 faculties.py author spec.json        # DESIGNED faculties: screened, born into the
+                                             # Dream Cache with ONE sealed faculty-design ring
 python3 faculties.py export --name my-domain-pack --out pack.json [--include-emergent] [--seal]
 python3 faculties.py show pack.json          # inspect + verify the pack hash
 python3 faculties.py import pack.json [--dry-run]
@@ -556,7 +558,7 @@ telemetry.py       stats | tail | digest | verify | emit          (the loop's tr
 bench.py           probes | run [--embed] [--seal] [--after N]    (notarized retrieval baselines; suppresses telemetry)
 policy.py          show                                            (covenant tolerances; registry/policy.json overrides)
 learner.py         train [--adopt] | rollback | appetite | calibrate-poq | status   (the decisions learner)
-faculties.py       export | import [--dry-run] | show              (faculty packs: screened, deduped, provenance-sealed)
+faculties.py       author | export | import [--dry-run] | show     (faculty packs: designed or grown; screened, deduped, provenance-sealed)
 replay.py          match | accept | reject | refresh | stats | calibrate   (answer from the chain when it already knows)
 guard.py           audit "<text>" [--embed]                         (span-level grounding report)
 lens.py            train [--adopt] | status | rollback | sim        (representation learner; recall --provider lens)

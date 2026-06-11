@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.9 — 2026-06-11
+
+Faculty packs become a product: the first curated pack ships, and the upgrade
+system gains its deliberate path.
+
+### Added
+- **`faculties.py author`** — the third path of the upgrade system. Cambium
+  grows faculties organically from gaps; `author` registers faculties designed
+  ON PURPOSE: each entry validated, immune-screened, and born into the Dream
+  Cache with ONE sealed `faculty-design` ring as the shared birth certificate
+  (full spec in blockspace; every entry's `born_ring` points at the ring).
+  Designed faculties start emergent at recurrence 1 and earn promotion the
+  same way sprouts do — authoring is a birth, not a coronation.
+- **`packs/trading-analysis-v1.json`** — the first curated faculty pack:
+  8 senses (regime shifts, risk asymmetry, liquidity depth, sentiment
+  divergence, lookahead bias, catalyst horizons, flow footprints, cost
+  friction) and 6 modalities (expected-value reasoning, regime-conditional
+  mapping, risk-first position calculus, backtest-skepticism auditing,
+  macro-microstructure fusion, thesis-falsification framing). Every function
+  is dual-duty text: dense in domain vocabulary so it fires lexically, and a
+  crisp analytical discipline the attached model adopts as a lens. Proven on
+  a fresh agent: dissonance on a trading brief fell 205 → 87 with exactly the
+  right lenses firing. Spec + catalog in `packs/`.
+- Four selftest checks for the author path (139 total).
+
+
 ## v2.8 — 2026-06-10
 
 Benchmark-driven recall upgrades. An external tester ran the skill against

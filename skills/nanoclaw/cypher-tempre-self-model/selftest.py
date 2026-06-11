@@ -381,6 +381,36 @@ def main():
             check("faculties: tampered pack refused by hash check",
                   rep4["errors"] and not rep4["imported"])
             check("faculties: recipient chain verifies after imports", tc2.verify()[0])
+
+            # 18b. DESIGNED packs (v2.9): authored faculties are screened, born
+            # into the Dream Cache with a sealed birth ring, and export/import
+            # with that provenance — the deliberate path of the upgrade system.
+            spec = {"name": "test-design", "version": "0.1", "domain": "selftest",
+                    "faculties": [
+                        {"kind": "sense", "name": "Hyperledger-Endorsement Sensing",
+                         "function": "Detect hyperledger fabric chaincode endorsement gossip ordering anomalies in input.",
+                         "category": "structural", "seed_terms": ["hyperledger", "endorsement", "gossip"]},
+                        {"kind": "modality", "name": "Chaincode-Flow Reasoning",
+                         "function": "Reason about chaincode endorsement policies and ordering service flows end to end.",
+                         "category": "knowledge", "seed_terms": ["chaincode", "ordering", "policy"]}]}
+            rep_a = faculties.author_pack(root, spec)
+            check("faculties: author registers designed faculties in the Dream Cache",
+                  len(rep_a["designed"]) == 2 and rep_a.get("born_ring"))
+            em_a = cambium.load_emergent(root)["faculties"]
+            check("faculties: designed entries carry the sealed birth ring",
+                  any(e.get("born_ring") == rep_a["born_ring"]
+                      and e["origin"].startswith("designed:test-design") for e in em_a))
+            pack_d = faculties.export_pack(root, "test-design", version="0.1",
+                                           include_emergent=True,
+                                           only_names=["Hyperledger-Endorsement Sensing",
+                                                       "Chaincode-Flow Reasoning"])
+            check("faculties: designed pack exports with provenance",
+                  len(pack_d["faculties"]) == 2
+                  and all((f["provenance"] or {}).get("born_ring") == rep_a["born_ring"]
+                          for f in pack_d["faculties"]))
+            rep_d = faculties.import_pack(root2, pack_d)
+            check("faculties: designed pack imports into a second mind",
+                  len(rep_d["imported"]) >= 1 and tc2.verify()[0])
         finally:
             shutil.rmtree(root2, ignore_errors=True)
 

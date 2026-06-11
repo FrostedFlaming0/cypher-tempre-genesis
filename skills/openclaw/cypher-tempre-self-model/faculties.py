@@ -44,7 +44,8 @@ import sys
 from pathlib import Path
 
 from timechain import Timechain, now_iso
-from cambium import load_corpus, load_grown, save_grown, detect_gap, registry_home
+from cambium import (load_corpus, load_grown, save_grown, detect_gap, registry_home,
+                     load_emergent, save_emergent)
 from immune import Immune
 
 PACK_FORMAT = 1
@@ -127,6 +128,98 @@ def export_pack(root, name, domain="", version="0.1", author=None,
     }
     pack["pack_sha256"] = pack_hash(pack)
     return pack
+
+
+# --------------------------------------------------------------------------- #
+# Author — deliberately DESIGNED faculties, sealed at birth
+# --------------------------------------------------------------------------- #
+
+def author_pack(root, spec, do_seal=True):
+    """The third path of the upgrade system. Cambium grows faculties organically
+    from gaps; this registers faculties designed ON PURPOSE — domain packs built
+    by a mind and its co-evolver — into the Dream Cache (emergent.json), with
+    ONE sealed `faculty-design` ring as the shared birth certificate (the full
+    spec goes to blockspace; every entry's born_ring points at that ring).
+
+    Designed faculties are NOT pre-promoted: they start emergent at recurrence 1
+    and earn promotion the same way sprouts do — by recurring in new lived
+    experience. Authoring is a birth, not a coronation."""
+    root = Path(root)
+    home = registry_home(root)
+    report = {"pack": f"{spec.get('name')}@{spec.get('version')}",
+              "designed": [], "blocked": [], "coverage": [], "errors": []}
+    faculties = spec.get("faculties") or []
+    if not faculties:
+        report["errors"].append("spec has no faculties")
+        return report
+    if len(faculties) > MAX_PACK_FACULTIES:
+        report["errors"].append(f"{len(faculties)} faculties > flood guard {MAX_PACK_FACULTIES}")
+        return report
+
+    membrane = Immune(root)
+    corpus = load_corpus(home)
+    accepted = []
+    for f in faculties:
+        fname = f.get("name", "?")
+        if f.get("kind") not in ("modality", "sense") or not f.get("name") or not f.get("function"):
+            report["blocked"].append({"name": fname, "reason": "missing kind/name/function"})
+            continue
+        if len(f["function"]) > MAX_FUNCTION_CHARS:
+            report["blocked"].append({"name": fname, "reason": "function exceeds flood guard"})
+            continue
+        verdict = membrane.screen(_faculty_text(f))
+        if verdict["blocked"]:
+            why = (f"matches scar {verdict['scar']['id']}" if verdict.get("scar")
+                   else f"covenant {verdict['covenant']} below floor")
+            report["blocked"].append({"name": fname, "reason": why})
+            continue
+        gap = detect_gap(corpus, _faculty_text(f))
+        report["coverage"].append({"name": fname, "dissonance": gap["dissonance"]})
+        accepted.append(f)
+    if not accepted:
+        return report
+
+    ring = None
+    if do_seal:
+        tc = Timechain(root)
+        tmp = root / "chain" / f"{spec.get('name', 'pack')}@{spec.get('version', '0')}.design.json"
+        tmp.write_text(json.dumps(spec, indent=2, ensure_ascii=False))
+        try:
+            ring = tc.seal("faculty-design", {
+                "summary": (f"Designed faculty pack: {report['pack']} — "
+                            f"{len(accepted)} faculties authored on purpose "
+                            f"({sum(1 for f in accepted if f['kind'] == 'sense')} senses, "
+                            f"{sum(1 for f in accepted if f['kind'] == 'modality')} modalities), "
+                            f"screened at the membrane, born into the Dream Cache at "
+                            f"recurrence 1. Promotion must still be earned in lived "
+                            f"experience. Full spec in blockspace."),
+                "pack_name": spec.get("name"), "pack_version": spec.get("version"),
+                "domain": spec.get("domain", ""),
+                "designed": [f["name"] for f in accepted],
+                "spec_sha256": hashlib.sha256(_canonical(spec)).hexdigest(),
+            }, files=[tmp])
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    data = load_emergent(home)
+    for f in accepted:
+        eid = f"E{len(data['faculties']) + 1}"
+        data["faculties"].append({
+            "eid": eid, "kind": f["kind"], "name": f["name"], "function": f["function"],
+            "category": f.get("category", ""), "origin": f"designed:{report['pack']}",
+            "parents": [], "seed_terms": f.get("seed_terms") or [],
+            "status": "emergent", "recurrence": 1, "born_at": now_iso(),
+            "promoted_to_id": None,
+            "history": [{"ts": now_iso(), "dissonance": None,
+                         "context": f"designed into pack {report['pack']}"}],
+            "born_ring": ring["ring_hash"] if ring else None,
+        })
+        report["designed"].append({"name": f["name"], "kind": f["kind"], "eid": eid})
+    save_emergent(home, data)
+    if ring:
+        report["ring"] = ring["index"]
+        report["born_ring"] = ring["ring_hash"]
+    return report
 
 
 # --------------------------------------------------------------------------- #
@@ -257,6 +350,23 @@ def cmd_import(args):
     sys.exit(1 if report["errors"] else 0)
 
 
+def cmd_author(args):
+    spec = json.loads(Path(args.spec).read_text())
+    report = author_pack(args.root, spec, do_seal=not args.no_seal)
+    print(f"pack: {report['pack']}")
+    for e in report["errors"]:
+        print(f"  ERROR: {e}")
+    for f in report["designed"]:
+        cov = next((c["dissonance"] for c in report["coverage"] if c["name"] == f["name"]), None)
+        print(f"  designed  [{f['kind']:<8}] {f['name']} -> {f['eid']}"
+              + (f"  (novelty/dissonance {cov})" if cov is not None else ""))
+    for f in report["blocked"]:
+        print(f"  BLOCKED   {f['name']}: {f['reason']}")
+    if "ring" in report:
+        print(f"sealed faculty-design Ring {report['ring']}  born_ring {report['born_ring'][:16]}..")
+    sys.exit(1 if report["errors"] else 0)
+
+
 def cmd_show(args):
     pack = json.loads(Path(args.pack).read_text())
     ok = pack_hash(pack) == pack.get("pack_sha256")
@@ -303,6 +413,11 @@ def build_parser():
     pi.add_argument("--force", action="store_true", help="override hash/flood guards (NOT recommended)")
     pi.add_argument("--no-seal", action="store_true", help="don't seal a faculty-import ring")
     pi.set_defaults(func=cmd_import)
+
+    pa = sub.add_parser("author", parents=[common], help="register DESIGNED faculties (sealed birth, Dream Cache)")
+    pa.add_argument("spec", help="spec JSON: {name, version, domain, faculties:[{kind,name,function,category,seed_terms}]}")
+    pa.add_argument("--no-seal", action="store_true")
+    pa.set_defaults(func=cmd_author)
 
     ps = sub.add_parser("show", parents=[common], help="inspect a pack file + verify its hash")
     ps.add_argument("pack")
