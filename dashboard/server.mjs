@@ -7,7 +7,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { verifyMessage } from 'ethers';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -17,23 +16,7 @@ const execFileAsync = promisify(execFile);
 const HOST = process.env.CT_DASHBOARD_HOST || '127.0.0.1';
 const PORT = Number(process.env.CT_DASHBOARD_PORT || 8788);
 const MAX_JSON_BODY_BYTES = Math.max(1024, Number(process.env.CT_DASHBOARD_MAX_JSON_BODY_BYTES || 20_000));
-const BASE_CHAIN_ID = 8453;
-const BASE_CHAIN_ID_HEX = '0x2105';
-const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
-const TOKEN_ADDRESS = checksumish(process.env.CT_GATE_TOKEN || '0x08Df470d41C11Ba5Cb60242747D76C65Ca52c94c');
-const TOKEN_SYMBOL_FALLBACK = process.env.CT_GATE_TOKEN_SYMBOL || 'CPHY';
-const TOKEN_DECIMALS_FALLBACK = Number(process.env.CT_GATE_TOKEN_DECIMALS || 18);
-const REQUIRED_TOKEN_AMOUNT = process.env.CT_GATE_AMOUNT || '10000';
-const RECIPIENT_NAME = process.env.CT_GATE_RECIPIENT_NAME || 'cyberphysics.base.eth';
-const RECIPIENT_ADDRESS = checksumish(process.env.CT_GATE_RECIPIENT_ADDRESS || '0x7932CCa1BD502d6850842c423d21f527de47A0Ca');
-const REQUIRED_CONFIRMATIONS = Math.max(1, Number(process.env.CT_GATE_CONFIRMATIONS || 1));
-const PAYMENT_SESSION_GRACE_MS = Math.max(60_000, Number(process.env.CT_GATE_PAYMENT_SESSION_GRACE_MS || 15 * 60_000));
-const VERIFY_RATE_LIMIT_WINDOW_MS = Math.max(5_000, Number(process.env.CT_GATE_VERIFY_RATE_LIMIT_WINDOW_MS || 60_000));
-const VERIFY_RATE_LIMIT_MAX = Math.max(1, Number(process.env.CT_GATE_VERIFY_RATE_LIMIT_MAX || 6));
-const VERIFY_IP_RATE_LIMIT_MAX = Math.max(VERIFY_RATE_LIMIT_MAX, Number(process.env.CT_GATE_VERIFY_IP_RATE_LIMIT_MAX || 30));
-const WALLETCONNECT_PROJECT_ID = process.env.CT_WALLETCONNECT_PROJECT_ID || '';
 const SESSION_TTL_MS = Math.max(10 * 60_000, Number(process.env.CT_DASHBOARD_SESSION_TTL_MS || 4 * 60 * 60_000));
-const DEV_UNLOCK = process.env.CT_DASHBOARD_DEV_UNLOCK === '1';
 const MAX_RING_DETAIL_BYTES = Number(process.env.CT_DASHBOARD_MAX_RING_DETAIL_BYTES || 512_000);
 const MAX_BLOB_PREVIEW_BYTES = Number(process.env.CT_DASHBOARD_MAX_BLOB_PREVIEW_BYTES || 128_000);
 const DOMAIN_BLOB_TEXT_LIMIT = Number(process.env.CT_DASHBOARD_DOMAIN_BLOB_TEXT_LIMIT || 64_000);
@@ -47,64 +30,12 @@ const PUBLIC_ORIGINS = new Set(
 const LOCAL_ORIGIN_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const BRIDGE_PAIR_CODE = createPairingCode(process.env.CT_DASHBOARD_PAIR_CODE || crypto.randomBytes(5).toString('hex'));
 
-const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-const TRANSFER_SELECTOR = '0xa9059cbb';
-const ERC20_CALLS = {
-  decimals: '0x313ce567',
-  symbol: '0x95d89b41',
-  name: '0x06fdde03',
-};
-
 const sessions = new Map();
 const bridgeTokens = new Map();
-const verifyRateLimits = new Map();
-let tokenMetaCache = null;
 let timechainRoot = null;
-let usedPaymentsCache = null;
-
-function checksumish(value) {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(value || '')) {
-    throw new Error(`Invalid EVM address: ${value}`);
-  }
-  return value;
-}
 
 function lower(value) {
   return String(value || '').toLowerCase();
-}
-
-function evmAddressFrom(value) {
-  if (!value) return null;
-  if (typeof value === 'object') {
-    return evmAddressFrom(value.address || value.caipAddress || value.account);
-  }
-  const text = String(value).trim();
-  const direct = text.match(/^0x[0-9a-fA-F]{40}$/);
-  if (direct) return direct[0];
-  const caip = text.match(/(?:^|:)((?:0x)[0-9a-fA-F]{40})$/);
-  return caip ? caip[1] : null;
-}
-
-function usableSignature(value) {
-  const text = String(value || '').trim();
-  return /^0x[0-9a-fA-F]{64,}$/.test(text) ? text : null;
-}
-
-function padAddressTopic(address) {
-  return `0x${'0'.repeat(24)}${lower(address).slice(2)}`;
-}
-
-function parseUnitsDecimal(amount, decimals) {
-  const [whole, frac = ''] = String(amount).trim().split('.');
-  if (!/^\d+$/.test(whole) || !/^\d*$/.test(frac)) {
-    throw new Error(`Invalid decimal amount: ${amount}`);
-  }
-  const padded = (frac + '0'.repeat(decimals)).slice(0, decimals);
-  return BigInt(`${whole}${padded}`.replace(/^0+/, '') || '0');
-}
-
-function toHexQuantity(value) {
-  return `0x${BigInt(value).toString(16)}`;
 }
 
 function sha256Hex(buffer) {
@@ -144,9 +75,6 @@ function createSession() {
     nonce,
     createdAt: now,
     expiresAt: now + SESSION_TTL_MS,
-    unlocked: DEV_UNLOCK,
-    account: null,
-    txHash: null,
   });
   return sessions.get(id);
 }
@@ -265,7 +193,7 @@ function securityHeaders() {
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
-      "connect-src 'self' https://mainnet.base.org https://base-rpc.publicnode.com https://*.walletconnect.com wss://*.walletconnect.com https://*.reown.com wss://*.reown.com https://*.web3modal.org",
+      "connect-src 'self'",
       "img-src 'self' data: blob: https:",
       "font-src 'self'",
       "object-src 'none'",
@@ -281,204 +209,10 @@ function securityHeaders() {
   };
 }
 
-async function rpc(method, params) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await fetch(BASE_RPC_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-      signal: controller.signal,
-    });
-    const body = await response.json();
-    if (body.error) throw new Error(body.error.message || JSON.stringify(body.error));
-    return body.result;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function decodeAbiString(hex) {
-  if (!hex || hex === '0x') return '';
-  const body = hex.slice(2);
-  if (body.length <= 64) return Buffer.from(body.replace(/^0+/, ''), 'hex').toString('utf8').replace(/\0+$/g, '');
-  const offset = Number(BigInt(`0x${body.slice(0, 64)}`)) * 2;
-  const length = Number(BigInt(`0x${body.slice(offset, offset + 64)}`)) * 2;
-  return Buffer.from(body.slice(offset + 64, offset + 64 + length), 'hex').toString('utf8');
-}
-
-async function getTokenMeta() {
-  if (tokenMetaCache) return tokenMetaCache;
-  const readCall = async (data) => rpc('eth_call', [{ to: TOKEN_ADDRESS, data }, 'latest']);
-  const [decimalsRaw, symbolRaw, nameRaw] = await Promise.allSettled([
-    readCall(ERC20_CALLS.decimals),
-    readCall(ERC20_CALLS.symbol),
-    readCall(ERC20_CALLS.name),
-  ]);
-  const decimals = decimalsRaw.status === 'fulfilled' ? Number(BigInt(decimalsRaw.value)) : TOKEN_DECIMALS_FALLBACK;
-  const symbol = symbolRaw.status === 'fulfilled' ? decodeAbiString(symbolRaw.value) || TOKEN_SYMBOL_FALLBACK : TOKEN_SYMBOL_FALLBACK;
-  const name = nameRaw.status === 'fulfilled' ? decodeAbiString(nameRaw.value) || 'Cypher Tempre Token' : 'Cypher Tempre Token';
-  const amountRaw = parseUnitsDecimal(REQUIRED_TOKEN_AMOUNT, decimals);
-  tokenMetaCache = {
-    address: TOKEN_ADDRESS,
-    name,
-    symbol,
-    decimals,
-    requiredAmount: REQUIRED_TOKEN_AMOUNT,
-    requiredAmountRaw: amountRaw.toString(),
-  };
-  return tokenMetaCache;
-}
-
-function accessMessage(session, account, txHash) {
-  return [
-    'Cypher Tempre Dashboard access',
-    `Session: ${session.nonce}`,
-    `Account: ${lower(account)}`,
-    `Payment transaction: ${lower(txHash)}`,
-    `Token: ${lower(TOKEN_ADDRESS)}`,
-    `Recipient: ${lower(RECIPIENT_ADDRESS)}`,
-    `Amount: ${REQUIRED_TOKEN_AMOUNT}`,
-    `Chain: Base (${BASE_CHAIN_ID})`,
-  ].join('\n');
-}
-
 function httpError(message, status = 400) {
   const error = new Error(message);
   error.status = status;
   return error;
-}
-
-function usedPaymentsPath() {
-  return ensureInsideRoot(path.join(timechainRoot, 'chain', 'dashboard-used-payments.json'));
-}
-
-async function loadUsedPayments() {
-  if (usedPaymentsCache) return usedPaymentsCache;
-  const ledger = await readJsonSafe(usedPaymentsPath(), { version: 1, used: {} });
-  usedPaymentsCache = {
-    version: 1,
-    used: ledger && typeof ledger.used === 'object' && !Array.isArray(ledger.used) ? ledger.used : {},
-  };
-  return usedPaymentsCache;
-}
-
-async function requirePaymentUnused(txHash) {
-  const ledger = await loadUsedPayments();
-  const key = lower(txHash);
-  if (ledger.used[key]) {
-    const error = new Error('This payment transaction hash has already been redeemed by this local bridge.');
-    error.status = 409;
-    throw error;
-  }
-}
-
-async function markPaymentUsed(record) {
-  const ledger = await loadUsedPayments();
-  const key = lower(record.txHash);
-  if (ledger.used[key]) {
-    const error = new Error('This payment transaction hash has already been redeemed by this local bridge.');
-    error.status = 409;
-    throw error;
-  }
-  ledger.used[key] = {
-    txHash: key,
-    account: lower(record.account),
-    amountRaw: String(record.amountRaw),
-    blockNumber: String(record.blockNumber),
-    confirmations: String(record.confirmations),
-    redeemedAt: new Date().toISOString(),
-  };
-  const file = usedPaymentsPath();
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(ledger, null, 2));
-  await fs.rename(tmp, file);
-}
-
-async function verifyPayment({ session, account, txHash, signature }) {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash || '')) throw httpError('Invalid transaction hash.');
-  const normalizedTxHash = lower(txHash);
-
-  const signedAccount = evmAddressFrom(account);
-  if (!signedAccount) {
-    throw httpError('Wallet account is required. Connect the payer wallet and sign this session challenge before unlocking.');
-  }
-  const signedMessage = usableSignature(signature);
-  if (!signedMessage) {
-    throw httpError('Wallet signature is required. Sign the dashboard access message for this session and transaction hash.');
-  }
-  try {
-    const recovered = verifyMessage(accessMessage(session, signedAccount, normalizedTxHash), signedMessage);
-    if (lower(recovered) !== lower(signedAccount)) {
-      throw httpError('Wallet signature does not match the payer account.');
-    }
-  } catch (error) {
-    if (error.status) throw error;
-    throw httpError('Wallet signature could not be verified.');
-  }
-  await requirePaymentUnused(normalizedTxHash);
-
-  const [tx, receipt, latestHex] = await Promise.all([
-    rpc('eth_getTransactionByHash', [normalizedTxHash]),
-    rpc('eth_getTransactionReceipt', [normalizedTxHash]),
-    rpc('eth_blockNumber', []),
-  ]);
-  if (!tx || !receipt) throw httpError('Transaction is not indexed on Base yet.', 404);
-  if (receipt.status !== '0x1') throw httpError('Transaction failed on-chain.');
-  const payer = lower(tx.from);
-  if (signedAccount && payer !== lower(signedAccount)) throw httpError('Payment transaction was not sent by the signed account.');
-  if (lower(tx.to) !== lower(TOKEN_ADDRESS)) throw httpError('Payment transaction is not a direct call to the configured token contract.');
-  if (!lower(tx.input || tx.data || '').startsWith(TRANSFER_SELECTOR)) {
-    throw httpError('Payment transaction is not an ERC-20 transfer call.');
-  }
-
-  const latest = BigInt(latestHex);
-  const blockNumber = BigInt(receipt.blockNumber);
-  const confirmations = latest >= blockNumber ? latest - blockNumber + 1n : 0n;
-  if (confirmations < BigInt(REQUIRED_CONFIRMATIONS)) {
-    throw httpError(`Waiting for confirmations (${confirmations}/${REQUIRED_CONFIRMATIONS}).`, 425);
-  }
-
-  const block = await rpc('eth_getBlockByNumber', [receipt.blockNumber, false]);
-  const blockTimeMs = Number(BigInt(block.timestamp)) * 1000;
-  if (blockTimeMs + PAYMENT_SESSION_GRACE_MS < session.createdAt) {
-    const hours = Math.round(PAYMENT_SESSION_GRACE_MS / 3_600_000);
-    throw httpError(`Payment is older than this dashboard session grace window (${hours}h). Open the dashboard, then pay from this session.`);
-  }
-
-  const required = BigInt((await getTokenMeta()).requiredAmountRaw);
-  const fromTopic = padAddressTopic(payer);
-  const toTopic = padAddressTopic(RECIPIENT_ADDRESS);
-  const matching = receipt.logs.find((log) => (
-    lower(log.address) === lower(TOKEN_ADDRESS)
-    && lower(log.topics?.[0]) === TRANSFER_TOPIC
-    && lower(log.topics?.[1]) === lower(fromTopic)
-    && lower(log.topics?.[2]) === lower(toTopic)
-    && BigInt(log.data || '0x0') >= required
-  ));
-  if (!matching) {
-    throw httpError(`No ${REQUIRED_TOKEN_AMOUNT}+ ${(await getTokenMeta()).symbol} Transfer log to ${RECIPIENT_NAME}.`);
-  }
-  await markPaymentUsed({
-    txHash: normalizedTxHash,
-    account: payer,
-    amountRaw: BigInt(matching.data || '0x0').toString(),
-    blockNumber,
-    confirmations,
-  });
-
-  session.unlocked = true;
-  session.account = payer;
-  session.txHash = normalizedTxHash;
-  session.expiresAt = Date.now() + SESSION_TTL_MS;
-  return {
-    account: session.account,
-    txHash: session.txHash,
-    confirmations: confirmations.toString(),
-    blockNumber: blockNumber.toString(),
-  };
 }
 
 async function discoverTimechainRoot() {
@@ -633,6 +367,183 @@ print(json.dumps({"ok": ok, "report": report, "rings": len(rings)}))
       rings: null,
     };
   }
+}
+
+
+// --------------------------------------------------------------------------- //
+// P1 — the learning membrane, audited. Everything below is a read-only view of
+// files the bridge already trusts: rings.jsonl (operators, dreams, digests),
+// telemetry.jsonl (economics), replay.json (the antecedent ledger), and the
+// consensus directory (witness quorum). No skill code runs; no data leaves.
+// --------------------------------------------------------------------------- //
+
+async function consensusStatus(rings) {
+  const cfgPath = path.join(timechainRoot, 'chain', 'consensus', 'config.json');
+  if (!fsSync.existsSync(cfgPath)) return { configured: false, ok: null };
+  try {
+    const cfg = JSON.parse(await fs.readFile(cfgPath, 'utf8'));
+    const witnesses = cfg.witnesses || [];
+    const quorum = Number(cfg.quorum ?? cfg.k ?? Math.ceil((witnesses.length * 2) / 3));
+    const head = rings.at(-1);
+    if (!head) return { configured: true, ok: null, detail: 'empty chain', quorum, witnesses: witnesses.length };
+    const attPath = path.join(timechainRoot, 'chain', 'consensus', 'attestations.jsonl');
+    const byWitness = new Map();
+    if (fsSync.existsSync(attPath)) {
+      for (const line of (await fs.readFile(attPath, 'utf8')).split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        let att;
+        try { att = JSON.parse(line); } catch { continue; }
+        if (att.height === head.index && att.ring_hash === head.ring_hash) byWitness.set(att.witness, att.mac);
+      }
+    }
+    const msg = `${head.index}:${head.ring_hash}`;
+    let valid = 0;
+    for (const w of witnesses) {
+      const mac = crypto.createHmac('sha256', Buffer.from(String(w.key), 'hex')).update(msg).digest('hex');
+      if (byWitness.get(w.id) === mac) valid += 1;
+    }
+    return { configured: true, ok: valid >= quorum, validWitnesses: valid,
+             witnesses: witnesses.length, quorum, head: head.index };
+  } catch (error) {
+    return { configured: true, ok: null, detail: error.message };
+  }
+}
+
+async function telemetryDigestStatus(rings) {
+  const telPath = path.join(timechainRoot, 'chain', 'telemetry.jsonl');
+  const digests = rings
+    .filter((r) => r.payload?.telemetry_digest)
+    .map((r) => ({ ring: r.index, ...r.payload.telemetry_digest }));
+  if (!fsSync.existsSync(telPath)) {
+    return { present: false, digests: digests.length, ok: digests.length ? false : null, notarized: 0, bytes: 0 };
+  }
+  const raw = await fs.readFile(telPath);
+  let ok = digests.length ? true : null;
+  const report = [];
+  for (const d of digests) {
+    const seg = raw.subarray(d.from_offset, d.to_offset);
+    const good = crypto.createHash('sha256').update(seg).digest('hex') === d.segment_sha256;
+    if (!good) ok = false;
+    report.push({ ring: d.ring, from: d.from_offset, to: d.to_offset, ok: good });
+  }
+  return { present: true, ok, digests: digests.length, bytes: raw.length,
+           notarized: digests.at(-1)?.to_offset || 0, report };
+}
+
+async function telemetryOverview() {
+  const telPath = path.join(timechainRoot, 'chain', 'telemetry.jsonl');
+  const counts = {};
+  let total = 0;
+  let lastTs = null;
+  let tokensCum = 0;
+  const tokensSavedSeries = [];
+  if (fsSync.existsSync(telPath)) {
+    for (const line of (await fs.readFile(telPath, 'utf8')).split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      let e;
+      try { e = JSON.parse(line); } catch { continue; }
+      counts[e.event] = (counts[e.event] || 0) + 1;
+      total += 1;
+      lastTs = e.ts || lastTs;
+      if (e.event === 'replay-accept') {
+        tokensCum += Number(e.data?.tokens_saved || 0);
+        tokensSavedSeries.push({ x: total, y: tokensCum, ts: e.ts });
+      }
+    }
+  }
+  const routed = counts['route'] || 0;
+  return { total, counts, lastTs, tokensSavedTotal: tokensCum, tokensSavedSeries,
+           missedPositives: counts['missed-positive'] || 0, routeEvents: routed };
+}
+
+function operatorsTimeline(rings) {
+  return rings
+    .filter((r) => r.ring_type === 'operator')
+    .map((r) => {
+      const p = r.payload || {};
+      return {
+        index: r.index,
+        ts: r.timestamp,
+        operator: p.operator || null,
+        action: p.action || null,
+        version: p.scorer?.scorer_version || p.lens_version || p.labeler_version || null,
+        eval: p.scorer?.eval || p.eval || null,
+        revertedTo: p.reverted_to || null,
+        summary: p.summary || '',
+      };
+    });
+}
+
+function dreamsTimeline(rings) {
+  return rings
+    .filter((r) => r.ring_type === 'dream')
+    .map((r) => {
+      const d = r.payload?.dream || {};
+      const training = {};
+      for (const [k, v] of Object.entries(d.training || {})) {
+        if (!v || typeof v !== 'object') continue;
+        training[k] = v.error ? 'error' : v.adopted ? `adopted ${v.version || ''}`.trim() : 'held';
+      }
+      return {
+        index: r.index,
+        ts: r.timestamp,
+        summary: r.payload?.summary || '',
+        verify: d.verify || null,
+        missedPositives: d.missed_positives?.mined ?? null,
+        training,
+        growthProposals: (d.growth?.proposals || []).length,
+        salienceRings: d.salience?.rings ?? null,
+        durationS: d.duration_s ?? null,
+      };
+    });
+}
+
+function qualitySeries(rings) {
+  const brightness = [];
+  const spanGrounding = [];
+  for (const r of rings) {
+    if (typeof r.poq?.brightness === 'number') brightness.push({ x: r.index, y: r.poq.brightness });
+    const sg = r.payload?.poq_verdict?.span_grounding?.span_grounding;
+    if (typeof sg === 'number') spanGrounding.push({ x: r.index, y: sg });
+  }
+  return { brightness, spanGrounding };
+}
+
+async function replayOverview() {
+  const ledgerPath = path.join(timechainRoot, 'chain', 'replay.json');
+  if (!fsSync.existsSync(ledgerPath)) return { present: false, rings: 0, accepts: 0, rederiveDue: 0 };
+  try {
+    const ledger = JSON.parse(await fs.readFile(ledgerPath, 'utf8'));
+    const entries = Object.entries(ledger).filter(([, v]) => v && typeof v === 'object');
+    return {
+      present: true,
+      rings: entries.length,
+      accepts: entries.reduce((sum, [, v]) => sum + Number(v.accepts || 0), 0),
+      rederiveDue: entries.filter(([, v]) => v.rederive_due).length,
+    };
+  } catch (error) {
+    return { present: true, error: error.message };
+  }
+}
+
+async function buildLearningOverview() {
+  const rings = await loadRings();
+  const [verification, consensus, digests, telemetry, replay] = await Promise.all([
+    verifyChainWithPython(),
+    consensusStatus(rings),
+    telemetryDigestStatus(rings),
+    telemetryOverview(),
+    replayOverview(),
+  ]);
+  return {
+    generatedAt: new Date().toISOString(),
+    integrity: { chain: verification, consensus, digests },
+    operators: operatorsTimeline(rings),
+    dreams: dreamsTimeline(rings),
+    telemetry,
+    replay,
+    quality: qualitySeries(rings),
+  };
 }
 
 function countBy(items, getKey) {
@@ -879,31 +790,6 @@ async function jsonBody(req) {
   }
 }
 
-function rateLimitHit(key, maxHits) {
-  const now = Date.now();
-  let record = verifyRateLimits.get(key);
-  if (!record || record.resetAt <= now) {
-    record = { hits: 0, resetAt: now + VERIFY_RATE_LIMIT_WINDOW_MS };
-    verifyRateLimits.set(key, record);
-  }
-  record.hits += 1;
-  if (verifyRateLimits.size > 2048) {
-    for (const [entryKey, entry] of verifyRateLimits) {
-      if (entry.resetAt <= now) verifyRateLimits.delete(entryKey);
-    }
-  }
-  if (record.hits > maxHits) {
-    const error = httpError('Too many payment verification attempts. Wait a moment and try again.', 429);
-    error.retryAfter = Math.max(1, Math.ceil((record.resetAt - now) / 1000));
-    throw error;
-  }
-}
-
-function enforceVerifyRateLimit(req, session) {
-  rateLimitHit(`session:${session.id}`, VERIFY_RATE_LIMIT_MAX);
-  rateLimitHit(`ip:${req.socket?.remoteAddress || 'unknown'}`, VERIFY_IP_RATE_LIMIT_MAX);
-}
-
 function bridgeStatus(req) {
   const paired = Boolean(bridgeRecord(req));
   return {
@@ -937,14 +823,6 @@ function sendJson(res, status, body) {
     'cache-control': 'no-store',
   });
   res.end(JSON.stringify(body, null, 2));
-}
-
-function requireUnlocked(session) {
-  if (!session.unlocked) {
-    const error = new Error('Dashboard locked. Verify a fresh Base payment first.');
-    error.status = 402;
-    throw error;
-  }
 }
 
 async function serveStatic(req, res, url) {
@@ -1008,65 +886,31 @@ async function handle(req, res) {
     }
     requireBridgePairing(req);
     const session = getSession(req, res);
-    if (url.pathname === '/api/gate/config') {
-      const token = await getTokenMeta();
-      sendJson(res, 200, {
-        locked: !session.unlocked,
-        devUnlock: DEV_UNLOCK,
-        chain: { id: BASE_CHAIN_ID, idHex: BASE_CHAIN_ID_HEX, name: 'Base' },
-        token,
-        recipient: { name: RECIPIENT_NAME, address: RECIPIENT_ADDRESS },
-        walletConnect: { projectId: WALLETCONNECT_PROJECT_ID },
-        confirmations: REQUIRED_CONFIRMATIONS,
-        nonce: session.nonce,
-        account: session.account,
-        txHash: session.txHash,
-        accessMessageTemplate: [
-          'Cypher Tempre Dashboard access',
-          `Session: ${session.nonce}`,
-          'Account: {account}',
-          'Payment transaction: {txHash}',
-          `Token: ${lower(TOKEN_ADDRESS)}`,
-          `Recipient: ${lower(RECIPIENT_ADDRESS)}`,
-          `Amount: ${REQUIRED_TOKEN_AMOUNT}`,
-          `Chain: Base (${BASE_CHAIN_ID})`,
-        ].join('\n'),
-      });
-      return;
-    }
-    if (url.pathname === '/api/gate/verify' && req.method === 'POST') {
-      enforceVerifyRateLimit(req, session);
-      const body = await jsonBody(req);
-      const result = await verifyPayment({ session, ...body });
-      sendJson(res, 200, { ok: true, result });
-      return;
-    }
     if (url.pathname === '/api/timechain/summary') {
-      requireUnlocked(session);
       sendJson(res, 200, await buildSummary());
       return;
     }
+    if (url.pathname === '/api/learning/overview') {
+      sendJson(res, 200, await buildLearningOverview());
+      return;
+    }
     if (url.pathname === '/api/timechain/rings') {
-      requireUnlocked(session);
       sendJson(res, 200, await listRings(url));
       return;
     }
     const ringMatch = url.pathname.match(/^\/api\/timechain\/rings\/(\d+)$/);
     if (ringMatch) {
-      requireUnlocked(session);
       const ring = await ringDetail(ringMatch[1]);
       if (!ring) sendJson(res, 404, { error: 'Ring not found.' });
       else sendJson(res, 200, ring);
       return;
     }
     if (url.pathname === '/api/blockspace') {
-      requireUnlocked(session);
       sendJson(res, 200, await listBlockspace());
       return;
     }
     const blobMatch = url.pathname.match(/^\/api\/blockspace\/([0-9a-fA-F]{64})$/);
     if (blobMatch) {
-      requireUnlocked(session);
       sendJson(res, 200, await blobPreview(blobMatch[1]));
       return;
     }
@@ -1093,9 +937,8 @@ server.on('error', (error) => {
 server.listen(PORT, HOST, () => {
   console.log(`Cypher Tempre Dashboard listening on http://${HOST}:${PORT}`);
   console.log(`Timechain root: ${timechainRoot}`);
-  console.log(`Gate: ${REQUIRED_TOKEN_AMOUNT} ${TOKEN_SYMBOL_FALLBACK} on Base -> ${RECIPIENT_NAME} (${RECIPIENT_ADDRESS})`);
+  console.log('Audit is free, local, and private: no payment gate, no accounts, no outbound network calls.');
   console.log(`Public origins: ${[...PUBLIC_ORIGINS].join(', ')}`);
   console.log(`Bridge pairing code: ${displayPairingCode(BRIDGE_PAIR_CODE)}`);
   console.log('Enter that pairing code on cyphertempre.ai to connect this local bridge.');
-  if (DEV_UNLOCK) console.log('DEV UNLOCK ENABLED: token gate bypassed for local development.');
 });
