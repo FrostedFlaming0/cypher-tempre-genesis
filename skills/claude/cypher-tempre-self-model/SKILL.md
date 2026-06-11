@@ -196,6 +196,30 @@ Ground your reasoning in what you fetched; PoQ then validates whether it was eno
 Relevance is obvious to you from the labels — so pull enough, never more. No bloat, no
 forgetting.
 
+**The recall escalation ladder.** One-shot `retrieve` is the FIRST rung, not the
+protocol. When it misses (externally benchmarked: storage is lossless — retrieval is
+the only failure mode), climb: (1) one-shot `retrieve`; (2) **fan-out** — decompose the
+question into 2–4 sub-queries (`retrieve "<main>" --queries "<alt>" "<entity>" …`) and
+work the union; (3) read the **full `index`** — it is compact, and when it fits in
+context the index IS the primary instrument, retrieve is for scale; (4) `fetch` what
+you judged relevant; (5) bounded content scan as the last rung. The model's judgment
+at rungs 2–4 is what one-shot embedding cannot replace.
+
+**Aggregate questions (totals, percentages, counts across sessions).** Top-k with an
+appetite cap is the WRONG tool — a sum needs every term. Read the index exhaustively
+for the sub-topic, fan out per entity, fetch ALL matches, and let PoQ's grounding
+check validate coverage before you seal the arithmetic. Quantity-bearing blocks are
+labeled (`quantities`: "5 mile", "$800", "40%") and boosted for quantity-seeking
+queries, so buried passing-remark numbers stay reachable.
+
+**Semantic recall — the upgrade path.** The stdlib embedder is morphological, not
+semantic (benchmark-measured: it is the weak link). Two upgrades, use either or both:
+(a) one dependency — `--provider st` (or openai/voyage) is the single biggest
+retrieval uplift; (b) zero dependencies — the **lens** (`lens.py`, trained by
+`dream.py` from your own telemetry) learns YOUR corpus's query→memory associations;
+a benchmark-shaped miss ("miles" → Miles Davis while the hike blocks sat sealed and
+unranked) converts after one dream over the logged missed-positives.
+
 **Scale note (the only role for cheap matching).** When the chain is so large its index
 will not fit in context, narrow first with `recall.py retrieve "<prompt>"` — a cheap
 PRE-FILTER. It only shortlists candidates so your index stays small; YOU still judge

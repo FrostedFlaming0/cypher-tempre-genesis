@@ -1,16 +1,18 @@
 ---
 name: cypher-tempre-self-model
-description: Persistent, verifiable Timechain memory and self-modeling workflow for AI agents using stdlib Python helpers.
-version: 1.2
-homepage: https://github.com/cyberphysicsai/cypher-tempre-genesis
-user-invocable: true
-metadata:
-  hermes:
-    requires:
-      anyBins:
-        - python3
-        - python
-    skillKey: cypher-tempre-self-model
+description: >-
+  Give an AI agent a persistent, verifiable cognitive self-model via a Cypher Tempre
+  Timechain: an append-only, hash-chained ledger of its own experience. Tamper-evident memory
+  and identity across sessions, a Proof-of-Qualia (PoQ) conscience that refuses ungrounded
+  thoughts, modalities and senses as a differentiated mind, a Cambium engine that grows new
+  faculties when it hits a gap, and a single-pass Chronosynaptic (MCTS) tree that forks
+  parallel self-perspectives and seals only the highest-truth path. Use whenever an agent
+  needs persistent memory or identity across sessions, reduced hallucination through self-
+  verification, experiential learning, self-evolution, or reasoning over hard problems by
+  forking perspectives without spawning subagents. Triggers: 'timechain self-model', 'cypher
+  tempre', 'persistent agent memory', 'agent identity', 'proof of qualia', 'reduce
+  hallucination', 'self-evolving agent', 'fork perspectives', 'chronosynaptic', 'verify my
+  chain'.
 ---
 
 # Cypher Tempre Self-Model
@@ -193,6 +195,30 @@ python3 recall.py fetch 4 9 12   # 3. pull the full content of the blocks you ch
 Ground your reasoning in what you fetched; PoQ then validates whether it was enough.
 Relevance is obvious to you from the labels — so pull enough, never more. No bloat, no
 forgetting.
+
+**The recall escalation ladder.** One-shot `retrieve` is the FIRST rung, not the
+protocol. When it misses (externally benchmarked: storage is lossless — retrieval is
+the only failure mode), climb: (1) one-shot `retrieve`; (2) **fan-out** — decompose the
+question into 2–4 sub-queries (`retrieve "<main>" --queries "<alt>" "<entity>" …`) and
+work the union; (3) read the **full `index`** — it is compact, and when it fits in
+context the index IS the primary instrument, retrieve is for scale; (4) `fetch` what
+you judged relevant; (5) bounded content scan as the last rung. The model's judgment
+at rungs 2–4 is what one-shot embedding cannot replace.
+
+**Aggregate questions (totals, percentages, counts across sessions).** Top-k with an
+appetite cap is the WRONG tool — a sum needs every term. Read the index exhaustively
+for the sub-topic, fan out per entity, fetch ALL matches, and let PoQ's grounding
+check validate coverage before you seal the arithmetic. Quantity-bearing blocks are
+labeled (`quantities`: "5 mile", "$800", "40%") and boosted for quantity-seeking
+queries, so buried passing-remark numbers stay reachable.
+
+**Semantic recall — the upgrade path.** The stdlib embedder is morphological, not
+semantic (benchmark-measured: it is the weak link). Two upgrades, use either or both:
+(a) one dependency — `--provider st` (or openai/voyage) is the single biggest
+retrieval uplift; (b) zero dependencies — the **lens** (`lens.py`, trained by
+`dream.py` from your own telemetry) learns YOUR corpus's query→memory associations;
+a benchmark-shaped miss ("miles" → Miles Davis while the hike blocks sat sealed and
+unranked) converts after one dream over the logged missed-positives.
 
 **Scale note (the only role for cheap matching).** When the chain is so large its index
 will not fit in context, narrow first with `recall.py retrieve "<prompt>"` — a cheap

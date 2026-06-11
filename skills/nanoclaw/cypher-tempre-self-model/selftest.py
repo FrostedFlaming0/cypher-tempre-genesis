@@ -641,6 +641,36 @@ def main():
             cambium.SKILL_DIR = old_home
         check("timechain: bare task chain verifies", tcb.verify()[0])
 
+        # 26. Benchmark-driven recall upgrades (v2.8): quantities, fan-out,
+        # and the missed-positive channel into the lens.
+        lab_q = rec.label("I spent $800 on the bag and hiked 5 miles before lunch")
+        check("recall: quantities sealed into labels",
+              "$800" in lab_q.get("quantities", []) and "5 mile" in lab_q.get("quantities", []))
+        rq1 = tc.seal("experience", {"summary": "paid a pretty penny for the designer handbag — $800 to be exact"})
+        tc.seal("experience", {"summary": "talked designer handbag fashion styles and trends all afternoon"})
+        got_q = rec.retrieve("how much did I spend on the designer handbag", max_blocks=2, neighbors=0)
+        check("recall: quantity boost surfaces the quantity-bearing block for quantity queries",
+              got_q["blocks"] and any(b["index"] == rq1["index"] for b in got_q["blocks"][:2]))
+        fan = rec.retrieve_multi(["weekend exercise totals", "Red Rock canyon"],
+                                 max_blocks=2, neighbors=0)
+        check("recall: fan-out unions sub-query results with per-query attribution",
+              fan["fanout_id"] and all("matched_query" in b for b in fan["blocks"]))
+        offer_events = [e for _, e in telemetry.Telemetry(root).events()
+                        if e.get("event") == "offer" and (e["data"].get("fanout") or {}).get("id")]
+        check("telemetry: fan-out offers share one group for credit attribution",
+              len(offer_events) >= 2 and
+              offer_events[-1]["data"]["fanout"]["id"] == offer_events[-2]["data"]["fanout"]["id"])
+        tel_mp = telemetry.Telemetry(root)
+        tel_mp.emit("offer", {"query_hash": "mp-demo", "query_keywords": ["weekend", "totals"],
+                              "dissonance": 200,
+                              "candidates": [{"i": 1, "rank": 1, "score": 0.5,
+                                              "parts": {"semantic": 0.5}, "salience": 100}]})
+        tel_mp.emit("use", {"decision": "SEAL", "used_rings": [rq1["index"]]})
+        mined_offers = lens.mine_offers(root)
+        check("lens: used-but-unoffered rings mine as positives (missed-positive channel)",
+              any(rq1["index"] in o["pos"] and rq1["index"] not in o["cands"]
+                  for o in mined_offers))
+
         check("timechain: final verify", tc.verify()[0])
     finally:
         shutil.rmtree(root, ignore_errors=True)
