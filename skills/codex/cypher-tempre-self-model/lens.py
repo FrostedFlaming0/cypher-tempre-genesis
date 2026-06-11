@@ -169,7 +169,13 @@ def mine_offers(root):
     offers = []
     for o in telem.join_offers(root):
         cands = [c.get("i") for c in o["candidates"]]
-        pos = ((o["fetched"] | o["used"]) & set(cands)) | o["replay_pos"]
+        # Positives are the MODEL's judgments wherever they landed: fetched or
+        # declared-used rings count even when retrieval never offered them —
+        # that unoffered-but-used case IS the missed-positive, the strongest
+        # retrieval-failure signal there is (LongMemEval q162: the hike blocks
+        # sat sealed and unranked while Miles Davis topped the offer). The lens
+        # trains on exactly the associations one-shot retrieval lacked.
+        pos = o["fetched"] | o["used"] | o["replay_pos"]
         if o["proxy"] and cands:
             offers.append({"proxy": o["proxy"], "cands": cands,
                            "pos": pos, "hard_neg": set(o["replay_neg"])})

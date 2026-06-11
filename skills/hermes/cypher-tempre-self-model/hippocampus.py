@@ -85,8 +85,12 @@ def _ring_terms(ring):
     lab = ring.get("payload", {}).get("labels") or {}
     kws = lab.get("keywords") or []
     ents = lab.get("entities") or []
-    if kws or ents:
-        return {str(t).lower() for t in kws} | {str(t).lower() for t in ents}
+    quants = lab.get("quantities") or []
+    if kws or ents or quants:
+        terms = {str(t).lower() for t in kws} | {str(t).lower() for t in ents}
+        for q in quants:                       # '5 mile' -> '5', 'mile' (both searchable)
+            terms |= set(str(q).lower().split())
+        return terms
     return set(_toks(_block_text(ring)))
 
 

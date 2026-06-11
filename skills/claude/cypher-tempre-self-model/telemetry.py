@@ -240,7 +240,8 @@ def join_offers(root):
 
     Yields per offer: {seq, query_hash, proxy, dissonance, candidates (raw),
     fetched:set, used:set, replay_pos:set, replay_neg:set}."""
-    offers, by_hash, current = [], {}, None
+    offers, by_hash = [], {}
+    group, group_id = [], None        # consecutive offers sharing a fanout id
     seq = 0
     for _, e in Telemetry(root).events():
         kind, d = e.get("event"), e.get("data", {})
@@ -254,12 +255,22 @@ def join_offers(root):
                        "fetched": set(), "used": set(),
                        "replay_pos": set(), "replay_neg": set()}
             offers.append(current)
+            # Fan-out sub-queries form ONE choice set: a fetch/use that follows
+            # the group credits every sub-offer (the union answered, not the
+            # last sub-query alone).
+            fo = d.get("fanout") or {}
+            if fo.get("id") and fo.get("id") == group_id:
+                group.append(current)
+            else:
+                group, group_id = [current], fo.get("id")
             if d.get("query_hash"):
                 by_hash[d["query_hash"]] = current
-        elif current is not None and kind == "fetch":
-            current["fetched"] |= set(d.get("ids") or [])
-        elif current is not None and kind == "use":
-            current["used"] |= set(d.get("used_rings") or [])
+        elif group and kind == "fetch":
+            for o in group:
+                o["fetched"] |= set(d.get("ids") or [])
+        elif group and kind == "use":
+            for o in group:
+                o["used"] |= set(d.get("used_rings") or [])
         elif kind == "replay-accept":
             o = by_hash.get(d.get("query_hash"))
             if o is not None and d.get("ring_index") is not None:

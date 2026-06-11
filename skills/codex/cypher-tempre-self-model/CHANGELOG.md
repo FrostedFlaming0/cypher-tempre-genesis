@@ -1,5 +1,40 @@
 # Changelog
 
+## v2.8 — 2026-06-10
+
+Benchmark-driven recall upgrades. An external tester ran the skill against
+LongMemEval (official ICLR 2025 benchmark, stratified 12-question sample,
+recall-only protocol): 11/12, with abstention and temporal — the categories
+where commercial assistants crater — both clean. Storage was lossless in all
+12; the single miss (q162) was pure retrieval: "miles" ranked Miles Davis
+while the hike evidence sat sealed and unranked. This release attacks every
+cause that miss exposed.
+
+### Added
+- **Quantity-aware labels:** number+unit pairs ("5 mile", "$800", "40%") are
+  extracted into block labels at seal/ingest, indexed by the hippocampus, and
+  boosted for quantity-seeking queries (hand scorer + new trained-scorer
+  feature, backward compatible with pre-v2.8 telemetry). Buried passing-remark
+  numbers — the evidence shape that killed q162 — stay reachable by labels.
+- **Multi-query fan-out retrieve** (`retrieve "<main>" --queries "<alt>" …` /
+  `Recall.retrieve_multi`): the model decomposes, the union is mechanical;
+  max-score-wins dedup with per-query attribution. Sub-offers share a fanout
+  group id and `telemetry.join_offers` credits a following fetch/use to every
+  sub-offer in the group, so the learners see fan-out credit correctly.
+- **Missed-positives now feed the lens:** used-but-unoffered rings — the
+  strongest retrieval-failure signal — mine as lens positives. Demonstrated
+  end-to-end: the q162 failure shape (jazz noise outranking unlabeled trail
+  evidence) was reproduced, dreamed over (24 missed-positives mined), the lens
+  adopted through its policy guard (holdout MRR 0.83 vs base 0.12), and the
+  same one-shot query then ranked the evidence first — the system learning its
+  way out of a measured miss from its own telemetry, zero new dependencies.
+- **SKILL.md doctrine:** the recall escalation ladder (retrieve → fan-out →
+  full index read → fetch → bounded scan; the index is PRIMARY when it fits),
+  an aggregate-questions pattern (sums need every term — never top-k), and the
+  semantic-recall upgrade path callout (provider st/openai, or the lens).
+- Five new selftest checks (135 total).
+
+
 ## v2.7.1 — 2026-06-10
 
 Field-reported bugfix (thank you to the reporter).

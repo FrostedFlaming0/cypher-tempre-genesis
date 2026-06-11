@@ -136,6 +136,34 @@ def keywords(text, k=10):
     return [w for w, _ in Counter(tokens(text)).most_common(k)]
 
 
+QUANTITY_RE = re.compile(
+    r"\$\s?\d[\d,]*(?:\.\d+)?"                  # money: $800, $ 1,200.50
+    r"|\d[\d,]*(?:\.\d+)?\s?%"                   # percent: 40%, 12.5 %
+    r"|\b\d[\d,]*(?:\.\d+)?[\s-]?[A-Za-z]+\b"  # number+unit: 5 miles, 3-mile, 4 days
+)
+QUANTITY_SEEKING = {"how", "much", "many", "far", "total", "percent", "percentage",
+                    "cost", "spend", "spent", "price", "distance", "amount",
+                    "count", "number", "sum", "average"}
+
+
+def quantities(text, cap=10):
+    """Number+unit pairs ('5 mile', '$800', '40%') — the passing-remark facts a
+    block's topical keywords never carry. Benchmark-driven (LongMemEval q162):
+    aggregate questions die when buried quantities are invisible to labels."""
+    out = []
+    for m in QUANTITY_RE.finditer(text or ""):
+        q = re.sub(r"\s+", " ", m.group(0).lower().replace("-", " ")).strip()
+        parts_q = q.split(" ")
+        if len(parts_q) == 2 and parts_q[1].endswith("s") and len(parts_q[1]) > 3:
+            parts_q[1] = parts_q[1][:-1]              # '5 miles' == '5-mile' == '5 mile'
+            q = " ".join(parts_q)
+        if q not in out:
+            out.append(q)
+        if len(out) >= cap:
+            break
+    return out
+
+
 def excerpt_text(text, query="", words=60):
     parts = text.split()
     if not parts:
@@ -350,6 +378,9 @@ class Recall:
         salience = clamp(50 + 9 * len(ents) + min(120, 3 * len(set(tokens(content)))))
         lab = {"senses": senses, "modalities": mods, "keywords": kws,
                "entities": ents, "salience": salience, "dissonance": gap["dissonance"]}
+        quants = quantities(content)
+        if quants:
+            lab["quantities"] = quants
         if distilled_version:
             lab["labeler_version"] = distilled_version
         if self.embedder is not None:          # self-embed at ingest -> instant cosine recall later
@@ -367,7 +398,8 @@ class Recall:
                  semantic_weight=0.70, path_weight=0.20, chronological_weight=0.10,
                  language=None, extension=None, role=None, top_dir=None,
                  exclude_path=None, exclude_dir=None, source_only=False,
-                 scan_window=None, use_index=False, index_limit=300, scorer="auto"):
+                 scan_window=None, use_index=False, index_limit=300, scorer="auto",
+                 _fanout=None):
         if embed and self.embedder is None:           # default to the stdlib embedder
             self.embedder = embmod.get_embedder("hashing")
         q = self.label(query, context)                # also embeds the query if embedder is set
@@ -398,6 +430,7 @@ class Recall:
         qM = {m["id"] for m in q["modalities"]}
         qK, qE = set(q["keywords"]), set(q["entities"])
         qtok = set(tokens(query + " " + context))
+        quantity_seeking = bool(QUANTITY_SEEKING & qtok)
         dissonance = q["dissonance"]
         qv = q.get("embedding") if embed else None
         _cos = None
@@ -483,6 +516,9 @@ class Recall:
                 "chronological": round(chronological, 3),
                 "faculty": round(min(1.0, item["faculty"] / 4.0), 3),
                 "noise_penalty": round(item["noise_penalty"], 3),
+                # quantity-bearing blocks matter to quantity-seeking queries —
+                # the buried passing-remark number a topic label never shows
+                "quantity": 1.0 if (quantity_seeking and lab.get("quantities")) else 0.0,
             }
             if use_trained:
                 score = learnermod.apply_scorer(self.trained_scorer, parts,
@@ -493,6 +529,7 @@ class Recall:
                     + path_weight * item["path"]
                     + chronological_weight * chronological
                     + 0.05 * parts["faculty"]
+                    + 0.06 * parts["quantity"]
                     + 0.03 * (lab.get("salience", 0) / 255)
                     - item["noise_penalty"]   # no recency term: relevance/path/anchors decide
                     #                            selection; time is orientation only (below)
@@ -643,6 +680,7 @@ class Recall:
                         else self.trained_scorer["weights"]),
             "policy": ("topk+epsilon" if explore_info else "topk-deterministic"),
             "epsilon": eps,
+            "fanout": _fanout,
             "filters_active": has_hard_filter,
             "candidates": cand_log,
         })
@@ -659,6 +697,34 @@ class Recall:
                 "scorer": ("trained:" + self.scorer_version if use_trained else "hand:" + SCORER_VERSION),
                 "explored": bool(explore_info),
                 "neighbors": neighbors, "blocks": chosen}
+
+    def retrieve_multi(self, queries, context="", **kw):
+        """Fan-out retrieval: one retrieve per decomposed sub-query, results
+        unioned with max-score-wins per ring. Decomposition is the MODEL's job —
+        aggregate and paraphrase questions are exactly where a single query loses
+        to keyword noise (LongMemEval q162: 'total hike distance' lost to Miles
+        Davis; 'Red Rock' + '5-mile hike' + 'weekend trail' would not have).
+        Each sub-query emits its own offer event stamped with a shared fanout id,
+        so per-query credit attribution survives into the learners."""
+        queries = [q for q in (queries or []) if q and q.strip()]
+        if not queries:
+            return {"queries": [], "fanout_id": None, "returned": 0, "blocks": []}
+        fanout_id = telem.query_hash(" | ".join(queries), context)[:16]
+        merged, reports = {}, []
+        for k, sub in enumerate(queries, start=1):
+            r = self.retrieve(sub, context,
+                              _fanout={"id": fanout_id, "k": k, "of": len(queries)}, **kw)
+            reports.append({"query": sub, "returned": r["returned"],
+                            "dissonance": r["dissonance"]})
+            for b in r["blocks"]:
+                cur = merged.get(b["index"])
+                if cur is None or (b.get("score") or 0) > (cur.get("score") or 0):
+                    b = dict(b)
+                    b["matched_query"] = sub
+                    merged[b["index"]] = b
+        blocks = sorted(merged.values(), key=lambda b: b["index"])   # chain order
+        return {"queries": reports, "fanout_id": fanout_id,
+                "returned": len(blocks), "blocks": blocks}
 
     def verify_source(self, repo_path, ring_index):
         rings = {r["index"]: r for r in self.tc.load()}
@@ -790,6 +856,26 @@ def cmd_label(args):
 
 def cmd_retrieve(args):
     rec = Recall(args.root, args.registry_root, embedder=(args.provider if args.embed else None))
+    if args.queries:
+        r = rec.retrieve_multi([args.query] + args.queries, args.context or "",
+                               budget_tokens=args.budget, max_blocks=args.max,
+                               embed=args.embed, path=args.path, dir=args.dir,
+                               neighbors=args.neighbors,
+                               language=args.language, extension=args.ext, role=args.role,
+                               top_dir=args.top_dir, exclude_path=args.exclude_path,
+                               exclude_dir=args.exclude_dir, source_only=args.source_only,
+                               scan_window=args.scan_window, use_index=args.index,
+                               index_limit=args.index_limit, scorer=args.scorer)
+        print(f"[fan-out x{len(r['queries'])}  id {r['fanout_id']}]")
+        for qr in r["queries"]:
+            print(f"  '{qr['query']}': {qr['returned']} block(s)  (need {qr['dissonance']})")
+        print(f"union: {r['returned']} block(s):")
+        for b in r["blocks"]:
+            print(f"  #{b['index']:>3} [{b['type']}] score {b.get('score')}  via '{b.get('matched_query')}'")
+            print(f"        “{b['excerpt'][:150]}…”")
+        if not r["blocks"]:
+            print("  (nothing above threshold in any sub-query)")
+        return
     r = rec.retrieve(args.query, args.context or "", budget_tokens=args.budget,
                      max_blocks=args.max, embed=args.embed, path=args.path, dir=args.dir,
                      neighbors=args.neighbors, semantic_weight=args.semantic_weight,
@@ -933,6 +1019,9 @@ def build_parser():
 
     pr = sub.add_parser("retrieve", parents=[common], help="retrieve relevant past blocks for a query")
     pr.add_argument("query")
+    pr.add_argument("--queries", nargs="*", default=[],
+                    help="fan-out: extra decomposed sub-queries unioned with the main query "
+                         "(aggregate/paraphrase questions; the model decomposes, the union is mechanical)")
     pr.add_argument("--context", default=None)
     pr.add_argument("--budget", type=int, default=1000, help="token budget for retrieved excerpts")
     pr.add_argument("--max", type=int, default=8, help="max blocks (appetite cap)")

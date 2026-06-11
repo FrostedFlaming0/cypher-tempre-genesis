@@ -48,7 +48,7 @@ import policy as policymod
 # The shared feature contract between the retrieval scorer and this learner.
 # recall.py computes these per candidate; offer events log them; training and
 # inference read them identically. Missing features (older events) default 0.
-FEATURES = ("semantic", "path", "chronological", "faculty", "salience", "noise_penalty")
+FEATURES = ("semantic", "path", "chronological", "faculty", "salience", "noise_penalty", "quantity")
 
 TRAIN_FRACTION = 0.8
 SGD_EPOCHS = 40
@@ -68,6 +68,7 @@ def features_of(parts, salience):
         float(parts.get("faculty") or 0.0),
         float(salience or 0) / 255.0,
         float(parts.get("noise_penalty") or 0.0),
+        float(parts.get("quantity") or 0.0),      # absent in pre-v2.8 telemetry -> 0
     ]
 
 
