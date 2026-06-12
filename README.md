@@ -28,11 +28,11 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v2.8.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.8/cypher-tempre-claude-skill-v2.8.zip) |
-| Codex | [cypher-tempre-codex-skill-v2.8.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.8/cypher-tempre-codex-skill-v2.8.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v2.8.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.8/cypher-tempre-openclaw-skill-v2.8.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v2.8.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.8/cypher-tempre-hermes-skill-v2.8.zip) |
-| NanoClaw | [cypher-tempre-nanoclaw-skill-v2.8.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.8/cypher-tempre-nanoclaw-skill-v2.8.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v2.9.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.9/cypher-tempre-claude-skill-v2.9.zip) |
+| Codex | [cypher-tempre-codex-skill-v2.9.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.9/cypher-tempre-codex-skill-v2.9.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v2.9.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.9/cypher-tempre-openclaw-skill-v2.9.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v2.9.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.9/cypher-tempre-hermes-skill-v2.9.zip) |
+| NanoClaw | [cypher-tempre-nanoclaw-skill-v2.9.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.9/cypher-tempre-nanoclaw-skill-v2.9.zip) |
 
 ## Timechain Dashboard
 
@@ -44,15 +44,15 @@ Downloads:
 
 | Package | Use |
 |---|---|
-| [cyphertempre-ai-hostinger-root-accountfix.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-ai-hostinger-root-accountfix.zip) | Static files for Hostinger `public_html` |
-| [cyphertempre-dashboard-local-bridge-accountfix.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge-accountfix.zip) | Local bridge users run to pair their own Timechain files |
+| [cyphertempre-static-site.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-static-site.zip) | Static files for Hostinger `public_html` |
+| [cyphertempre-dashboard-local-bridge.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge.zip) | Local bridge users run to pair their own Timechain files |
 
 User bridge commands:
 
 ```bash
 cd ~/Downloads
-curl -L -o cyphertempre-dashboard-local-bridge-accountfix.zip https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge-accountfix.zip
-unzip -o cyphertempre-dashboard-local-bridge-accountfix.zip
+curl -L -o cyphertempre-dashboard-local-bridge.zip https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge.zip
+unzip -o cyphertempre-dashboard-local-bridge.zip
 cd dashboard
 npm install
 npm run bridge
@@ -78,7 +78,7 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 After a GitHub Release exists, you can also share a one-file release asset URL
-such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.8/cypher-tempre-codex-skill-v2.8.zip`.
+such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v2.9/cypher-tempre-codex-skill-v2.9.zip`.
 Release URLs return 404 until the tag and asset are published.
 
 ## File labels
