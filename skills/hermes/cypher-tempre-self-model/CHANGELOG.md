@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.0.1 — 2026-06-13
+
+Security-hardening pass (scanned with NVIDIA SkillSpector). No functional changes
+to the recall engine.
+
+### Hardened
+- **Git provenance is now pure stdlib — no process spawning.** `git_value` /
+  subprocess were replaced by direct reads of `.git` (HEAD, loose refs,
+  packed-refs, `config`), handling detached HEAD and the `.git`-file worktree
+  form. Commit/branch/remote are read exactly as before; `git_dirty` is reported
+  as `None` (not computed without git) — the commit SHA is the cryptographic
+  provenance. Removes the only `subprocess` use in the skill.
+- **No dynamic `getattr(args, …)`** — CLI seal/audit paths now build their PoQ
+  dimension dicts from `vars(args)` over the fixed dimension list (poq.py,
+  recall.py, timechain.py). Same behavior, no dynamic attribute access.
+- **Least-privilege declared.** SKILL.md frontmatter now carries an explicit
+  `permissions:` list (file_read, file_write, env, network) describing exactly
+  what the skill touches — the stdlib core is offline; network is used only when
+  an embedding provider is explicitly selected.
+
+### Result
+- SkillSpector static scan: **SAFE** on all five runtimes — zero code findings.
+  The one remaining LOW is a known false positive on the MIT LICENSE text
+  ("INCLUDING BUT NOT LIMITED TO" matched a scope-creep pattern); the canonical
+  license is left unchanged.
+- 187 selftest checks PASS on every runtime.
+
+
 ## Unreleased (V5 — field lessons productized) — 2026-06-12
 
 Ten improvements distilled from a long-horizon single-core recall run, each a

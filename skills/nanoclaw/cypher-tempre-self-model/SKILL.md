@@ -13,6 +13,11 @@ description: >-
   tempre', 'persistent agent memory', 'agent identity', 'proof of qualia', 'reduce
   hallucination', 'self-evolving agent', 'fork perspectives', 'chronosynaptic', 'verify my
   chain'.
+permissions:
+  - "file_read — the agent's own chain rings, registries, blockspace, and learner/policy/telemetry state"
+  - "file_write — append-only chain rings and blockspace blobs, registries, and per-user learner state (never deletes; history is immutable)"
+  - "env — reads CT_TELEMETRY, dormancy, and dashboard dev-unlock toggles only"
+  - "network — none in the stdlib core (git provenance is read directly from .git, no process spawning); used only if an optional embedding provider is explicitly selected (--provider st|openai|voyage)"
 ---
 
 # Cypher Tempre Self-Model

@@ -419,7 +419,8 @@ def cmd_init(args):
 
 def cmd_seal(args):
     tc = Timechain(args.root)
-    poq = {d: getattr(args, d) for d in POQ_DIMENSIONS if getattr(args, d) is not None}
+    _a = vars(args)
+    poq = {d: _a[d] for d in POQ_DIMENSIONS if _a.get(d) is not None}
     payload = {"summary": args.summary}
     if args.note:
         payload["note"] = args.note

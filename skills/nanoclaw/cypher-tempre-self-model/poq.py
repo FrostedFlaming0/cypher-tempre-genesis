@@ -408,14 +408,16 @@ def _print_verdict(v):
 
 def cmd_audit(args):
     tc = Timechain(args.root)
-    ext = {d: getattr(args, d) for d in POQ_DIMENSIONS if getattr(args, d) is not None}
+    _a = vars(args)
+    ext = {d: _a[d] for d in POQ_DIMENSIONS if _a.get(d) is not None}
     v = PoQGate().evaluate(args.candidate, relevance_window(tc, args.window), args.context or "", ext or None)
     _print_verdict(v)
 
 
 def cmd_seal(args):
     tc = Timechain(args.root)
-    ext = {d: getattr(args, d) for d in POQ_DIMENSIONS if getattr(args, d) is not None}
+    _a = vars(args)
+    ext = {d: _a[d] for d in POQ_DIMENSIONS if _a.get(d) is not None}
     v, ring = gate_and_seal(tc, args.candidate, args.context or "",
                             ring_type=args.type, difficulty=args.difficulty,
                             external_scores=ext or None, files=args.file, window=args.window,
