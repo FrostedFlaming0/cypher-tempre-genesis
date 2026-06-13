@@ -35,7 +35,6 @@ import argparse
 import hashlib
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -151,27 +150,89 @@ def redact_secrets(text: str):
     return out, total
 
 
-def git_value(path: Path, *args):
+# Git provenance via DIRECT ref reads — stdlib file I/O only, no process spawning,
+# no process spawning. Best-effort: any failure yields None fields. git_dirty
+# is not computed without git, so it is reported as None (unknown) rather than
+# shelling out — the cryptographic provenance is the commit SHA.
+def _git_dir(path):
+    p = Path(path).resolve()
+    for d in [p, *p.parents]:
+        g = d / ".git"
+        try:
+            if g.is_dir():
+                return g, d
+            if g.is_file():
+                line = g.read_text(errors="ignore").strip()
+                if line.startswith("gitdir:"):
+                    gd = (d / line.split(":", 1)[1].strip()).resolve()
+                    return (gd if gd.exists() else None), d
+        except Exception:
+            return None, None
+    return None, None
+
+
+def _read_ref(git_dir, ref):
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(path)] + list(args),
-            check=False, capture_output=True, text=True,
-        )
+        loose = git_dir / ref
+        if loose.is_file():
+            return loose.read_text(errors="ignore").strip() or None
     except Exception:
-        return None
-    value = proc.stdout.strip()
-    return value if proc.returncode == 0 and value else None
+        pass
+    try:
+        packed = git_dir / "packed-refs"
+        if packed.is_file():
+            for line in packed.read_text(errors="ignore").splitlines():
+                line = line.strip()
+                if not line or line[0] in "#^":
+                    continue
+                sha, _, name = line.partition(" ")
+                if name == ref:
+                    return sha or None
+    except Exception:
+        pass
+    return None
 
 
-def git_info_for(path: Path):
-    status = git_value(path, "status", "--porcelain")
-    return {
-        "git_commit": git_value(path, "rev-parse", "HEAD"),
-        "git_branch": git_value(path, "rev-parse", "--abbrev-ref", "HEAD"),
-        "git_dirty": bool(status) if status is not None else None,
-        "git_root": git_value(path, "rev-parse", "--show-toplevel"),
-        "git_remote": git_value(path, "config", "--get", "remote.origin.url"),
-    }
+def _git_remote(git_dir):
+    try:
+        section = None
+        for raw in (git_dir / "config").read_text(errors="ignore").splitlines():
+            s = raw.strip()
+            if s.startswith("[") and s.endswith("]"):
+                section = s[1:-1].strip().lower()
+            elif section == 'remote "origin"' and "=" in s:
+                k, _, v = s.partition("=")
+                if k.strip().lower() == "url":
+                    return v.strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def _git_info(path):
+    info = {"git_commit": None, "git_branch": None, "git_dirty": None,
+            "git_root": None, "git_remote": None}
+    try:
+        git_dir, root = _git_dir(path)
+        if not git_dir:
+            return info
+        info["git_root"] = str(root) if root else None
+        info["git_remote"] = _git_remote(git_dir)
+        head = (git_dir / "HEAD").read_text(errors="ignore").strip()
+        if head.startswith("ref:"):
+            ref = head.split(":", 1)[1].strip()
+            info["git_branch"] = ref.rsplit("/", 1)[-1]
+            info["git_commit"] = _read_ref(git_dir, ref)
+        elif head:
+            info["git_branch"] = "HEAD"   # detached
+            info["git_commit"] = head
+    except Exception:
+        pass
+    return info
+
+
+def git_info_for(path):
+    return _git_info(path)
 
 
 def git_commit_for(path: Path):
