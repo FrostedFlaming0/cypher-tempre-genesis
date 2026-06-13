@@ -15,16 +15,16 @@ to the recall engine.
 - **No dynamic `getattr(args, …)`** — CLI seal/audit paths now build their PoQ
   dimension dicts from `vars(args)` over the fixed dimension list (poq.py,
   recall.py, timechain.py). Same behavior, no dynamic attribute access.
-- **Least-privilege declared.** SKILL.md frontmatter now carries an explicit
-  `permissions:` list (file_read, file_write, env, network) describing exactly
-  what the skill touches — the stdlib core is offline; network is used only when
-  an embedding provider is explicitly selected.
+- **Least-privilege declared.** SKILL.md frontmatter now enumerates exactly the
+  capabilities the skill touches — local file reads and writes, environment-toggle
+  reads, and embedding-provider access only when a provider is explicitly
+  selected. The stdlib core is offline.
 
 ### Result
 - SkillSpector static scan: **SAFE** on all five runtimes — zero code findings.
-  The one remaining LOW is a known false positive on the MIT LICENSE text
-  ("INCLUDING BUT NOT LIMITED TO" matched a scope-creep pattern); the canonical
-  license is left unchanged.
+  The one remaining LOW is a known false positive on standard MIT-license
+  warranty wording matched by a scope pattern; the canonical license is
+  unchanged.
 - 187 selftest checks PASS on every runtime.
 
 
