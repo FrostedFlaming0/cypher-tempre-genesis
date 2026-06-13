@@ -153,14 +153,15 @@ class Timechain:
         if not self.rings_path.exists():
             return []
         rings = []
-        for line in self.rings_path.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rings.append(json.loads(line))
-            except Exception:
-                continue   # tolerate a torn line; verify() reports it explicitly
+        with self.rings_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rings.append(json.loads(line))
+                except Exception:
+                    continue   # tolerate a torn line; verify() reports it explicitly
         return rings
 
     def tail_rings(self, k: int) -> list:
@@ -197,7 +198,13 @@ class Timechain:
         self._auto_attest(ring)
 
     def _tail_ring(self):
-        """Read only the LAST ring (no full load) so bulk sealing stays O(1) per block."""
+        """Read only the LAST ring so bulk sealing does not need a full chain load.
+
+        Read backward until a complete physical JSONL record parses. Rings can be
+        larger than one fixed tail window, and JSON strings may contain Unicode
+        line-separator characters; only the file's physical "\n" bytes delimit
+        JSONL records.
+        """
         if not self.rings_path.exists():
             return None
         with open(self.rings_path, "rb") as f:
@@ -205,12 +212,20 @@ class Timechain:
             end = f.tell()
             if end == 0:
                 return None
-            window = min(end, 65536)           # a ring is well under 64KB
-            f.seek(end - window)
-            data = f.read(window)
-        for line in reversed(data.splitlines()):
-            if line.strip():
-                return json.loads(line)
+            pos = end
+            data = b""
+            while pos > 0:
+                step = min(65536, pos)
+                pos -= step
+                f.seek(pos)
+                data = f.read(step) + data
+                for line in reversed(data.split(b"\n")):
+                    if not line.strip():
+                        continue
+                    try:
+                        return json.loads(line)
+                    except json.JSONDecodeError:
+                        break   # likely a torn leading fragment; read another chunk
         return None
 
     def _current_head(self):

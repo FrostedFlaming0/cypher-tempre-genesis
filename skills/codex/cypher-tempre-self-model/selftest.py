@@ -36,6 +36,20 @@ def main():
         tc.genesis(name="selftest")
         check("timechain: genesis sealed", tc.height() == 1)
 
+        # JSONL records are delimited by physical "\n" bytes only. Python
+        # str.splitlines() also splits on Unicode separators, which can make
+        # valid rings disappear during load().
+        jsonl_root = root / "jsonl-reader-regression"
+        tc_jsonl = timechain.Timechain(jsonl_root)
+        tc_jsonl.genesis(name="jsonl-reader-regression")
+        unicode_sep = "alpha\u2028beta\u2029gamma"
+        tc_jsonl.seal("experience", {"summary": unicode_sep})
+        check("timechain: load preserves Unicode line separators inside JSON strings",
+              len(tc_jsonl.load()) == 2 and tc_jsonl.load()[-1]["payload"]["summary"] == unicode_sep)
+        large_ring = tc_jsonl.seal("experience", {"summary": "x" * 70000})
+        check("timechain: tail reader handles rings larger than one tail window",
+              tc_jsonl._tail_ring()["ring_hash"] == large_ring["ring_hash"])
+
         # 2. PoQ — gate + seal a grounded thought
         verdict, ring = poq.gate_and_seal(
             tc, "I verified my selftest chain and this grounded note is consistent with it.",
