@@ -185,7 +185,24 @@ DEFAULT_THRESHOLDS = {
     "consistency_floor": 120,
     "grounding_floor": 60,
     "assertive_ceiling": 150,
+    # COVERAGE GATE (V4 P1): an aggregate claim (a stated total/sum/count) is
+    # only as true as its terms — it must declare at least this many evidence
+    # rings, or the verdict degrades to FORCE_UNCERTAINTY. Benchmark-motivated:
+    # LongMemEval multi-session aggregates failed by missing terms, never by
+    # bad arithmetic.
+    "aggregate_min_terms": 2,
 }
+
+AGGREGATE_CUE = re.compile(
+    r"\b(in total|total of|altogether|all together|combined|overall|sum of|"
+    r"adds? up to|totall?ing|total)\b", re.I)
+
+
+def aggregate_claim(text: str) -> bool:
+    """A candidate that ASSERTS an aggregate: an explicit total/sum cue next to
+    digits. Deliberately conservative — plain facts ('the rent is $1,800') are
+    not aggregates; only computed-total language triggers the coverage gate."""
+    return bool(AGGREGATE_CUE.search(text)) and bool(re.search(r"\d", text))
 
 
 def policy_thresholds():
@@ -205,6 +222,11 @@ def policy_thresholds():
             t["grounding_floor"] = int(cal["grounding_floor"])
         if cal and cal.get("assertive_ceiling") is not None:
             t["assertive_ceiling"] = int(cal["assertive_ceiling"])
+        # coverage gate minimum may only TIGHTEN (rise) via policy, like a floor
+        t["aggregate_min_terms"] = max(t["aggregate_min_terms"],
+                                       int((pol.get("poq") or {}).get(
+                                           "aggregate_min_terms",
+                                           t["aggregate_min_terms"])))
     except Exception:
         pass                       # a broken policy file must never disable the gate
     return t
@@ -215,7 +237,7 @@ class PoQGate:
         self.t = {**policy_thresholds(), **(thresholds or {})}
 
     def evaluate(self, candidate: str, chain, context: str = "", external_scores=None,
-                 ring_token_sets=None, span_guard=False) -> dict:
+                 ring_token_sets=None, span_guard=False, declared_evidence=None) -> dict:
         ext = external_scores or {}
         cand = set(tokens(candidate))
         ctx = set(tokens(context))
@@ -253,6 +275,15 @@ class PoQGate:
         elif grounding < self.t["grounding_floor"] and assertive > self.t["assertive_ceiling"]:
             decision = "FORCE_UNCERTAINTY"
             reasons.append(f"grounding {grounding} < {self.t['grounding_floor']} but assertiveness {assertive} > {self.t['assertive_ceiling']}: confident claim with no support in chain/context — restate as uncertainty before sealing.")
+        elif (declared_evidence is not None
+              and declared_evidence < self.t["aggregate_min_terms"]
+              and aggregate_claim(candidate)):
+            decision = "FORCE_UNCERTAINTY"
+            reasons.append(
+                f"aggregate claim with {declared_evidence} declared evidence ring(s) < "
+                f"aggregate_min_terms {self.t['aggregate_min_terms']}: a sum/count is only as "
+                f"true as its terms — gather every term (recall.py gather), declare the table "
+                f"rows via --used-rings, or state the partial coverage honestly.")
         elif brightness < self.t["brightness_target"]:
             decision = "REVISE"
             reasons.append(f"brightness {brightness} < target {self.t['brightness_target']}: not luminous enough — iterate.")
@@ -323,7 +354,8 @@ def relevance_window(tc: Timechain, window: int = POQ_WINDOW, relevant_rings=Non
 def gate_and_seal(tc: Timechain, candidate: str, context: str = "",
                   ring_type: str = "experience", difficulty: int = 0,
                   external_scores=None, files=None, extra_payload=None, gate: PoQGate = None,
-                  window: int = POQ_WINDOW, relevant_rings=None, use_index: bool = False):
+                  window: int = POQ_WINDOW, relevant_rings=None, use_index: bool = False,
+                  declared_evidence=None):
     """Run the gate; seal only if the verdict is SEAL. Returns (verdict, ring|None).
     `extra_payload` (e.g. self-labels from recall.py) is merged into the sealed payload.
     The gate scores against a BOUNDED relevance window (relevant rings first, then recent),
@@ -341,7 +373,8 @@ def gate_and_seal(tc: Timechain, candidate: str, context: str = "",
         except Exception:
             relevant_rings = None
     verdict = gate.evaluate(candidate, relevance_window(tc, window, relevant_rings),
-                            context, external_scores, span_guard=True)
+                            context, external_scores, span_guard=True,
+                            declared_evidence=declared_evidence)
     if verdict["decision"] == "SEAL":
         payload = {"summary": candidate}
         if context:

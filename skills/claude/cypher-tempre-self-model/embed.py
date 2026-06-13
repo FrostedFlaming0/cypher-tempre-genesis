@@ -56,6 +56,7 @@ def _h(feat):
 class HashingEmbedder:
     name = "hashing"
     ALGO_VERSION = "v1"     # bump if _features/_h/signing ever change: that is a NEW space
+    window_chars = None     # no input window: the whole chunk reaches the vector
 
     def __init__(self, dim=256):
         self.dim = dim
@@ -106,6 +107,9 @@ class _STEmbedder:
     def __init__(self, model="all-MiniLM-L6-v2"):
         from sentence_transformers import SentenceTransformer
         self.m, self.model = SentenceTransformer(model), model
+        # window-matched chunking (V4 P4): text past the model's input window is
+        # silently invisible to the vector (benchmark-measured: 12 recall points)
+        self.window_chars = int(getattr(self.m, "max_seq_length", 256) or 256) * 4
 
     @property
     def fingerprint(self):
@@ -121,6 +125,7 @@ class _OpenAIEmbedder:
     def __init__(self, model="text-embedding-3-small"):
         import openai
         self.c, self.model = openai.OpenAI(), model
+        self.window_chars = 24000          # ~8k-token input window, conservative
 
     @property
     def fingerprint(self):
@@ -138,6 +143,7 @@ class _VoyageEmbedder:
     def __init__(self, model="voyage-3"):
         import voyageai
         self.c, self.model = voyageai.Client(), model
+        self.window_chars = 24000          # ~8k-token input window, conservative
 
     @property
     def fingerprint(self):

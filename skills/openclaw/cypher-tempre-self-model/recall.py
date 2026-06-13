@@ -164,6 +164,28 @@ def quantities(text, cap=10):
     return out
 
 
+def value_sentences(text, cap=260):
+    """The sentences that carry REAL quantities — a term-table row is only as
+    good as its visible values (V4.1: the 76.8% run's dominant residual was
+    values hidden outside ~100-word topical snippets). Bare list numerals and
+    numeric noise are skipped; a value sentence has a currency/percent/unit-
+    shaped number inside actual prose."""
+    out = []
+    for s in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        s = s.strip()
+        if len(s) < 12 or not re.search(r"\d", s):
+            continue
+        if re.fullmatch(r"[\d\s.,:;()*#-]+", s):          # list markers / numeric noise
+            continue
+        if not re.search(r"(\$\s?\d|\d+(\.\d+)?\s*%|\d[\d,]*(\.\d+)?[\s-]*[A-Za-z])", s):
+            continue
+        cand = " … ".join(out + [s[:180]])
+        if len(cand) > cap:
+            break
+        out.append(s[:180])
+    return " … ".join(out) or None
+
+
 def excerpt_text(text, query="", words=60):
     parts = text.split()
     if not parts:
@@ -234,6 +256,186 @@ def neighbor_group_key(ring):
         data.get("git_commit"),
         data.get("file_content_hash") or data.get("content_hash"),
     )
+
+
+def _norm_date(value):
+    """Loose date normalizer -> 'YYYY-MM-DD' or None. Accepts ISO timestamps and
+    corpus session stamps like '2023/05/30 (Tue) 23:40' (prefix is what matters)."""
+    if not value:
+        return None
+    s = str(value).strip()[:10].replace("/", "-")
+    parts = s.split("-")
+    if len(parts) == 3 and parts[0].isdigit() and len(parts[0]) == 4:
+        try:
+            return f"{int(parts[0]):04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
+        except ValueError:
+            return None
+    return None
+
+
+def ring_date(ring):
+    """The block's WHEN. An explicit source date in the payload (ingested corpora
+    carry their session's stamp) outranks the seal timestamp — a block sealed
+    today may describe an event from years ago."""
+    payload = ring.get("payload", {}) or {}
+    for holder in (payload, ring_data(ring)):
+        for key in ("date", "session_date", "source_date"):
+            d = _norm_date(holder.get(key))
+            if d:
+                return d
+    return _norm_date(ring.get("timestamp"))
+
+
+def ring_group(ring):
+    """Grouping handle for term tables: source session id, else the source file
+    group, else the ring itself."""
+    payload = ring.get("payload", {}) or {}
+    sid = ring_data(ring).get("session_id") or payload.get("session_id")
+    if sid:
+        return str(sid)
+    path = neighbor_group_key(ring)[0]
+    return str(path) if path else f"ring-{ring.get('index')}"
+
+
+# --------------------------------------------------------------------------- #
+# V5 facets — WHO spoke, WHO asserted, WHICH sentences, WHICH event
+# (Run-4 lessons, productized: the single-core 97.2% run did all of this by
+# hand with regex scans; these helpers make the winning moves first-class.)
+# --------------------------------------------------------------------------- #
+
+ROLE_LINE_RE = re.compile(r"^[ \t]*(user|assistant|system)[ \t]*:", re.I | re.M)
+FIRST_PERSON_RE = re.compile(r"\b(i|i'm|i've|i'd|i'll|my|me|mine|we're|we|our|us)\b", re.I)
+SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def split_turns(text):
+    """Split conversational content into (role, text) turns on 'role:' line
+    markers. Content without markers returns [(None, whole_text)] — speaker
+    attribution is only claimed where the markers actually exist."""
+    text = text or ""
+    marks = list(ROLE_LINE_RE.finditer(text))
+    if not marks:
+        return [(None, text)]
+    turns = []
+    if marks[0].start() > 0:
+        head = text[:marks[0].start()].strip()
+        if head:
+            turns.append((None, head))
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        body = text[m.end():end].strip()
+        if body:
+            turns.append((m.group(1).lower(), body))
+    return turns
+
+
+def speaker_facets(text):
+    """{'roles': [...], 'provenance': ...} — speaker + assertion-provenance facets.
+
+    Provenance is a deliberately small, honest taxonomy (the model overrides it):
+      self-report  user turns assert first-person facts ("I bought…", "my…")
+      pasted       user turns carry a long document with almost no first person
+                   (case summaries, articles — content the user QUOTED, not said)
+      dialogue     user turns exist but are short non-assertive questions
+      assistant    only assistant turns carry content
+      unknown      no conversational markers at all
+    Run-4 scar: a pasted court case and a pasted press release both read as
+    'user said' to provenance-blind retrieval; first-person density is the
+    cheap separator between a life and a clipboard."""
+    turns = split_turns(text)
+    roles = sorted({r for r, _ in turns if r})
+    if not roles:
+        return {"roles": [], "provenance": "unknown"}
+    user_text = " ".join(t for r, t in turns if r == "user")
+    if not user_text:
+        return {"roles": roles, "provenance": "assistant"}
+    words = max(1, len(user_text.split()))
+    fp_per_100 = 100.0 * len(FIRST_PERSON_RE.findall(user_text)) / words
+    if fp_per_100 >= 1.0:
+        prov = "self-report"
+    elif words >= 80:
+        prov = "pasted"
+    else:
+        prov = "dialogue"
+    return {"roles": roles, "provenance": prov}
+
+
+def mention_sentences(text, terms, need=1, cap=2, width=400):
+    """The full sentence(s) where the terms actually live — generalizes track's
+    mention extractor to every gather row (V4.1's named bottleneck, confirmed by
+    Run 4: ~100-word topical snippets drop the value clause; the winning scans
+    always read whole sentences around the hit)."""
+    terms = [t.lower() for t in terms if t and len(t) > 2]
+    if not terms:
+        return None
+    keep = []
+    for s in SENT_SPLIT_RE.split(text or ""):
+        s = s.strip()
+        if not s:
+            continue
+        low = s.lower()
+        n = sum(1 for t in terms
+                if t in low or (t.endswith("s") and t[:-1] in low)
+                or (not t.endswith("s") and t + "s" in low))
+        if n >= need:
+            keep.append(s[:220])
+            if len(keep) >= cap:
+                break
+    return " … ".join(keep)[:width] or None
+
+
+def annotate_deixis(row_text, row_date):
+    """Resolve relative expressions INSIDE a row against the row's OWN date —
+    'yesterday' in a 2023-05-20 session means 2023-05-19, mechanically, on
+    every row (Run 4 resolved these by hand hundreds of times; pure win)."""
+    if not (row_text and row_date):
+        return None
+    import almanac
+    hits = almanac.find_in_text(row_text, row_date)
+    return [{"expr": h["expr"], "from": h["from"], "to": h["to"]}
+            for h in hits[:3]] or None
+
+
+def cluster_events(rows, text_key="mention", fallback_key="snippet"):
+    """Event-identity clustering: group rows that re-mention the SAME underlying
+    event with drifting deixis ('last Saturday' said on three different days).
+    Heuristic signature — shared normalized quantity value plus content-token
+    overlap (or strong overlap alone when no quantities) — marked, never merged:
+    the table keeps every row; the cluster tells the model 'these N rows are one
+    event' and flags date conflicts so the mention nearest the event wins."""
+    def _containment(a, b):
+        # overlap relative to the SMALLER mention — re-mentions drift in length
+        # (a passing allusion vs the full story), which jaccard over-punishes
+        if not a or not b:
+            return 0.0
+        return len(a & b) / min(len(a), len(b))
+
+    clusters = []
+    for row in rows:
+        text = row.get(text_key) or row.get(fallback_key) or ""
+        toks = {t for t in tokens(text) if len(t) > 3}
+        qset = {q for q in (row.get("quantities") or row.get("values") or [])}
+        placed = None
+        for c in clusters:
+            ov = _containment(toks, c["toks"])
+            if (qset and c["qset"] and (qset & c["qset"]) and ov >= 0.34) \
+                    or (not qset and not c["qset"] and ov >= 0.65):
+                placed = c
+                break
+        if placed is None:
+            placed = {"id": f"e{len(clusters) + 1}", "toks": set(), "qset": set(),
+                      "rows": [], "dates": set()}
+            clusters.append(placed)
+        placed["toks"] |= toks
+        placed["qset"] |= qset
+        placed["rows"].append(row.get("index"))
+        if row.get("date"):
+            placed["dates"].add(row["date"])
+        row["event"] = placed["id"]
+    return [{"event": c["id"], "n_mentions": len(c["rows"]), "rows": c["rows"],
+             "dates": sorted(c["dates"]),
+             "date_conflict": len(c["dates"]) > 1}
+            for c in clusters if len(c["rows"]) > 1]
 
 
 def path_matches(ring, path_filter=None, dir_filter=None):
@@ -381,6 +583,12 @@ class Recall:
         quants = quantities(content)
         if quants:
             lab["quantities"] = quants
+        # V5 facets: speaker roles + assertion provenance, only where the
+        # conversational markers actually exist (code/corpora stay unfaceted)
+        fac = speaker_facets(content)
+        if fac["roles"]:
+            lab["roles"] = fac["roles"]
+            lab["provenance"] = fac["provenance"]
         if distilled_version:
             lab["labeler_version"] = distilled_version
         if self.embedder is not None:          # self-embed at ingest -> instant cosine recall later
@@ -393,15 +601,112 @@ class Recall:
     def block_labels(self, ring):
         return ring.get("payload", {}).get("labels") or self.label(block_text(ring))
 
+    def grep(self, pattern, role=None, provenance=None, group=None, between=None,
+             ignore_case=True, literal=False, max_rows=80, max_per_block=4,
+             context_sentences=1):
+        """Lexical scan — the FIRST rung of the recall ladder (V5).
+
+        Run-4 lesson, stated plainly: when you can NAME the thing, exact match
+        over the chain's content beats semantic packaging — the 97.2% run used
+        targeted scans hundreds of times and the embedding path twice. grep is
+        that move as a first-class organ: regex (or literal) over block CONTENT,
+        speaker-attributed (each hit reports the conversational role that spoke
+        the matching line), date-annotated, returning the full sentence(s)
+        around every hit. Filters: role (user/assistant), provenance facet,
+        group (session/source id regex), between (date window). Semantic
+        retrieve/gather remain the fallback for when you can only DESCRIBE."""
+        flags = re.IGNORECASE if ignore_case else 0
+        rx = re.compile(re.escape(pattern) if literal else pattern, flags)
+        grx = re.compile(group, re.IGNORECASE) if group else None
+        lo = hi = None
+        if between:
+            lo, hi = _norm_date(between[0]), _norm_date(between[1])
+        rows, considered, matched_blocks = [], 0, 0
+        for r in self.tc.load():
+            if r["index"] == 0:
+                continue
+            considered += 1
+            date = ring_date(r)
+            if lo and hi and date and not (lo <= date <= hi):
+                continue
+            g = ring_group(r)
+            if grx and not grx.search(g):
+                continue
+            text = block_text(r)
+            if not rx.search(text):
+                continue
+            if provenance:
+                fac = speaker_facets(text)
+                if fac["provenance"] != provenance:
+                    continue
+            block_hits = 0
+            for turn_role, turn_text in split_turns(text):
+                if role and turn_role != role:
+                    continue
+                sents = [s.strip() for s in SENT_SPLIT_RE.split(turn_text) if s.strip()]
+                for i, s in enumerate(sents):
+                    m = rx.search(s)
+                    if not m:
+                        continue
+                    a = max(0, i - context_sentences)
+                    b = min(len(sents), i + context_sentences + 1)
+                    ctx = " ".join(sents[a:b])[:420]
+                    rows.append({"index": r["index"], "date": date, "group": g,
+                                 "role": turn_role, "match": m.group(0)[:80],
+                                 "context": ctx,
+                                 "deixis": annotate_deixis(ctx, date)})
+                    block_hits += 1
+                    if block_hits >= max_per_block:
+                        break
+                if block_hits >= max_per_block:
+                    break
+            if block_hits:
+                matched_blocks += 1
+            if len(rows) >= max_rows:
+                break
+        rows.sort(key=lambda x: (x["date"] or "9999-99-99", x["index"]))
+        self._emit("offer", {
+            "query_hash": telem.query_hash(pattern, ""),
+            "query_keywords": telem.redact_terms(keywords(pattern)[:6]),
+            "query_entities": [], "dissonance": None, "appetite": max_rows,
+            "threshold": None, "considered": considered, "returned": len(rows),
+            "embed": False, "scorer": "grep:" + SCORER_VERSION, "policy": "grep",
+            "filters_active": bool(role or provenance or group or (lo and hi)),
+            "candidates": [{"i": x["index"], "rank": k, "score": 1.0,
+                            "parts": {"lexical": 1.0}, "salience": None,
+                            "chosen": True}
+                           for k, x in enumerate(rows[:OFFER_LOG_CAP])],
+        })
+        return {"pattern": pattern, "considered": considered,
+                "matched_blocks": matched_blocks, "returned": len(rows),
+                "rows": rows}
+
     def retrieve(self, query, context="", budget_tokens=1000, max_blocks=8,
                  relevance_fn=None, embed=False, path=None, dir=None, neighbors=1,
                  semantic_weight=0.70, path_weight=0.20, chronological_weight=0.10,
                  language=None, extension=None, role=None, top_dir=None,
                  exclude_path=None, exclude_dir=None, source_only=False,
                  scan_window=None, use_index=False, index_limit=300, scorer="auto",
+                 on=None, between=None, relative=None, asked_on=None,
                  _fanout=None):
         if embed and self.embedder is None:           # default to the stdlib embedder
             self.embedder = embmod.get_embedder("hashing")
+        # TIME-INDEXED RECALL (V4 P2): cosine cannot retrieve by WHEN — "who did
+        # I meet last Tuesday" shares no semantics with the lunch it names. A
+        # date window (explicit --on/--between, or --relative resolved by the
+        # almanac against --asked-on) hard-filters candidates BEFORE ranking.
+        # Precision semantics: with a window active, undated blocks are dropped
+        # (gather keeps them — completeness; retrieve targets).
+        date_lo = date_hi = None
+        if on:
+            date_lo = date_hi = _norm_date(on)
+        elif between:
+            date_lo, date_hi = _norm_date(between[0]), _norm_date(between[1])
+        elif relative and asked_on:
+            import almanac
+            win = almanac.resolve(relative, asked_on)
+            if win:
+                date_lo, date_hi = win
         q = self.label(query, context)                # also embeds the query if embedder is set
         # Candidate source: the persistent Hippocampus (sub-linear shortlist) when use_index,
         # a bounded recent tail when scan_window, else the whole chain. The path/metadata
@@ -450,6 +755,10 @@ class Recall:
                                     top_dir=top_dir, exclude_path=exclude_path,
                                     exclude_dir=exclude_dir, source_only=source_only):
                 continue
+            if date_lo is not None:
+                d = ring_date(r)
+                if d is None or not (date_lo <= d <= date_hi):
+                    continue
             lab = self.block_labels(r)
             # CONTENT signal is the discriminator, in priority order:
             if relevance_fn is not None:              #  (1) explicit model/embedding judge
@@ -553,7 +862,7 @@ class Recall:
         else:
             appetite = max(1, round(max_blocks * dissonance / 255))
         has_hard_filter = any([path, dir, language, extension, role, top_dir, source_only,
-                               exclude_path, exclude_dir])
+                               exclude_path, exclude_dir, date_lo])
         if has_hard_filter and scored:
             appetite = max(1, appetite)
         top = scored[0][0] if scored else 0.0
@@ -682,6 +991,7 @@ class Recall:
             "epsilon": eps,
             "fanout": _fanout,
             "filters_active": has_hard_filter,
+            "date_window": ([date_lo, date_hi] if date_lo else None),
             "candidates": cand_log,
         })
         return {"query_labels": q, "dissonance": dissonance, "appetite": appetite,
@@ -696,6 +1006,7 @@ class Recall:
                             "chronological": chronological_weight},
                 "scorer": ("trained:" + self.scorer_version if use_trained else "hand:" + SCORER_VERSION),
                 "explored": bool(explore_info),
+                "date_window": ([date_lo, date_hi] if date_lo else None),
                 "neighbors": neighbors, "blocks": chosen}
 
     def retrieve_multi(self, queries, context="", **kw):
@@ -725,6 +1036,476 @@ class Recall:
         blocks = sorted(merged.values(), key=lambda b: b["index"])   # chain order
         return {"queries": reports, "fanout_id": fanout_id,
                 "returned": len(blocks), "blocks": blocks}
+
+    def gather(self, topic, entities=None, context="", quantities=False,
+               floor=0.15, per_group_best=2, max_blocks=60, embed=False,
+               between=None, snippet_words=80, speaker=None, provenance=None):
+        """Exhaustive entity-scoped sweep — the AGGREGATE tool (V4 P1).
+
+        retrieve() answers "what relates most?" under an appetite cap; gather()
+        answers "put EVERY block that touches this topic/these entities on the
+        table" — because a sum, count, ordering, or lineage is only correct if
+        every term is present (LongMemEval official run: multi-session aggregates
+        scored 43% precisely because one-shot top-k dropped terms). Union
+        inclusion, recall over parsimony:
+            semantic >= floor  OR  an entity/label hit  OR
+            (a quantity-bearing block at floor/2 when `quantities` is set).
+        No appetite, no relative cut; bounded only by max_blocks (best groups
+        first, per_group_best rows each). Output is a chronological TERM TABLE —
+        (date, group, quantities, matched, snippet, ring) — the model sums/orders
+        FROM the table and cites the rows via seal --used-rings, where the PoQ
+        coverage gate audits that an aggregate cites >= aggregate_min_terms rings.
+        `between=(lo, hi)` drops blocks whose KNOWN date falls outside the window;
+        undated blocks stay on the table for the model to judge."""
+        queries = [q.strip() for q in ([topic] + list(entities or [])) if q and q.strip()]
+        if embed and self.embedder is None:
+            self.embedder = embmod.get_embedder("hashing")
+        cur_fp = embmod.fingerprint_of(self.embedder) if self.embedder is not None else None
+        qlabs = [self.label(q, context) for q in queries]
+        qvecs = ([ql.get("embedding") for ql in qlabs] if embed
+                 else [None] * len(queries))
+        qsets = [set(tokens(q)) for q in queries]
+        ent_terms = [e.strip().lower() for e in (entities or []) if e and e.strip()]
+        lo = hi = None
+        if between:
+            lo, hi = _norm_date(between[0]), _norm_date(between[1])
+        fanout_id = telem.query_hash(" | ".join(queries), context)[:16]
+
+        rows, considered = [], 0
+        for r in self.tc.load():
+            if r["index"] == 0:
+                continue
+            considered += 1
+            date = ring_date(r)
+            if lo and hi and date and not (lo <= date <= hi):
+                continue
+            lab = self.block_labels(r)
+            text = block_text(r)
+            btok = set(tokens(text))
+            best_sem, matched = 0.0, None
+            for q, qv, qs in zip(queries, qvecs, qsets):
+                if qv is not None:
+                    bvec = lab.get("embedding")
+                    if bvec is not None and not embmod.compatible(
+                            lab.get("embedding_fingerprint"), cur_fp):
+                        bvec = (self.embedder.lift(bvec, lab.get("embedding_fingerprint"))
+                                if hasattr(self.embedder, "lift") else None)
+                    if bvec is None:
+                        bvec = self.embedder.embed(text)
+                    sem = embmod.cosine(qv, bvec)
+                else:
+                    bK, bE = set(lab.get("keywords", [])), set(lab.get("entities", []))
+                    sem = (0.55 * jaccard(qs, (bK | bE) or btok)
+                           + 0.45 * jaccard(qs, btok))
+                if sem > best_sem:
+                    best_sem, matched = sem, q
+            # entity/label hit: the term literally present in the block's own
+            # handles or text — reachable even where cosine runs cold
+            label_blob = " ".join(lab.get("entities", []) + lab.get("keywords", [])).lower()
+            ent_hit = None
+            for e in ent_terms:
+                if e in label_blob or (e in btok if " " not in e else e in text.lower()):
+                    ent_hit = e
+                    break
+            quants = lab.get("quantities") or []
+            if not (best_sem >= floor or ent_hit is not None
+                    or (quantities and quants and best_sem >= floor * 0.5)):
+                continue
+            # V5 facet filter: WHO spoke / WHO asserted — sealed facets when
+            # present, computed on the fly for pre-V5 blocks
+            if speaker or provenance:
+                fr, fp = lab.get("roles"), lab.get("provenance")
+                if fr is None and fp is None:
+                    fac = speaker_facets(text)
+                    fr, fp = fac["roles"], fac["provenance"]
+                if speaker and speaker not in (fr or []):
+                    continue
+                if provenance and provenance != fp:
+                    continue
+            # V5 mention grain: the full sentence(s) where the matched terms
+            # live — values read in place, not through a topical keyhole
+            m_terms = ([ent_hit] if ent_hit
+                       else [t for t in tokens(topic) if len(t) > 2][:6])
+            m_need = 1 if ent_hit else max(1, (len(m_terms) + 1) // 2)
+            mention = mention_sentences(text, m_terms, need=m_need)
+            rows.append({
+                "index": r["index"], "ring_hash": r["ring_hash"][:12],
+                "date": date, "group": ring_group(r),
+                "score": round(best_sem, 3),
+                "matched": (f"label:{ent_hit}" if (ent_hit and best_sem < floor) else matched),
+                "quantities": quants,
+                "keywords": (lab.get("keywords") or [])[:6],
+                # the value clauses VERBATIM — topical snippets drop the numbers;
+                # quote from CONTENT only (block_text concatenates payload
+                # metadata, which must never masquerade as a value)
+                "quote": (value_sentences((r.get("payload") or {}).get("content") or text)
+                          if quants else None),
+                "mention": mention,
+                "deixis": annotate_deixis(mention or "", date),
+                "snippet": excerpt_text(text, query=topic, words=snippet_words),
+            })
+
+        by_group = {}
+        for row in rows:
+            by_group.setdefault(row["group"], []).append(row)
+        kept = []
+        for items in by_group.values():
+            # within a group, a quantity-bearing row outranks a slightly-better
+            # topical one when the question is an aggregate — the number IS the term
+            items.sort(key=lambda x: ((1 if (quantities and x["quantities"]) else 0),
+                                      x["score"]), reverse=True)
+            kept.append(items[:max(1, per_group_best)])
+        kept.sort(key=lambda items: max(x["score"] for x in items), reverse=True)
+        table, total = [], 0
+        for items in kept:
+            if total >= max_blocks:
+                break
+            take = items[:max(0, max_blocks - total)]
+            table.extend(take)
+            total += len(take)
+        table.sort(key=lambda x: (x["date"] or "9999-99-99", x["index"]))
+
+        # TELEMETRY (offer): a gather is an offer set like any retrieval — every
+        # row is `chosen` (exhaustive semantics), so fetch/use credit flows to
+        # the same learners. policy field marks the regime for the analysts.
+        self._emit("offer", {
+            "query_hash": telem.query_hash(topic, context),
+            "query_keywords": telem.redact_terms((qlabs[0].get("keywords") or [])[:8]),
+            "query_entities": telem.redact_terms((qlabs[0].get("entities") or [])[:6]),
+            "dissonance": qlabs[0].get("dissonance"), "appetite": max_blocks,
+            "threshold": floor, "considered": considered, "returned": len(table),
+            "embed": bool(embed), "scorer": "gather:" + SCORER_VERSION,
+            "policy": "gather-exhaustive",
+            "fanout": {"id": fanout_id, "k": 1, "of": len(queries)},
+            "filters_active": bool(lo and hi),
+            "candidates": [{"i": x["index"], "rank": k, "score": x["score"],
+                            "parts": {"semantic": x["score"],
+                                      "quantity": 1.0 if x["quantities"] else 0.0},
+                            "salience": None, "chosen": True}
+                           for k, x in enumerate(table[:OFFER_LOG_CAP])],
+        })
+        # V5 event-identity clustering: same event, N drifting re-mentions —
+        # marked on the rows, conflicts surfaced (quantities mode only: the
+        # signature heuristic needs values to anchor on)
+        events = cluster_events(table) if quantities else []
+        return {"topic": topic, "queries": queries, "fanout_id": fanout_id,
+                "considered": considered, "included": len(rows),
+                "returned": len(table), "groups": len(by_group),
+                "between": ([lo, hi] if (lo and hi) else None), "floor": floor,
+                "rows": table, "events": events}
+
+    def track(self, entity, context="", embed=False, floor=0.12, max_rows=24,
+              between=None, snippet_words=60):
+        """Update lineage (V4 P3): every mention of ONE entity, in time order,
+        each row carrying its MENTION sentences and any values found in them —
+        because "what is X now?" and "what was X before?" are the same question
+        read at different rows of one table (benchmark-measured: knowledge-update
+        misses picked the wrong mention, or answered the current value when asked
+        for the previous). Latest-wins is read OFF the table: CURRENT = the last
+        dated row, PREVIOUS = the row before it. Undated mentions are listed
+        separately and never annotated — a lineage is only as honest as its
+        timestamps. The model verifies values; cite rows via seal --used-rings."""
+        terms = list(tokens(entity)) or [entity.lower()]
+        need = max(1, (len(terms) + 1) // 2)
+
+        def mention_of(text):
+            sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
+            keep = []
+            for s in sents:
+                low = s.lower()
+                n = sum(1 for t in terms
+                        if t in low or (t.endswith("s") and t[:-1] in low)
+                        or (not t.endswith("s") and t + "s" in low))
+                if n >= need:
+                    keep.append(s)
+            return " … ".join(keep[:2])[:400] or None
+
+        def values_of(text):
+            # looser than the quantities LABEL (number+unit): a lineage value may
+            # put the unit first ("level 150") or stand bare ("100") — the label
+            # extractor stays strict (it feeds sealed labels), this stays local
+            vals = list(quantities(text))
+            for m in re.finditer(r"(?:([A-Za-z]{2,})\s+)?(\$?\d[\d,]*(?:\.\d+)?%?)", text or ""):
+                unit, num = m.group(1), m.group(2)
+                v = f"{unit.lower()} {num}" if unit else num
+                if not any(num in x for x in vals) and v not in vals:
+                    vals.append(v)
+            return vals[:8]
+
+        g = self.gather(entity, entities=[entity], context=context, quantities=True,
+                        floor=floor, per_group_best=2, max_blocks=max_rows,
+                        embed=embed, between=between, snippet_words=snippet_words)
+        by_idx = {r["index"]: r for r in self.tc.load()}
+        dated, undated = [], []
+        for row in g["rows"]:
+            ring = by_idx.get(row["index"])
+            text = block_text(ring) if ring else row["snippet"]
+            m = mention_of(text)
+            entry = {"index": row["index"], "date": row["date"], "group": row["group"],
+                     "score": row["score"],
+                     "mention": m or row["snippet"][:200],
+                     "weak": m is None,                       # no literal mention sentence
+                     "values": values_of(m) if m else (row["quantities"] or []),
+                     # V5: deixis inside the mention resolved against ITS row's date
+                     "deixis": annotate_deixis(m or "", row["date"])}
+            (dated if row["date"] else undated).append(entry)
+        dated.sort(key=lambda x: (x["date"], x["index"]))
+        # Annotation trusts only LITERAL mentions: a weak row (entity tokens
+        # scattered, no mention sentence) stays on the table for the model to
+        # judge but never becomes CURRENT/PREVIOUS — a later passing allusion
+        # must not outrank the real latest value.
+        strong = [x for x in dated if not x["weak"]]
+        basis = strong if strong else dated
+        current = basis[-1] if basis else None
+        previous = basis[-2] if len(basis) > 1 else None
+        # V5: cluster re-mentions of the same underlying event so a thrice-told
+        # story doesn't masquerade as three lineage steps
+        events = cluster_events(dated, text_key="mention")
+        return {"entity": entity, "rows": dated, "undated": undated,
+                "current": current, "previous": previous, "events": events}
+
+    def endpoints(self, a, b, context="", top=3, embed=False, **kw):
+        """Dual-endpoint retrieval for interval questions (V4 P2): "how many days
+        between A and B" / "how long since A when B" needs BOTH anchors — the
+        official run's temporal misses were mostly one endpoint never retrieved,
+        and one wrong number is worse than none. Each endpoint gets its own
+        targeted retrieval (top hits only); the candidate interval is computed
+        from the two top hits' block dates as a STARTING POINT the model must
+        verify — when the mention is deictic ('yesterday I went…'), resolve it
+        against the MENTION's own session date (almanac.resolve(expr,
+        session_date)), never the asking date."""
+        result = {}
+        by_idx = {ring["index"]: ring for ring in self.tc.load()}
+        for key, qtext in (("a", a), ("b", b)):
+            r = self.retrieve(qtext, context, max_blocks=top, neighbors=0,
+                              embed=embed, **kw)
+            hits = []
+            for blk in r["blocks"]:
+                ring = by_idx.get(blk["index"])
+                hits.append({"index": blk["index"], "score": blk.get("score"),
+                             "date": ring_date(ring) if ring else None,
+                             "group": ring_group(ring) if ring else None,
+                             "excerpt": blk.get("excerpt")})
+            hits.sort(key=lambda h: -(h["score"] or 0))
+            result[key] = {"query": qtext, "hits": hits}
+        interval = None
+        da = next((h["date"] for h in result["a"]["hits"] if h["date"]), None)
+        db = next((h["date"] for h in result["b"]["hits"] if h["date"]), None)
+        if da and db:
+            import almanac
+            iv = almanac.days_between(da, db)
+            if iv:
+                interval = {"a_date": da, "b_date": db,
+                            "days": iv[0], "days_inclusive": iv[1],
+                            "note": "candidate only — verify each anchor's EVENT "
+                                    "date against its mention (deixis resolves to "
+                                    "the mention's session date)"}
+        result["interval"] = interval
+        return result
+
+    # ------------------------------------------------------------------ #
+    # Evidence assembly (V4 P5): one call -> a model-ready package
+    # ------------------------------------------------------------------ #
+
+    QUESTION_WORDS = {"how", "many", "much", "often", "what", "where", "when", "who",
+                      "which", "did", "do", "does", "have", "had", "was", "were", "is",
+                      "are", "currently", "current", "previous", "previously", "long",
+                      "ago", "before", "now", "first", "last", "get", "go", "new",
+                      "initially", "total", "number", "time", "times", "day", "days"}
+
+    def question_entities(self, question, cap=4):
+        """Mechanical fallback for entity decomposition — named entities first,
+        then question-word-filtered keywords. YOU (the model) override this by
+        passing explicit entities; the heuristic exists so headless callers get
+        something sane (benchmark lesson: 'how many' is not an entity)."""
+        ents = entities(question)
+        if ents:
+            return ents[:cap]
+        return [t for t in tokens(question) if t not in self.QUESTION_WORDS][:cap]
+
+    def classify_question(self, question, asked_on=None):
+        """Heuristic question shapes — the routing fallback. Multiple shapes may
+        apply; the FIRST is primary. The model's own judgment outranks this."""
+        import almanac
+        ql = question.lower()
+        shapes = []
+        if asked_on and almanac.find_in_text(question, asked_on):
+            shapes.append("relative")
+        if (re.search(r"\b(days|weeks|months|years|hours)\b.*\b(passed|between)\b", ql)
+                or re.search(r"\bhow long (had|have|did|was)\b", ql)
+                or re.search(r"\bhow (old|many (days|weeks|months|years))\b", ql)):
+            shapes.append("interval")
+        if (re.search(r"\b(order|sequence)\b", ql)
+                or re.search(r"\b(first to last|earliest to latest)\b", ql)
+                or re.search(r"which .* (first|last)", ql)):
+            shapes.append("ordering")
+        if re.search(r"\bhow (many|much)\b|\b(total|percentage|percent|average|combined|"
+                     r"altogether|in all)\b", ql):
+            shapes.append("aggregate")
+        if re.search(r"\b(currently|current|now|previous|previously|initially|"
+                     r"most recent|latest|still)\b", ql):
+            shapes.append("update")
+        if not shapes:
+            shapes.append("narrow")
+        return shapes
+
+    def _rank_groups(self, query, context="", embed=False):
+        """Deterministic group ranking by best-block relevance — the benchmark
+        harness's proven packaging path. No appetite, no relative cut: evidence
+        assembly wants the top groups, period (appetite is for conversation)."""
+        if embed and self.embedder is None:
+            self.embedder = embmod.get_embedder("hashing")
+        q = self.label(query, context)
+        qv = q.get("embedding") if embed else None
+        cur_fp = embmod.fingerprint_of(self.embedder) if self.embedder is not None else None
+        qtok = set(tokens(query + " " + context))
+        scored = []
+        for r in self.tc.load():
+            if r["index"] == 0:
+                continue
+            lab = self.block_labels(r)
+            if qv is not None:
+                bvec = lab.get("embedding")
+                if bvec is not None and not embmod.compatible(
+                        lab.get("embedding_fingerprint"), cur_fp):
+                    bvec = (self.embedder.lift(bvec, lab.get("embedding_fingerprint"))
+                            if hasattr(self.embedder, "lift") else None)
+                if bvec is None:
+                    bvec = self.embedder.embed(block_text(r))
+                s = embmod.cosine(qv, bvec)
+            else:
+                bK, bE = set(lab.get("keywords", [])), set(lab.get("entities", []))
+                btok = set(tokens(block_text(r)))
+                s = 0.55 * jaccard(qtok, (bK | bE) or btok) + 0.45 * jaccard(qtok, btok)
+            scored.append((s, r))
+        scored.sort(key=lambda x: -x[0])
+        groups, order = {}, []
+        for s, r in scored:
+            g = ring_group(r)
+            if g not in groups:
+                groups[g] = []
+                order.append(g)
+            groups[g].append((s, r))
+        return order, groups
+
+    @staticmethod
+    def _chunk_ix(ring):
+        ci = ring_data(ring).get("chunk_index")
+        if ci is None:
+            ci = (ring.get("payload") or {}).get("chunk")
+        return ci
+
+    def evidence(self, question, context="", asked_on=None, embed=False,
+                 budget_chars=30000, shapes=None, top_sessions=5):
+        """One call -> a model-ready evidence package (V4 P5) — the official
+        LongMemEval pipeline's packaging lessons, productized:
+          - NARROW BASE always: the top-ranked group ships its FULL text (a
+            passing remark hides anywhere; windows can't be trusted — Ring 45),
+            ranks 2..top_sessions ship the best chunk ±1 neighbor, every excerpt
+            dated, chronological.
+          - Shape add-ons by classification (heuristic, overridable via
+            `shapes`): relative -> day-digest (gather --between resolved
+            window); aggregate -> quantity term table; interval/ordering ->
+            timeline; update -> lineage with PREVIOUS/CURRENT.
+        Telemetry: each internal sweep logs its own offers; an `evidence` event
+        records shapes and emptiness (the abstain-on-answerable signal feed)."""
+        import almanac
+        shapes = list(shapes) if shapes else self.classify_question(question, asked_on)
+        ents = self.question_entities(question)
+        out = []
+
+        def emit_block(ring, score=None, cap=2800, full=False, group=None):
+            date = ring_date(ring) or "????-??-??"
+            text = block_text(ring)[:cap]
+            return {"index": ring["index"], "date": date,
+                    "group": group or ring_group(ring), "text": text}
+
+        # --- narrow base ---
+        order, groups = self._rank_groups(question, context, embed=embed)
+        # V5 entity-overlap gate: the group shipped in FULL must actually
+        # mention the question's anchors (Run-4 scar: the cuisines question
+        # shipped a wedding-gifts session as its full top group). Anchors are
+        # the question's PROPER NOUNS when it has any (discriminative — generic
+        # tokens like 'restaurant' saturate wrong groups), else its entities.
+        # If the top group has zero anchor hits and a nearby group has them,
+        # promote that group. Mechanical floor only — the model out-ranks it
+        # by passing explicit shapes/entities.
+        gate_promoted = False
+        proper = []
+        for sent in SENT_SPLIT_RE.split(question or ""):
+            for w in sent.split()[1:]:                  # skip sentence-initial caps
+                core = re.sub(r"[^A-Za-z']", "", w)
+                if len(core) > 2 and core[0].isupper():
+                    proper.append(core.lower())
+        anchors = proper or [e.lower() for e in ents if len(e) > 2]
+
+        def _group_anchor_hits(g):
+            txt = " ".join(block_text(r) for _, r in groups[g][:6]).lower()
+            return sum(1 for e in anchors if e in txt)
+
+        if anchors and order and _group_anchor_hits(order[0]) == 0:
+            for i in range(1, min(8, len(order))):
+                if _group_anchor_hits(order[i]) > 0:
+                    order.insert(0, order.pop(i))
+                    gate_promoted = True
+                    break
+        base_blocks = []
+        for rank, g in enumerate(order[:top_sessions]):
+            items = groups[g]
+            if rank == 0:
+                rings = sorted((r for _, r in items),
+                               key=lambda x: (self._chunk_ix(x) is None,
+                                              self._chunk_ix(x) or 0, x["index"]))
+                full_text = "".join(block_text(r) for r in rings)[:14000]
+                base_blocks.append({"index": rings[0]["index"], "date": ring_date(rings[0]),
+                                    "group": g, "text": full_text, "full": True})
+            else:
+                best = items[0][1]
+                ci = self._chunk_ix(best)
+                text = block_text(best)
+                if ci is not None:
+                    sibs = {self._chunk_ix(r): r for _, r in items}
+                    parts = [block_text(sibs[i]) for i in (ci - 1, ci, ci + 1) if i in sibs]
+                    text = "".join(parts)
+                base_blocks.append({"index": best["index"], "date": ring_date(best),
+                                    "group": g, "text": text[:2800], "full": False})
+        base_blocks.sort(key=lambda b: (b["date"] or "9999", b["index"]))
+        out.append({"kind": "narrow", "blocks": base_blocks})
+
+        # --- shape add-ons ---
+        if "relative" in shapes and asked_on:
+            hit = almanac.find_in_text(question, asked_on)
+            if hit:
+                win = (hit[0]["from"], hit[0]["to"])
+                g = self.gather(question, context=context, between=win, embed=embed,
+                                floor=0.0, per_group_best=2, max_blocks=40,
+                                snippet_words=90)
+                out.append({"kind": "day-digest", "expr": hit[0]["expr"],
+                            "window": list(win), "rows": g["rows"]})
+        if "aggregate" in shapes:
+            g = self.gather(question, entities=ents, context=context, quantities=True,
+                            embed=embed, floor=0.18 if embed else 0.15,
+                            per_group_best=2, max_blocks=60, snippet_words=100)
+            out.append({"kind": "term-table", "entities": ents, "rows": g["rows"],
+                        "events": g.get("events")})
+        if ("interval" in shapes or "ordering" in shapes) and "relative" not in shapes:
+            g = self.gather(question, entities=ents, context=context, quantities=False,
+                            embed=embed, floor=0.2 if embed else 0.15,
+                            per_group_best=1, max_blocks=30, snippet_words=70)
+            out.append({"kind": "timeline", "rows": g["rows"]})
+        if "update" in shapes:
+            tr = self.track(" ".join(ents[:3]) or question, context=context, embed=embed,
+                            max_rows=20)
+            out.append({"kind": "lineage", "entity": tr["entity"], "rows": tr["rows"],
+                        "current": tr["current"], "previous": tr["previous"],
+                        "events": tr.get("events")})
+
+        empty = all(not (s.get("blocks") or s.get("rows")) for s in out)
+        self._emit("evidence", {"shapes": shapes, "sections": [s["kind"] for s in out],
+                                "empty": empty, "gate_promoted": gate_promoted})
+        return {"question": question, "asked_on": asked_on, "shapes": shapes,
+                "sections": out, "empty": empty, "gate_promoted": gate_promoted,
+                "text": render_evidence(question, asked_on, shapes, out, budget_chars)}
 
     def verify_source(self, repo_path, ring_index):
         rings = {r["index"]: r for r in self.tc.load()}
@@ -801,21 +1582,63 @@ class Recall:
                                    "revision_match": result.get("revision_match")})
         return result
 
+    def answer(self, question, answer_text, used_rings, context="", embed=False):
+        """Cited-answers mode (V5): no span, no assertion.
+
+        Run 4's biggest discipline win was a verbatim cite on every answer —
+        this is that protocol as an organ. Every clause of `answer_text` is
+        grounded by the span guard against the DECLARED evidence rings; an
+        unsupported span is an uncited claim that must be revised, hedged, or
+        dropped before the answer ships. The guard names spans for the model
+        (the final judge) — it never silently rejects; the model decides whether
+        an 'unsupported' span is a paraphrase of real support or a fabrication."""
+        import guard as guardmod
+        by_idx = {r["index"]: r for r in self.tc.load()}
+        rings = [by_idx[i] for i in (used_rings or []) if i in by_idx]
+        rep = guardmod.guard_report(answer_text, rings,
+                                    context=(question + " " + (context or "")).strip(),
+                                    embedder=self.embedder if embed else None)
+        cited = bool(rings) and rep["n_unsupported"] == 0
+        self._emit("answer", {
+            "cited": cited, "n_spans": rep["n_spans"],
+            "n_unsupported": rep["n_unsupported"],
+            "span_grounding": rep["span_grounding"],
+            "used_rings": list(used_rings or []),
+            "computed_credit": rep["credit"],
+        })
+        return {"cited": cited, "report": rep,
+                "rings": [r["index"] for r in rings]}
+
     def seal(self, ring_type, summary, context="", external_scores=None, difficulty=0, files=None,
-             window=POQ_WINDOW, relevant_rings=None, use_index=False, used_rings=None):
+             window=POQ_WINDOW, relevant_rings=None, use_index=False, used_rings=None,
+             at_risk=None):
         """`used_rings` is the model's DECLARED credit assignment: the ring indices
         whose content actually grounded this thought. Declaring them (a) fills the
         PoQ relevance window with exactly that evidence, so the conscience audits
         the claim against what the model says it relied on, and (b) logs the `use`
-        telemetry that turns this turn into a training example."""
+        telemetry that turns this turn into a training example.
+
+        `at_risk` (V5) is the structured claims register: the specific claims in
+        this thought the model judges most likely to be wrong. Run-4 evidence:
+        uncertainty-led seals that NAMED their risky claims pre-registered the
+        actual misses — making that a structured field turns conscience output
+        into calibration data (telemetry logs the count; the ring carries the
+        claims; a later falsify against this ring scores the register)."""
         labels = self.label(summary, context)
         if used_rings and not relevant_rings:
             by_idx = {r["index"]: r for r in self.tc.load()}
             relevant_rings = [by_idx[i] for i in used_rings if i in by_idx]
+        extra = {"labels": labels}
+        if at_risk:
+            extra["at_risk"] = [str(c)[:300] for c in at_risk][:12]
         verdict, ring = gate_and_seal(self.tc, summary, context, ring_type=ring_type,
                                       difficulty=difficulty, external_scores=external_scores,
-                                      files=files, extra_payload={"labels": labels},
-                                      window=window, relevant_rings=relevant_rings, use_index=use_index)
+                                      files=files, extra_payload=extra,
+                                      window=window, relevant_rings=relevant_rings, use_index=use_index,
+                                      # the coverage gate audits aggregates against the
+                                      # DECLARED evidence count (None = nothing declared)
+                                      declared_evidence=(len(used_rings)
+                                                         if used_rings is not None else None))
         # TELEMETRY (use): the turn's outcome — every gate decision is a labeled
         # event (a REVISE/FORCE_UNCERTAINTY is signal too, not just a SEAL).
         self._emit("use", {
@@ -832,6 +1655,9 @@ class Recall:
             "assertiveness": verdict.get("assertiveness"),
             "brightness": verdict.get("brightness"),
             "external_scores": bool(external_scores),
+            # V5 calibration feed: how many claims this seal pre-registers as
+            # at risk (the claims themselves live in the ring, not the log)
+            "at_risk_n": len(at_risk or []),
         })
         return verdict, ring, labels
 
@@ -856,6 +1682,8 @@ def cmd_label(args):
 
 def cmd_retrieve(args):
     rec = Recall(args.root, args.registry_root, embedder=(args.provider if args.embed else None))
+    datekw = {"on": args.on, "between": args.between,
+              "relative": args.relative, "asked_on": args.asked_on}
     if args.queries:
         r = rec.retrieve_multi([args.query] + args.queries, args.context or "",
                                budget_tokens=args.budget, max_blocks=args.max,
@@ -865,7 +1693,7 @@ def cmd_retrieve(args):
                                top_dir=args.top_dir, exclude_path=args.exclude_path,
                                exclude_dir=args.exclude_dir, source_only=args.source_only,
                                scan_window=args.scan_window, use_index=args.index,
-                               index_limit=args.index_limit, scorer=args.scorer)
+                               index_limit=args.index_limit, scorer=args.scorer, **datekw)
         print(f"[fan-out x{len(r['queries'])}  id {r['fanout_id']}]")
         for qr in r["queries"]:
             print(f"  '{qr['query']}': {qr['returned']} block(s)  (need {qr['dissonance']})")
@@ -884,10 +1712,12 @@ def cmd_retrieve(args):
                      top_dir=args.top_dir, exclude_path=args.exclude_path,
                      exclude_dir=args.exclude_dir, source_only=args.source_only,
                      scan_window=args.scan_window, use_index=args.index, index_limit=args.index_limit,
-                     scorer=args.scorer)
+                     scorer=args.scorer, **datekw)
     if args.embed:
         print(f"[embedding recall: {rec.embedder.name}]")
     print(f"[scorer: {r['scorer']}{'  +ε-explored' if r['explored'] else ''}]")
+    if r.get("date_window"):
+        print(f"[date window: {r['date_window'][0]} .. {r['date_window'][1]} — undated blocks dropped]")
     print("query self-labels:")
     _print_labels(r["query_labels"])
     if r["filters"]["path"] or r["filters"]["dir"] or r["filters"]["hints"]:
@@ -920,6 +1750,203 @@ def cmd_retrieve(args):
         print("  (nothing above threshold — the agent does not need past blocks for this)")
 
 
+def cmd_gather(args):
+    rec = Recall(args.root, args.registry_root,
+                 embedder=(args.provider if args.embed else None))
+    r = rec.gather(args.topic, entities=args.entities, context=args.context or "",
+                   quantities=args.quantities, floor=args.floor,
+                   per_group_best=args.per_group_best, max_blocks=args.max_blocks,
+                   embed=args.embed, between=args.between, snippet_words=args.words,
+                   speaker=args.speaker, provenance=args.prov)
+    span = f"  window {r['between'][0]}..{r['between'][1]}" if r.get("between") else ""
+    print(f"[gather: exhaustive sweep  queries x{len(r['queries'])}  id {r['fanout_id']}{span}]")
+    print(f"considered {r['considered']} block(s) -> {r['returned']} row(s) across "
+          f"{r['groups']} group(s)  (floor {r['floor']}; completeness over parsimony)")
+    if args.timeline:
+        print("TIMELINE (date -> event; deixis inside a snippet resolves against ITS row's date):")
+        for x in r["rows"]:
+            print(f"  {x['date'] or '????-??-??'}  #{x['index']:>4} [{x['group'][:24]}] "
+                  f"“{(x.get('mention') or x['snippet'])[:120]}”")
+        if not r["rows"]:
+            print("  (nothing matched)")
+        return
+    print("TERM TABLE (chronological — sum/order FROM this table; cite rows via seal --used-rings):")
+    for x in r["rows"]:
+        qty = ("  qty=" + ", ".join(x["quantities"][:4])) if x["quantities"] else ""
+        ev = f"  event={x['event']}" if x.get("event") else ""
+        print(f"  #{x['index']:>4} {x['date'] or '????-??-??'}  [{x['group'][:28]}]  "
+              f"score {x['score']:.2f} via {x['matched']}{qty}{ev}")
+        print(f"        “{(x.get('mention') or x['snippet'])[:200]}”")
+        if x.get("deixis"):
+            print("        deixis: " + "; ".join(
+                f"'{d['expr']}' -> {d['from']}" + ("" if d["from"] == d["to"] else f"..{d['to']}")
+                for d in x["deixis"]))
+    for ev in (r.get("events") or []):
+        if ev["date_conflict"]:
+            print(f"  EVENT {ev['event']}: {ev['n_mentions']} re-mentions of ONE event, "
+                  f"conflicting dates {'/'.join(ev['dates'])} — count once; prefer the "
+                  f"mention nearest the event")
+    if not r["rows"]:
+        print("  (nothing matched — if the question NAMES a fact, climb the ladder before abstaining)")
+
+
+def cmd_grep(args):
+    rec = Recall(args.root, args.registry_root)
+    r = rec.grep(args.pattern, role=args.role, provenance=args.prov,
+                 group=args.group, between=args.between,
+                 ignore_case=not args.case_sensitive, literal=args.literal,
+                 max_rows=args.max, max_per_block=args.per_block,
+                 context_sentences=args.sentences)
+    print(f"[grep: '{args.pattern}'  considered {r['considered']} block(s) -> "
+          f"{r['returned']} hit(s) in {r['matched_blocks']} block(s)]")
+    for x in r["rows"]:
+        who = f" ({x['role']})" if x["role"] else ""
+        print(f"  #{x['index']:>4} {x['date'] or '????-??-??'}  [{x['group'][:28]}]{who}")
+        print(f"        “{x['context'][:260]}”")
+        if x.get("deixis"):
+            print("        deixis: " + "; ".join(
+                f"'{d['expr']}' -> {d['from']}" + ("" if d["from"] == d["to"] else f"..{d['to']}")
+                for d in x["deixis"]))
+    if not r["rows"]:
+        print("  (no lexical hits — fall through to retrieve/gather: you can only "
+              "grep what you can NAME)")
+
+
+def render_evidence(question, asked_on, shapes, sections, budget_chars=30000):
+    """The evidence package as model-facing text — dated, chronological, with
+    the deixis note and section headers naming each instrument."""
+    lines = [f"Q: {question}",
+             f"asked_on: {asked_on or 'unknown'}",
+             f"shapes: {', '.join(shapes)}",
+             "NOTE: deixis inside an excerpt ('yesterday', 'today') resolves against "
+             "THAT excerpt's session date, never the asking date."]
+    for s in sections:
+        if s["kind"] == "narrow":
+            lines.append("== EVIDENCE (chronological; top-ranked group shipped in FULL) ==")
+            for b in s["blocks"]:
+                tag = " [FULL SESSION]" if b.get("full") else ""
+                lines.append(f"--- session {b['date'] or '????-??-??'} (id {b['group']}){tag} ---")
+                lines.append(b["text"])
+        elif s["kind"] == "day-digest":
+            lines.append(f"== DAY DIGEST: '{s['expr']}' -> {s['window'][0]}..{s['window'][1]} "
+                         f"(every session in the window has a row) ==")
+            for x in s["rows"]:
+                kw = f" kw={', '.join(x['keywords'])}" if x.get("keywords") else ""
+                lines.append(f"[{x['date']} | {x['group']}]{kw} {x['snippet']}")
+        elif s["kind"] == "term-table":
+            lines.append(f"== TERM TABLE (aggregate; entities: {', '.join(s['entities'])}; "
+                         f"sum/count FROM these rows — a missing term means partial coverage, say so) ==")
+            for x in s["rows"]:
+                qty = f" qty={', '.join(x['quantities'][:8])}" if x["quantities"] else ""
+                ev = f" event={x['event']}" if x.get("event") else ""
+                body = x.get("mention") or x["snippet"]
+                lines.append(f"[{x['date'] or '????'} | {x['group']}]{qty}{ev} {body}")
+                if x.get("deixis"):
+                    lines.append("    DEIXIS: " + "; ".join(
+                        f"'{d['expr']}' -> {d['from']}" + ("" if d["from"] == d["to"] else f"..{d['to']}")
+                        for d in x["deixis"]))
+                if x.get("quote"):
+                    lines.append(f"    VALUES VERBATIM: “{x['quote']}”")
+            for ev in (s.get("events") or []):
+                if ev["date_conflict"]:
+                    lines.append(f"    EVENT {ev['event']}: {ev['n_mentions']} re-mentions of ONE event "
+                                 f"with CONFLICTING dates {'/'.join(ev['dates'])} — count once; "
+                                 f"prefer the mention nearest the event")
+        elif s["kind"] == "timeline":
+            lines.append("== TIMELINE (chronological events) ==")
+            for x in s["rows"]:
+                lines.append(f"[{x['date'] or '????'} | {x['group']}] {x['snippet']}")
+        elif s["kind"] == "lineage":
+            lines.append(f"== LINEAGE of '{s['entity']}' (PREVIOUS = second-to-last strong row, "
+                         f"CURRENT = last) ==")
+            for x in s["rows"]:
+                tag = (" <- CURRENT" if s["current"] and x["index"] == s["current"]["index"]
+                       else " <- PREVIOUS" if s["previous"] and x["index"] == s["previous"]["index"]
+                       else "")
+                vals = f" values={', '.join(x['values'][:4])}" if x["values"] else ""
+                ev = f" event={x['event']}" if x.get("event") else ""
+                lines.append(f"[{x['date']} | {x['group']}]{vals}{ev}{tag} {x['mention'][:300]}")
+                if x.get("deixis"):
+                    lines.append("    DEIXIS: " + "; ".join(
+                        f"'{d['expr']}' -> {d['from']}" + ("" if d["from"] == d["to"] else f"..{d['to']}")
+                        for d in x["deixis"]))
+            for ev in (s.get("events") or []):
+                if ev["date_conflict"]:
+                    lines.append(f"    EVENT {ev['event']}: {ev['n_mentions']} re-mentions of ONE event "
+                                 f"with CONFLICTING dates {'/'.join(ev['dates'])} — one lineage step, "
+                                 f"not {ev['n_mentions']}")
+    text = "\n".join(lines)
+    if len(text) > budget_chars:
+        text = text[:budget_chars] + "\n[evidence truncated at budget]"
+    return text
+
+
+def cmd_evidence(args):
+    rec = Recall(args.root, args.registry_root,
+                 embedder=(args.provider if args.embed else None))
+    r = rec.evidence(args.question, context=args.context or "", asked_on=args.asked_on,
+                     embed=args.embed, budget_chars=args.budget_chars,
+                     shapes=args.shapes or None, top_sessions=args.top_sessions)
+    print(r["text"])
+
+
+def cmd_track(args):
+    rec = Recall(args.root, args.registry_root,
+                 embedder=(args.provider if args.embed else None))
+    r = rec.track(args.entity, context=args.context or "", embed=args.embed,
+                  floor=args.floor, max_rows=args.max_rows, between=args.between)
+    print(f"[track: '{r['entity']}'  {len(r['rows'])} dated mention(s), "
+          f"{len(r['undated'])} undated]")
+    print("LINEAGE (chronological — PREVIOUS = second-to-last row, CURRENT = last; "
+          "cite rows via seal --used-rings):")
+    for x in r["rows"]:
+        tag = ("  <- CURRENT" if r["current"] and x["index"] == r["current"]["index"]
+               else "  <- PREVIOUS" if r["previous"] and x["index"] == r["previous"]["index"]
+               else "")
+        vals = ("  values=" + ", ".join(x["values"][:4])) if x["values"] else ""
+        weak = "  (no literal mention — verify)" if x["weak"] else ""
+        ev = f"  event={x['event']}" if x.get("event") else ""
+        print(f"  #{x['index']:>4} {x['date']}  [{x['group'][:24]}]{vals}{ev}{tag}{weak}")
+        print(f"        “{x['mention'][:180]}”")
+        if x.get("deixis"):
+            print("        deixis: " + "; ".join(
+                f"'{d['expr']}' -> {d['from']}" + ("" if d["from"] == d["to"] else f"..{d['to']}")
+                for d in x["deixis"]))
+    for ev in (r.get("events") or []):
+        if ev["date_conflict"]:
+            print(f"  EVENT {ev['event']}: {ev['n_mentions']} re-mentions of ONE event, "
+                  f"conflicting dates {'/'.join(ev['dates'])} — one lineage step, not "
+                  f"{ev['n_mentions']}")
+    for x in r["undated"]:
+        print(f"  #{x['index']:>4} ????-??-??  [{x['group'][:24]}]  (undated — not annotated)")
+        print(f"        “{x['mention'][:140]}”")
+    if not r["rows"] and not r["undated"]:
+        print("  (no mentions found — climb the ladder before abstaining)")
+
+
+def cmd_endpoints(args):
+    rec = Recall(args.root, args.registry_root,
+                 embedder=(args.provider if args.embed else None))
+    r = rec.endpoints(args.a, args.b, context=args.context or "",
+                      top=args.top, embed=args.embed)
+    for key in ("a", "b"):
+        ep = r[key]
+        print(f"endpoint {key.upper()}: '{ep['query']}'")
+        if not ep["hits"]:
+            print("   (no hits — this anchor is MISSING; say so rather than guessing)")
+        for h in ep["hits"]:
+            print(f"   #{h['index']:>4} {h['date'] or '????-??-??'} "
+                  f"[{(h['group'] or '-')[:24]}] score {h['score']}")
+            print(f"        “{(h['excerpt'] or '')[:140]}”")
+    iv = r["interval"]
+    if iv:
+        print(f"candidate interval: {iv['a_date']} -> {iv['b_date']} = {iv['days']} days "
+              f"({iv['days_inclusive']} including the last day)")
+        print(f"  NOTE: {iv['note']}")
+    else:
+        print("candidate interval: (unavailable — an anchor lacks a dated hit)")
+
+
 def cmd_verify_source(args):
     rec = Recall(args.root, args.registry_root)
     result = rec.verify_source(args.repo, args.index)
@@ -947,14 +1974,49 @@ def cmd_seal(args):
     verdict, ring, labels = Recall(args.root, args.registry_root).seal(
         args.type, args.summary, context=args.context or "",
         external_scores=poq or None, difficulty=args.difficulty, use_index=args.index,
-        used_rings=args.used_rings)
+        used_rings=args.used_rings, at_risk=args.at_risk)
     print(f"PoQ decision: {verdict['decision']}")
     if ring:
         print(f"sealed self-labeled Ring {ring['index']}  {ring['ring_hash'][:16]}..")
+        if args.at_risk:
+            print(f"  at-risk register: {len(args.at_risk)} claim(s) pre-registered "
+                  f"(calibration: a later falsify against this ring scores them)")
         _print_labels(labels)
     else:
         print("not sealed (verdict was not SEAL)")
+        if verdict["decision"] == "FORCE_UNCERTAINTY":
+            # V5 doctrine: an uncertainty-led reseal NAMES its risky claims —
+            # Run-4 evidence: pre-registered at-risk claims were the actual misses
+            print("  doctrine: reseal with uncertainty LED and the specific risky "
+                  "claims named via --at-risk \"<claim>\" ...")
         sys.exit(2)
+
+
+def cmd_answer(args):
+    rec = Recall(args.root, args.registry_root,
+                 embedder=(args.provider if args.embed else None))
+    r = rec.answer(args.question, args.answer, args.used_rings,
+                   context=args.context or "", embed=args.embed)
+    rep = r["report"]
+    print(f"[cited-answers mode: {'CITED' if r['cited'] else 'UNCITED'}  "
+          f"span grounding {rep['span_grounding']}  "
+          f"({rep['n_grounded']} grounded / {rep['n_weak']} weak / "
+          f"{rep['n_unsupported']} unsupported of {rep['n_spans']})]")
+    for s in rep["spans"]:
+        mark = {"grounded": "ok ", "weak": "?? ", "unsupported": "!! "}[s["status"]]
+        who = ", ".join(f"#{x['source']}@{x['support']}" if isinstance(x["source"], int)
+                        else f"ctx@{x['support']}" for x in s["supporters"]) or "-"
+        print(f"  {mark}{s['text'][:110]}")
+        print(f"        cite: {who}")
+    if not r["cited"]:
+        print("  doctrine: no span, no assertion — revise, hedge, or drop the "
+              "unsupported clause(s), or declare the rings that actually support them")
+    if args.seal and r["cited"]:
+        verdict, ring, _ = rec.seal("answer", args.answer, context=args.question,
+                                    used_rings=args.used_rings)
+        print(f"PoQ decision: {verdict['decision']}"
+              + (f" — sealed Ring {ring['index']}" if ring else ""))
+    sys.exit(0 if r["cited"] else 1)
 
 
 def cmd_index(args):
@@ -1049,7 +2111,104 @@ def build_parser():
                     help="max candidates the index returns before the scorer/model judge (default 300)")
     pr.add_argument("--scorer", choices=["auto", "hand"], default="auto",
                     help="auto = adopted trained operator when one is active; hand = force the hand weights")
+    pr.add_argument("--on", default=None, help="only blocks dated this day (YYYY-MM-DD)")
+    pr.add_argument("--between", nargs=2, default=None, metavar=("FROM", "TO"),
+                    help="only blocks dated inside this window")
+    pr.add_argument("--relative", default=None,
+                    help="relative expression resolved by the almanac, e.g. 'last Tuesday'")
+    pr.add_argument("--asked-on", default=None,
+                    help="anchor stamp for --relative, e.g. '2023/05/30 (Tue) 23:40'")
     pr.set_defaults(func=cmd_retrieve)
+
+    pg = sub.add_parser("gather", parents=[common],
+                        help="exhaustive entity-scoped sweep -> chronological TERM TABLE "
+                             "(aggregates/timelines/lineages: a sum needs EVERY term)")
+    pg.add_argument("topic")
+    pg.add_argument("--entities", nargs="*", default=[],
+                    help="decomposed countable entities/synonyms (the model decomposes; the sweep is mechanical)")
+    pg.add_argument("--context", default=None)
+    pg.add_argument("--quantities", action="store_true",
+                    help="aggregate mode: quantity-bearing blocks admitted at half floor and preferred per group")
+    pg.add_argument("--floor", type=float, default=0.15,
+                    help="absolute semantic floor — recall-oriented, low by design (default 0.15)")
+    pg.add_argument("--per-group-best", type=int, default=2,
+                    help="rows kept per session/source group (default 2)")
+    pg.add_argument("--max-blocks", type=int, default=60, help="hard cap on table rows (default 60)")
+    pg.add_argument("--embed", action="store_true", help="semantic sweep by embedding cosine")
+    pg.add_argument("--provider", default="hashing", help="embedding backend: hashing|st|openai|voyage|lens")
+    pg.add_argument("--between", nargs=2, default=None, metavar=("FROM", "TO"),
+                    help="date window YYYY-MM-DD (or YYYY/MM/DD); undated blocks are kept")
+    pg.add_argument("--words", type=int, default=80, help="snippet length per row")
+    pg.add_argument("--timeline", action="store_true",
+                    help="compact date -> event render (ordering questions)")
+    pg.add_argument("--speaker", default=None, choices=["user", "assistant", "system"],
+                    help="only blocks where this conversational role speaks (V5 facet)")
+    pg.add_argument("--prov", default=None,
+                    choices=["self-report", "pasted", "dialogue", "assistant", "unknown"],
+                    help="only blocks with this assertion-provenance facet "
+                         "(self-report = the user's own life; pasted = quoted documents)")
+    pg.set_defaults(func=cmd_gather)
+
+    pgr = sub.add_parser("grep", parents=[common],
+                         help="lexical scan — FIRST rung of the recall ladder: regex over "
+                              "block content, speaker-attributed, date-annotated, full "
+                              "sentences around every hit (when you can NAME the thing, "
+                              "exact match beats semantic packaging)")
+    pgr.add_argument("pattern", help="regex (or literal with --literal)")
+    pgr.add_argument("--role", default=None, choices=["user", "assistant", "system"],
+                     help="only matches spoken by this conversational role")
+    pgr.add_argument("--prov", default=None,
+                     choices=["self-report", "pasted", "dialogue", "assistant", "unknown"],
+                     help="only blocks with this assertion-provenance facet")
+    pgr.add_argument("--group", default=None, help="session/source id regex filter")
+    pgr.add_argument("--between", nargs=2, default=None, metavar=("FROM", "TO"),
+                     help="date window YYYY-MM-DD")
+    pgr.add_argument("--literal", action="store_true", help="treat pattern as literal text")
+    pgr.add_argument("--case-sensitive", action="store_true")
+    pgr.add_argument("--max", type=int, default=80, help="max hit rows (default 80)")
+    pgr.add_argument("--per-block", type=int, default=4, help="max hits per block (default 4)")
+    pgr.add_argument("--sentences", type=int, default=1,
+                     help="context sentences either side of the hit (default 1)")
+    pgr.set_defaults(func=cmd_grep)
+
+    pv2 = sub.add_parser("evidence", parents=[common],
+                         help="one call -> model-ready evidence package: narrow base "
+                              "(top group FULL) + shape add-ons (day-digest/term-table/"
+                              "timeline/lineage) routed by question shape")
+    pv2.add_argument("question")
+    pv2.add_argument("--context", default=None)
+    pv2.add_argument("--asked-on", default=None, help="anchor stamp for relative expressions")
+    pv2.add_argument("--embed", action="store_true")
+    pv2.add_argument("--provider", default="hashing", help="embedding backend: hashing|st|openai|voyage|lens")
+    pv2.add_argument("--budget-chars", type=int, default=30000)
+    pv2.add_argument("--top-sessions", type=int, default=5)
+    pv2.add_argument("--shapes", nargs="*", default=None,
+                     choices=["narrow", "relative", "interval", "ordering", "aggregate", "update"],
+                     help="override the heuristic classification (YOUR judgment outranks it)")
+    pv2.set_defaults(func=cmd_evidence)
+
+    pt = sub.add_parser("track", parents=[common],
+                        help="update lineage: every mention of one entity, chronological, "
+                             "PREVIOUS -> CURRENT annotated (knowledge-update questions)")
+    pt.add_argument("entity", help="the tracked thing, e.g. 'Apex Legends level goal'")
+    pt.add_argument("--context", default=None)
+    pt.add_argument("--embed", action="store_true")
+    pt.add_argument("--provider", default="hashing", help="embedding backend: hashing|st|openai|voyage|lens")
+    pt.add_argument("--floor", type=float, default=0.12, help="semantic floor (default 0.12)")
+    pt.add_argument("--max-rows", type=int, default=24, help="lineage cap (default 24)")
+    pt.add_argument("--between", nargs=2, default=None, metavar=("FROM", "TO"))
+    pt.set_defaults(func=cmd_track)
+
+    pe = sub.add_parser("endpoints", parents=[common],
+                        help="dual-endpoint retrieval for interval questions "
+                             "('days between A and B' needs BOTH anchors)")
+    pe.add_argument("a", help="first anchor event, phrased as a retrieval query")
+    pe.add_argument("b", help="second anchor event")
+    pe.add_argument("--context", default=None)
+    pe.add_argument("--top", type=int, default=3, help="hits per endpoint (default 3)")
+    pe.add_argument("--embed", action="store_true")
+    pe.add_argument("--provider", default="hashing", help="embedding backend: hashing|st|openai|voyage|lens")
+    pe.set_defaults(func=cmd_endpoints)
 
     pv = sub.add_parser("verify-source", parents=[common], help="verify a retrieved source ring against a live repo")
     pv.add_argument("index", type=int, help="ring index to validate")
@@ -1068,7 +2227,26 @@ def build_parser():
     ps.add_argument("--used-rings", nargs="*", type=int, default=None,
                     help="declare the ring indices whose content actually grounded this thought "
                          "(fills the PoQ window with that evidence + logs `use` telemetry)")
+    ps.add_argument("--at-risk", nargs="*", default=None,
+                    help="structured claims register (V5): the specific claims in this "
+                         "thought most likely to be wrong — sealed into the ring, counted "
+                         "in telemetry, scored by any later falsify (calibration feed)")
     ps.set_defaults(func=cmd_seal)
+
+    pan = sub.add_parser("answer", parents=[common],
+                         help="cited-answers mode (V5): ground every clause of an answer "
+                              "against declared evidence rings — no span, no assertion")
+    pan.add_argument("question")
+    pan.add_argument("answer")
+    pan.add_argument("--used-rings", nargs="+", type=int, required=True,
+                     help="the ring indices that support this answer")
+    pan.add_argument("--context", default=None)
+    pan.add_argument("--embed", action="store_true",
+                     help="supplement lexical span coverage with embedding cosine")
+    pan.add_argument("--provider", default="hashing")
+    pan.add_argument("--seal", action="store_true",
+                     help="seal an `answer` ring when fully cited (used-rings declared)")
+    pan.set_defaults(func=cmd_answer)
 
     pi = sub.add_parser("index", parents=[common], help="model-facing map: summary+labels per block (the model judges relevance from this)")
     pi.add_argument("--words", type=int, default=22)

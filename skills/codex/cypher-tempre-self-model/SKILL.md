@@ -196,21 +196,165 @@ Ground your reasoning in what you fetched; PoQ then validates whether it was eno
 Relevance is obvious to you from the labels — so pull enough, never more. No bloat, no
 forgetting.
 
-**The recall escalation ladder.** One-shot `retrieve` is the FIRST rung, not the
-protocol. When it misses (externally benchmarked: storage is lossless — retrieval is
-the only failure mode), climb: (1) one-shot `retrieve`; (2) **fan-out** — decompose the
+**The recall escalation ladder.** When you can NAME the thing, exact match beats
+semantic packaging (single-core benchmark run: targeted scans won hundreds of times;
+the embedding path was needed twice). Climb: (1) **`grep`** — lexical scan, the first
+rung: `recall.py grep "<pattern>" [--role user|assistant] [--prov self-report]
+[--group <session-rx>] [--between A B]` returns speaker-attributed, date-annotated
+hits with the full sentence(s) around each match and inline deixis resolution;
+(2) one-shot `retrieve` when you can only DESCRIBE; (3) **fan-out** — decompose the
 question into 2–4 sub-queries (`retrieve "<main>" --queries "<alt>" "<entity>" …`) and
-work the union; (3) read the **full `index`** — it is compact, and when it fits in
-context the index IS the primary instrument, retrieve is for scale; (4) `fetch` what
-you judged relevant; (5) bounded content scan as the last rung. The model's judgment
-at rungs 2–4 is what one-shot embedding cannot replace.
+work the union; (4) read the **full `index`** — it is compact, and when it fits in
+context the index IS the primary instrument, retrieve is for scale; (5) `fetch` what
+you judged relevant; (6) bounded content scan as the last rung. The model's judgment
+at rungs 3–5 is what one-shot embedding cannot replace.
+
+**Speaker & provenance facets (V5).** Conversational blocks carry `roles` (who
+speaks) and `provenance` labels: `self-report` (the user's own first-person
+life-facts), `pasted` (documents the user quoted — a court case is not a
+biography), `dialogue`, `assistant`, `unknown`. Route by them: "you recommended
+X" lives in assistant turns (`grep --role assistant`); "how many X did I buy"
+lives in self-report (`gather --prov self-report`). The taxonomy is a heuristic
+floor — YOU override it when you read the block.
 
 **Aggregate questions (totals, percentages, counts across sessions).** Top-k with an
-appetite cap is the WRONG tool — a sum needs every term. Read the index exhaustively
-for the sub-topic, fan out per entity, fetch ALL matches, and let PoQ's grounding
-check validate coverage before you seal the arithmetic. Quantity-bearing blocks are
-labeled (`quantities`: "5 mile", "$800", "40%") and boosted for quantity-seeking
-queries, so buried passing-remark numbers stay reachable.
+appetite cap is the WRONG tool — a sum needs every term. Use **gather**, the
+exhaustive sweep (benchmark-built: official LongMemEval run, where one-shot top-k
+scored 43% on aggregates by dropping terms):
+```
+python3 recall.py gather "<topic>" --entities "<e1>" "<e2>" … --quantities \
+       [--between 2023-01-01 2023-03-31] [--embed --provider st]
+```
+YOU decompose the question into its countable entities; gather unions semantic
+hits, literal entity/label hits, and quantity-bearing blocks (admitted at half
+floor) — no appetite cap, completeness over parsimony — and returns a
+chronological **TERM TABLE** (date, session/group, quantities, snippet, ring).
+Sum or order FROM the table, cite the rows via `seal --used-rings`, and the
+**coverage gate** audits you: an aggregate claim declaring fewer than
+`aggregate_min_terms` evidence rings degrades to FORCE_UNCERTAINTY naming the
+gap. Quantity-bearing blocks are labeled (`quantities`: "5 mile", "$800",
+"40%") and boosted for quantity-seeking queries, so buried passing-remark
+numbers stay reachable. If the table is visibly missing a term you KNOW exists,
+that absence is itself the honest finding — say so rather than summing past it.
+
+**Temporal questions (when / how long ago / days between / what order).**
+Cosine cannot retrieve by WHEN — "who did I meet last Tuesday" shares no
+semantics with the lunch session it names (benchmark-measured: every question
+of this shape was abstained on until time-indexed recall). Blocks carry dates
+(`ring_date`: a payload source date outranks the seal timestamp). Four tools:
+```
+python3 almanac.py resolve "<question text>" --asked-on "<stamp>"   # deixis -> date window
+python3 recall.py retrieve "<q>" --relative "last Tuesday" --asked-on "<stamp>"
+python3 recall.py retrieve "<q>" --on 2023-03-18 | --between 2023-03-01 2023-03-31
+python3 recall.py endpoints "<event A>" "<event B>"     # interval questions need BOTH anchors
+python3 recall.py gather "<topic>" --entities … --timeline          # ordering questions
+```
+Discipline (each clause is a sealed benchmark miss): (0) **for "what happened
+<relative day>" questions, prefer the day-digest**: `gather "<question>"
+--between <resolved window>` — real corpora stamp MANY sessions on one day
+(benchmark-measured: 12 sessions / 158 blocks shared one date), and top-k
+inside the window still loses a one-clause fact to same-day chatter; gather
+guarantees every same-day session a row. Use `retrieve --relative` when the
+chain is sparse (a personal diary, one ring per turn); (1) a date filter
+hard-restricts candidates BEFORE ranking — undated blocks are dropped by
+retrieve's filter, kept by gather's; (2) "days between A and B" needs BOTH
+anchors — if one endpoint has no dated hit, the missing anchor is the honest
+answer, not a guessed number; (3) **anchor deixis to its own mention**: a
+"yesterday" inside a session dated D means D−1 — resolve against the MENTION's
+session date, never the asking date, and when two mentions of the same event
+disagree, prefer the mention nearest the event and surface the conflict;
+(4) ordering questions are aggregates over events — gather the timeline
+exhaustively, then read the order off the dates.
+
+**Knowledge-update questions (a value that changed: how many X now / what was X
+before).** Latest-wins is a TABLE read, not a memory vibe (benchmark-measured:
+misses answered the current value when asked the previous, or anchored to a
+stale mention):
+```
+python3 recall.py track "<the tracked thing>" [--embed --provider st]
+```
+`track` sweeps every mention of the entity (gather core), extracts each row's
+mention sentences and values, orders them chronologically, and annotates
+**PREVIOUS = second-to-last dated row, CURRENT = last dated row**. Answer
+"current" questions from the CURRENT row, "previous/initial" questions from the
+row the question names — and cite both rows via `seal --used-rings` so the
+conscience can audit the update claim. Undated mentions are listed unannotated:
+a lineage is only as honest as its timestamps. If two same-day mentions
+conflict, surface both — never silently pick.
+
+**One-call evidence assembly + the answer protocol.**
+```
+python3 recall.py evidence "<question>" --asked-on "<stamp>" [--embed --provider st]
+```
+`evidence` classifies the question's shape (heuristic — YOUR judgment overrides
+via `--shapes`), then packages: a **narrow base** always (top-ranked group in
+FULL — a passing remark hides anywhere; ranks 2-5 windowed; everything dated,
+chronological) plus the shaped instrument: day-digest for relative days, term
+table for aggregates, timeline for intervals/ordering, lineage for updates.
+THE ANSWER PROTOCOL (each clause is a sealed benchmark lesson): (1) if the
+question NAMES a rememberable fact, climb the ladder — grep → retrieve →
+fan-out → gather/track/endpoints/day-digest — BEFORE abstaining; abstain only
+when the instruments come back empty (evidence calls log `empty` to telemetry:
+`abstain_on_answerable` is a tracked rate, watch it in dreams); (2) sums/counts
+come FROM the term table, cited row by row — the coverage gate audits the
+claim; (3) "current vs previous" reads the lineage annotations — and the answer
+cites BOTH values so latest-wins is auditable; (4) intervals need both anchors
+or an honest "one endpoint is missing"; (5) when evidence contradicts itself,
+surface the conflict — never silently pick a side; (6) the evidence builder's
+**entity-overlap gate** promotes an anchor-bearing group over a topically-loud
+one when the FULL-shipped group lacks every question anchor (`gate_promoted` in
+the payload tells you it fired) — but the gate is a floor; re-route with
+`--shapes`/entities when you can see the misroute yourself.
+
+**Cited answers — no span, no assertion (V5).** Run 4's biggest discipline win,
+as an organ: before a factual answer ships, ground every clause against the
+rings you claim support it:
+```
+python3 recall.py answer "<question>" "<answer>" --used-rings 12 47 [--seal]
+```
+The span guard names every unsupported clause; revise, hedge, or drop it — or
+declare the ring that actually supports it. `--seal` seals a fully-cited
+`answer` ring with the span map. An answer you cannot cite is a hypothesis, and
+hypotheses are said as hypotheses.
+
+**Event identity & the interval conventions (V5).** Real corpora re-tell one
+event with drifting deixis ("last Saturday" said on three different days).
+gather/track cluster such rows into `event` identities and flag
+`date_conflict`s: count each EVENT once, never once per mention, and prefer the
+mention nearest the event. Intervals: a duration-of-stay counts INCLUSIVE (the
+15th to the 22nd is 8 days); a gap between events counts EXCLUSIVE — when the
+phrasing is ambiguous, state both. Rows also carry inline `deixis` annotations
+(each relative expression resolved against ITS OWN row's date) — read them
+instead of re-deriving calendars by hand.
+
+**The at-risk register (V5) — conscience output as calibration data.** When a
+seal draws FORCE_UNCERTAINTY, the reseal leads with the uncertainty AND names
+the specific claims most likely to be wrong:
+```
+python3 recall.py seal "<summary>" --used-rings … --at-risk "<claim 1>" "<claim 2>"
+```
+Benchmark evidence: the single-core run's pre-registered at-risk claims WERE
+the actual misses. The claims seal into the ring; telemetry counts them; any
+later falsify against that ring scores the register — calibration the learner
+can train on.
+
+**Sharding doctrine — when to split work across agents (V5).** Shard along
+EVIDENCE-INDEPENDENCE boundaries, never through a lineage or a term set. The
+benchmark arc measured it: a fleet of agents each holding a slice scored 91.0%;
+one core holding the whole chain scored 97.2%, with the entire gap concentrated
+in knowledge-update (+12.5 — the lineage must live in one view) and
+multi-session aggregates (+20.7 — a sum needs every term in one place).
+Questions that share entities, lineages, or term sets belong to ONE context;
+truly independent work shards freely. If you must split a dependent set, ship
+the full lineage/term-table WITH each shard.
+
+**Long-grind ops (V5) — runs bigger than a session.** The pattern that survived
+multiple session-limit interruptions: (1) bank outputs to an append-only JSONL
+keyed by item id — resumable by skipping done ids; (2) re-arm a background
+heartbeat that re-invokes you when it completes; (3) seal a PoQ-gated progress
+ring every ~25 items naming counts, abstentions, and at-risk calls; (4) verify
+the chain at every seal. The grind continues across interruptions because the
+state lives in the bank file and the chain, not in context.
 
 **Semantic recall — the upgrade path.** The stdlib embedder is morphological, not
 semantic (benchmark-measured: it is the weak link). Two upgrades, use either or both:
@@ -247,6 +391,10 @@ this scores the WHOLE chunk as a vector — sharper than keyword overlap, and in
 the vectors are sealed in. The stdlib default (`embed.py` HashingEmbedder) captures
 morphology/subword but NOT true synonymy; for genuine semantic recall plug a real model
 via `--provider st|openai|voyage` (needs the lib/key). Either way YOU make the final call.
+**Chunking auto-matches the provider's window** (`embedder.window_chars`; continuum caps
+its data-height band at ingest): text past a model's input window never reaches the
+vector — benchmark-measured at 12 recall points between window-matched and oversized
+chunks. The stdlib embedder has no window; real models do.
 
 ## Long-horizon tasking (Continuum) — for jobs bigger than any context window
 
@@ -522,6 +670,7 @@ python3 immune.py status                                # safe height, quarantin
 | `chronosynaptic.py` | foresight — single-pass parallel-self MCTS |
 | `continuum.py` | endurance — long-horizon tasking via data-height blocks with full state refresh |
 | `recall.py` | relevance — self-labeling + adaptive retrieval of related past blocks |
+| `almanac.py` | the calendar — relative time expressions resolved into date windows (time-indexed recall) |
 | `embed.py` | semantics — pluggable embeddings (stdlib hashing default; st/openai/voyage adapters) |
 | `consensus.py` | integrity — quorum-attested tamper-proofing (k-of-n witnesses) |
 | `immune.py` | immunity — detect compromise, lock down, roll back to clean height, molt scars |
@@ -549,7 +698,8 @@ poq.py         audit "<thought>" | seal "<thought>"   (+ --coherence/--relevance
 cambium.py     sense "<input>" | grow "<input>" | emergent
 chronosynaptic.py  think "<query>" [--seal] | collapse-notes notes.json [--seal]
 continuum.py       open | ingest | walk | resume | validate   (long-horizon tasks; --changed-only; redaction)
-recall.py          index | fetch | seal | label | retrieve | verify-source
+recall.py          index | fetch | seal | label | grep | retrieve | gather | track | endpoints | evidence | answer | verify-source
+almanac.py         resolve "<text>" --asked-on "<stamp>" | between <a> <b>   (deixis -> date windows)
 embed.py           sim | vec                                   (embeddings: hashing default | st|openai|voyage)
 consensus.py       init | attest | verify                       (quorum tamper-proofing)
 immune.py          screen | scan | lockdown | rollback | status (detect/heal compromise; molt scars)

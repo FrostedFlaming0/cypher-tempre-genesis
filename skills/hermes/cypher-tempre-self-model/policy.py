@@ -60,6 +60,9 @@ DEFAULT_POLICY = {
     "poq": {
         "min_events": 50,
         "target_false_seal_rate": 0.05,
+        # coverage gate (V4 P1): minimum declared evidence rings for an
+        # aggregate claim (a stated total/sum/count). Tightens upward only.
+        "aggregate_min_terms": 2,
     },
     # Representation lens: adoption guards (pair volume + must-beat-base margin)
     # and the head geometry/optimizer the dream phase trains with.

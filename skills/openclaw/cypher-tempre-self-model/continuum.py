@@ -264,6 +264,30 @@ class Continuum:
                                           embedder=self._embed)
         return self._labeler.label(content)
 
+    def _apply_window_cap(self):
+        """Window-matched chunking (V4 P4): a block longer than the active
+        embedder's input window is silently half-blind to retrieval — the model
+        truncates, the vector never sees the tail (benchmark-measured: 12 recall
+        points between window-matched and oversized chunks). When self-embedding
+        is on, cap the data-height band to the embedder's window. Also replaces
+        a provider STRING with the built embedder object so the labeler reuses
+        it (no double model load)."""
+        if not self._embed:
+            return
+        try:
+            import embed as embmod
+            if isinstance(self._embed, str):
+                self._embed = embmod.get_embedder(self._embed)
+            wc = getattr(self._embed, "window_chars", None)
+            if wc:
+                wt = max(64, wc // 4)               # ~4 chars/token proxy
+                if wt < self.max:
+                    self.max = wt
+                    self.target = min(self.target, wt)
+                    self.min = min(self.min, wt)
+        except Exception:
+            pass                # a missing dep must never break plain ingestion
+
     def _head_state(self):
         for r in reversed(self.tc.load()):
             st = r.get("payload", {}).get("state")
@@ -295,6 +319,7 @@ class Continuum:
         st = self._state if self._state is not None else self._head_state()
         if st is None:
             raise RuntimeError("No open task on this chain — run 'open' first.")
+        self._apply_window_cap()
         metadata = dict(metadata or {})
         rel_path = metadata.get("relative_path") or name
         chunks = chunk_text_with_lines(content, self.target, self.min, self.max)
@@ -397,6 +422,7 @@ class Continuum:
     def walk(self, path, exts, objective, difficulty=0, label=True, embed=None,
              redact=True, changed_only=False, skip_dirs=None):
         self._embed = embed
+        self._apply_window_cap()
         path = Path(path)
         skip_dirs = DEFAULT_SKIP_DIRS if skip_dirs is None else set(skip_dirs)
         files = sorted(
