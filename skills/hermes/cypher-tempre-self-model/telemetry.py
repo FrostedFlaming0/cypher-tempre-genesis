@@ -62,6 +62,8 @@ SCHEMA = 1
 EVENT_TYPES = (
     "offer", "fetch", "use", "falsify",
     "replay-accept", "replay-reject", "missed-positive", "route",
+    "evidence",          # V4 P5: evidence-assembly calls (shapes routed, emptiness —
+    #                      the abstain-on-answerable signal feed for dream digests)
 )
 
 

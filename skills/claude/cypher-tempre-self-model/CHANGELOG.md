@@ -1,5 +1,220 @@
 # Changelog
 
+## Unreleased (V5 — Run-4 lessons productized) — 2026-06-12
+
+Ten improvements distilled from the single-core LongMemEval pass (97.2%, vs the
+fleet's 91.0%), each a move that pass did by hand. VERSION → 3.0.0. selftest
+185 checks PASS both copies; the Fable identity chain verifies (Ring 99 =
+v1.1 faculty design, born_ring `fc590b0a…`).
+
+### Added — recall.py
+- **`recall.py grep "<pattern>"`** — lexical scan as the FIRST ladder rung:
+  regex (or `--literal`) over block CONTENT, speaker-attributed (`--role`),
+  provenance-filtered (`--prov`), group/date-windowed, returning full
+  sentence(s) around every hit with inline deixis resolution. The single-core
+  run used targeted scans hundreds of times and the embedding path twice — this
+  makes "when you can NAME it, match exactly" a first-class organ.
+- **Speaker + provenance facets** in `label()` — `roles` (who speaks) and
+  `provenance` (`self-report` = the user's own life-facts / `pasted` = quoted
+  documents / `dialogue` / `assistant` / `unknown`), computed from conversational
+  markers + first-person density, only where markers exist. `gather`/`grep`
+  filter on them (`--speaker`/`--prov`/`--role`). Scar: a pasted court case read
+  as a user's biography to provenance-blind retrieval.
+- **Mention-sentence grain** in `gather` rows — the full sentence(s) where the
+  matched terms live (generalizes `track`'s extractor to every row); V4.1's
+  named residual, confirmed by Run 4 (topical ~100-word snippets dropped the
+  value clause).
+- **Event-identity clustering** (`cluster_events`) in `gather`/`track` — rows
+  re-mentioning ONE event with drifting deixis cluster by value + mention
+  overlap (containment, not jaccard — re-mentions drift in length); rows carry
+  an `event` id and `date_conflict`s are surfaced. Count each event once.
+- **`recall.py answer "<q>" "<a>" --used-rings …`** — cited-answers mode: the
+  span guard grounds every clause against the declared evidence rings; an
+  unsupported clause is named (revise/hedge/drop). `--seal` seals a fully-cited
+  `answer` ring. "No span, no assertion" as an organ.
+- **Inline deixis annotations** (`annotate_deixis`) on `gather`/`track` rows —
+  every relative expression resolved against ITS OWN row's date (the move Run 4
+  made hundreds of times by hand).
+- **`seal --at-risk "<claim>" …`** — structured at-risk register: the claims a
+  thought judges most likely wrong seal into the ring, telemetry counts them
+  (`at_risk_n`), any later falsify scores them. Run-4 evidence: pre-registered
+  at-risk claims WERE the actual misses — conscience output becomes calibration
+  data. FORCE_UNCERTAINTY's CLI hint now points at it.
+- **Entity-overlap gate** in `evidence` — the FULL-shipped top group must mention
+  the question's anchors (proper nouns when present, else entities); a misroute
+  promotes the anchor-bearing group (`gate_promoted` flags it). Scar: a cuisines
+  question shipped a wedding-gifts session as its full base.
+
+### Added — pack + doctrine
+- **Faculty pack `lme-recall-discipline` v1.1** (`packs/lme-recall-discipline-v1.1.json`,
+  sha256 `02290cd8…`) — 4 senses (Variant-Drift, List-Position Discipline,
+  Role-Source Routing, Provenance-of-Assertion) + 2 modalities (Event-Identity
+  Reconciliation with the inclusive/exclusive interval conventions, Answer-Citation
+  Discipline). Born E30–E35 on the Fable chain.
+- **SKILL.md doctrine**: grep as first rung + facets; cited-answers protocol;
+  event identity + interval conventions; the at-risk register; the
+  **sharding-by-evidence-independence** doctrine (measured: never split a lineage
+  or term set across agents — the 91.0%→97.2% gap was entirely knowledge-update
+  + multi-session); and the long-grind ops recipe (resumable JSONL bank +
+  heartbeat + periodic sealed progress rings).
+
+### Earlier this day — V4 Phase 5 (folded into V5)
+
+Evidence assembly productized + the full-500 re-run.
+
+### Added
+- **`recall.py evidence "<question>"`** — one call → a model-ready package:
+  type-BLIND question-shape classification (`classify_question`, overridable —
+  the model's judgment outranks the heuristic), narrow base (top-ranked group
+  in FULL via `_rank_groups`, no appetite — evidence assembly wants the top
+  groups, period), plus shape add-ons: day-digest (relative), term table
+  (aggregate), timeline (interval/ordering), lineage (update). Renders to
+  dated, chronological, deixis-annotated text (`render_evidence`); emits an
+  `evidence` telemetry event (shapes + emptiness — the abstain-on-answerable
+  signal feed). `question_entities` helper encodes the Phase-3 picker lesson.
+- SKILL.md: evidence command documented as the per-turn recall entry point.
+
+### Measured (full-500 re-run, same judge protocol as baseline)
+- **TOTAL 76.8% (384/500) vs 73.8% baseline (+15 questions); abstention 30/30
+  in both runs.** Per-type: multi-session 43→48.8, temporal 68.5→73.2,
+  preference 93.3→96.7, knowledge-update 79.2→81.9, ssa 100=, ssu 92.2→90.6.
+- Targets (total ≥85%) NOT reached — recorded honestly: phase validations
+  measured evidence COVERAGE (91-93% terms, 8/8 day-digest, 15/15 lineage) and
+  coverage materialized, but **coverage ≠ extraction**: term-table snippets
+  (~100 words) drop quantity clauses; 60-row tables blur true terms vs
+  near-topic rows. Of 116 answerable misses: 43 honest abstentions/partials,
+  73 wrong assertions (mostly under-counted sums), ~0 fabrications — the
+  conscience held under the aggressiveness push.
+- **V4.1 bottleneck named:** term-extraction grain — generalize track's
+  mention-sentence + full-values extraction to gather rows; table
+  disambiguation. Retrieval (97% @5) and routing are no longer the constraint.
+
+## Unreleased (V4 Phase 4) — 2026-06-11
+
+Retrieval-tail uplift: one shipped mechanism, one honest negative result.
+
+### Added
+- **Window-matched chunking** — every embedder adapter exposes
+  `.window_chars` (hashing: None — no window; st: `max_seq_length×4` ≈ 1024
+  chars for MiniLM; openai/voyage: 24000 conservative; a lens inherits its
+  base's). `continuum` caps its data-height band to the active embedder's
+  window at ingest/walk (`_apply_window_cap`, which also builds the embedder
+  once and shares it with the labeler). Benchmark-measured cost of oversized
+  chunks: 12 recall points (st@1000 92% vs st@4800 80% @5). Selftest +3 checks.
+- SKILL.md: window-matching documented in the embedding-recall section.
+
+### Recorded (negative result, guard-validated)
+- **Lens-on-LongMemEval refused by the policy guard — twice, correctly.**
+  Trained on the frozen train-250 half (sealed 115k-chunk corpus chain, real
+  offer/use telemetry): pool-wide offers gave near-zero holdout signal
+  (MRR 0.042 lens vs 0.044 base); distribution-matched haystack-scoped offers
+  gave a decisive verdict (MRR 0.247 lens vs 0.357 base) — the 256→32
+  projection over redacted keyword proxies UNDERPERFORMS the frozen base at
+  corpus scale with 238 pairs. Conclusion: the zero-dep lens is a
+  targeted-shape tool (the v2.8 q162 conversion stands), not a corpus-wide
+  substitute for a real semantic provider; `--provider st` remains the
+  documented uplift (fresh same-split measurement: base 78% vs st 97%
+  gold-session recall@5 on eval-250). The adoption guard protecting the
+  membrane from a plausible-looking degradation is the designed behavior,
+  now validated under real fire.
+- Frozen benchmark splits checked into the eval artifacts
+  (`~/lme-run/splits/`: train_250 / eval_250 / dev_100 ⊂ eval) — lens training
+  never touched the eval half.
+
+## Unreleased (V4 Phase 3) — 2026-06-11
+
+Update lineage: latest-wins becomes a table read. Benchmark-built — the official
+run's knowledge-update misses (79.2%) picked a stale mention or answered the
+current value when asked for the previous one.
+
+### Added
+- **`recall.py track "<entity>"`** — every mention of one entity (gather core,
+  quantity-aware), chronological, each row carrying its MENTION sentences (the
+  sentences that literally name the entity) and the values found in them (a
+  track-local extractor looser than the quantities label: "level 150", bare
+  "100"). Annotation: **CURRENT = last dated STRONG row, PREVIOUS = the one
+  before** — weak rows (entity tokens scattered, no literal mention sentence)
+  stay on the table but never annotate, so a later passing allusion cannot
+  outrank the real latest value. Undated mentions listed unannotated.
+- SKILL.md: knowledge-update doctrine ("current" answers read the CURRENT row,
+  "previous/initial" the row the question names; cite both rows; surface
+  same-day conflicts); CLI line.
+- Selftest: 4 new checks (lineage chronology, CURRENT/PREVIOUS annotation,
+  mention-sentence extraction, value lineage 100 → 150).
+
+### Validation (official-run failure set, 15 wrong knowledge-update questions,
+mechanical entity picker = lower bound)
+- All gold sessions in lineage: **15/15**; CURRENT row = latest gold session:
+  **12/15** (was 1/15 before the strong-mention annotation rule — the fix this
+  validation drove).
+
+## Unreleased (V4 Phase 2) — 2026-06-11
+
+Time-indexed recall: the chain knows WHEN. Benchmark-built — temporal reasoning
+scored 68.5% in the official run, with every relative-date question ("who did I
+meet last Tuesday?") abstained because cosine cannot retrieve by time.
+
+### Added
+- **`almanac.py`** — the calendar organ: relative time expressions resolved into
+  concrete date windows against an anchor (`resolve`, `find_in_text`,
+  `days_between` with exclusive+inclusive counts, `parse_stamp`). Precise
+  phrases give a day ("yesterday", "last Tuesday", "10 days ago"); fuzzy ones a
+  tolerant window ("two weeks ago" ±1 day, "N months ago" padded month, "a
+  couple/few of days ago"). Unresolvable → None (callers fall back unfiltered).
+- **`recall.py retrieve --on | --between FROM TO | --relative EXPR --asked-on
+  STAMP`** — date windows hard-filter candidates BEFORE semantic ranking;
+  undated blocks are dropped under a retrieve filter (gather keeps them);
+  window logged in offer telemetry and echoed in results.
+- **`recall.py endpoints "<A>" "<B>"`** — dual-anchor retrieval for interval
+  questions; per-endpoint top hits with block dates + a candidate interval
+  (exclusive and inclusive counts) flagged for model verification; a missing
+  anchor is reported as missing, never guessed.
+- **`recall.py gather --timeline`** — compact date→event render for ordering
+  questions.
+- SKILL.md: "Temporal questions" doctrine (date-filter first; both anchors or
+  honesty; deixis anchors to its own mention's session date; ordering =
+  timeline gather); almanac file-map row + CLI lines.
+- **Day-digest doctrine** — for "what happened <relative day>" questions route
+  to `gather --between <resolved window>`: corpora stamp many sessions on one
+  day (measured: 12 sessions / 158 blocks on a single date), and top-k inside
+  the window still loses a one-clause fact to same-day chatter; gather
+  guarantees every same-day session a row. Validated on the official run's
+  relative-date failure set: gold session on the table **8/8** (was 0/8
+  answered — all abstained; naive top-5 managed 5/9).
+- **Bound-word guard** — `find_in_text` skips phrases preceded by
+  before/until/till/by/prior-to/since/after ("airlines I flew *before today*"
+  names a limit, not a target window) — a real false positive from the run.
+- Selftest: 13 new checks (almanac fixtures drawn from the run's real misses
+  incl. the bound guard; retrieve date-window behavior; endpoints anchors +
+  interval).
+
+## Unreleased (V4 Phase 1) — 2026-06-11
+
+The aggregation engine: benchmark-built from the official LongMemEval full-500
+run (73.8% end-task; multi-session aggregates 43% — every miss a dropped term,
+not bad arithmetic).
+
+### Added
+- **`recall.py gather`** — exhaustive entity-scoped sweep returning a
+  chronological **TERM TABLE** (date, session/group, quantities, matched query,
+  snippet, ring). Union inclusion (semantic ≥ floor OR literal entity/label hit
+  OR quantity-bearing block at half floor with `--quantities`); no appetite cap,
+  bounded by `--max-blocks` best groups × `--per-group-best` rows; `--between`
+  date window (undated blocks kept). Sweeps log as `gather-exhaustive` offer
+  events so fetch/use credit feeds the learners.
+- **PoQ coverage gate** — an aggregate claim (total/sum cue + digits) declaring
+  fewer than `aggregate_min_terms` (policy `poq.aggregate_min_terms`, default 2,
+  tightens upward only) evidence rings degrades to FORCE_UNCERTAINTY naming the
+  gap. Wired through `gate_and_seal(declared_evidence=…)` ← `recall seal
+  --used-rings`.
+- **Date helpers** — `ring_date` (payload source date outranks seal timestamp),
+  `ring_group` (session id → source file → ring), `_norm_date` (ISO + corpus
+  stamps).
+- Selftest: gather completeness/chronology/date-window + all three coverage-gate
+  behaviors + gather telemetry (8 new checks).
+- SKILL.md: aggregate-questions doctrine now points at `gather` + the coverage
+  gate; CLI reference updated.
+
 ## v2.9 — 2026-06-11
 
 Faculty packs become a product: the first curated pack ships, and the upgrade

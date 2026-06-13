@@ -113,6 +113,7 @@ class LensedEmbedder:
         self.base = base
         self.head = head
         self.dim = head.d_out
+        self.window_chars = getattr(base, "window_chars", None)
 
     @property
     def fingerprint(self):

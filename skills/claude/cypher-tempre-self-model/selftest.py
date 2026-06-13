@@ -65,11 +65,15 @@ def main():
         check("cambium: detects dissonance on foreign input", gap["dissonance"] > 100)
 
         # 3b. Promotion lands in the per-user grown.json (never the shipped base) — v2.1 faculty safety
-        base_n = len(cambium.load_corpus(root))              # 84 modalities + 107 senses = 191, pristine
+        # base_n includes whatever grown.json the live registry already carries
+        # (imports/promotions ride along in the copytree); count the DELTA.
+        base_n = len(cambium.load_corpus(root))
+        pre = cambium.load_grown(root)
+        pre_n = len(pre.get("modalities", [])) + len(pre.get("senses", []))
         for _ in range(cambium.PROMOTE_AT):
             cambium.grow(root, "quaternion slerp gimbal kinematics actuator torque encoder rotor", mode="sprout")
         grown = cambium.load_grown(root)
-        n_promoted = len(grown.get("modalities", [])) + len(grown.get("senses", []))
+        n_promoted = (len(grown.get("modalities", [])) + len(grown.get("senses", []))) - pre_n
         check("cambium: promotion recorded in per-user grown.json, not the base", n_promoted >= 1)
         check("cambium: grown faculties merge into the corpus and base stays pristine",
               len(cambium.load_corpus(root)) == base_n + n_promoted)
@@ -714,6 +718,315 @@ def main():
         check("lens: used-but-unoffered rings mine as positives (missed-positive channel)",
               any(rq1["index"] in o["pos"] and rq1["index"] not in o["cands"]
                   for o in mined_offers))
+
+        # Gather + coverage gate (V4 P1) — aggregates need every term
+        groot = Path(tempfile.mkdtemp(prefix="ct_gather_"))
+        try:
+            gtc = timechain.Timechain(groot)
+            gtc.genesis(name="gather-test")
+            grec = recall.Recall(groot, registry_root=SKILL)
+
+            def _sess(txt, sid, date):
+                return gtc.seal("session", {"content": txt, "session_id": sid,
+                                            "date": date, "labels": grec.label(txt)})
+
+            g1 = _sess("user: I hiked 5 miles at Red Rock Canyon this weekend, amazing views",
+                       "s1", "2022/09/10 (Sat) 10:00")
+            g2 = _sess("user: did a 3 mile trail hike up the ridge last weekend with my brother",
+                       "s2", "2022/09/17 (Sat) 09:00")
+            _sess("user: I love Miles Davis, Kind of Blue is the best jazz album ever recorded",
+                  "s3", "2022/09/12 (Mon) 20:00")
+            _sess("user: my favorite pasta recipe uses basil and garlic from the garden",
+                  "s4", "2022/09/13 (Tue) 18:00")
+            g = grec.gather("total distance of the hikes I did on two consecutive weekends",
+                            entities=["hike", "miles", "trail"], quantities=True)
+            got = {row["index"] for row in g["rows"]}
+            check("gather: every quantity-bearing hike term lands on the table",
+                  g1["index"] in got and g2["index"] in got)
+            check("gather: quantity rows carry their value clauses verbatim (V4.1)",
+                  all(("5 miles" in (row["quote"] or "")) or ("3 mile" in (row["quote"] or ""))
+                      for row in g["rows"] if row["index"] in (g1["index"], g2["index"])))
+            check("gather: term table is chronological",
+                  [row["date"] for row in g["rows"]]
+                  == sorted(row["date"] for row in g["rows"]))
+            gw = grec.gather("hike", entities=["hike", "trail"],
+                             between=("2022-09-15", "2022-09-30"))
+            check("gather: date window drops out-of-range known dates, keeps in-range",
+                  all(row["date"] is None or "2022-09-15" <= row["date"] <= "2022-09-30"
+                      for row in gw["rows"])
+                  and any(row["index"] == g2["index"] for row in gw["rows"]))
+            gate = poq.PoQGate()
+            check("poq: aggregate_min_terms loads from policy (tighten-only)",
+                  gate.t.get("aggregate_min_terms", 0) >= 2)
+            gwindow = gtc.load()
+            v_under = gate.evaluate("In total I hiked 8 miles across the two weekends.",
+                                    gwindow, context="hiked miles weekend total Red Rock trail ridge",
+                                    declared_evidence=1)
+            check("poq: under-evidenced aggregate degrades to FORCE_UNCERTAINTY",
+                  v_under["decision"] == "FORCE_UNCERTAINTY"
+                  and any("aggregate_min_terms" in r for r in v_under["reasons"]))
+            v_cited = gate.evaluate("In total I hiked 8 miles across the two weekends.",
+                                    gwindow, context="hiked miles weekend total Red Rock trail ridge",
+                                    declared_evidence=2)
+            check("poq: fully-cited aggregate passes the coverage gate",
+                  not any("aggregate_min_terms" in r for r in v_cited["reasons"]))
+            v_plain = gate.evaluate("The trail at Red Rock Canyon has amazing views.",
+                                    gwindow, context="hiked Red Rock trail views",
+                                    declared_evidence=0)
+            check("poq: non-aggregate claim ignores the coverage gate",
+                  not any("aggregate_min_terms" in r for r in v_plain["reasons"]))
+            gather_offers = [e for _, e in telemetry.Telemetry(groot).events()
+                             if e.get("event") == "offer"
+                             and e["data"].get("policy") == "gather-exhaustive"]
+            check("telemetry: gather sweeps log as exhaustive offers",
+                  len(gather_offers) >= 2
+                  and all(c.get("chosen") for c in gather_offers[0]["data"]["candidates"]))
+        finally:
+            shutil.rmtree(groot, ignore_errors=True)
+
+        # Time-indexed recall (V4 P2) — the chain knows WHEN
+        import almanac
+        check("almanac: 'last Saturday' from a Tuesday resolves to the prior Saturday",
+              almanac.resolve("last Saturday", "2023/05/30 (Tue) 23:40")
+              == ("2023-05-27", "2023-05-27"))
+        check("almanac: same-weekday 'last Tuesday' goes a full week back",
+              almanac.resolve("last Tuesday", "2023/05/30 (Tue) 23:40")
+              == ("2023-05-23", "2023-05-23"))
+        check("almanac: 'two weeks ago' is a tolerant window containing D-14",
+              (lambda w: w and w[0] <= "2023-04-21" <= w[1])(
+                  almanac.resolve("two weeks ago", "2023-05-05")))
+        check("almanac: exact '10 days ago' is a single day",
+              almanac.resolve("10 days ago", "2023/03/25 (Sat) 08:00")
+              == ("2023-03-15", "2023-03-15"))
+        check("almanac: 'a couple of days ago' resolves through the 'of'",
+              (lambda w: w and w[0] <= "2022-04-13" <= w[1])(
+                  almanac.resolve("a couple of days ago", "2022/04/15 (Fri) 12:00")))
+        check("almanac: unresolvable text returns None (fallback = unfiltered)",
+              almanac.resolve("the blue bicycle", "2023-05-05") is None)
+        check("almanac: find_in_text scans a full question",
+              [h["expr"] for h in almanac.find_in_text(
+                  "I received a piece of jewelry last Saturday from whom?",
+                  "2023/05/30 (Tue) 23:40")] == ["last Saturday"])
+        check("almanac: bound words ('before today') are limits, not targets",
+              almanac.find_in_text("airlines I flew with from earliest to latest before today?",
+                                   "2023/03/02 (Thu) 10:00") == [])
+        check("almanac: days_between reports exclusive and inclusive counts",
+              almanac.days_between("2023-04-06", "2023/04/10 (Mon) 10:28") == (4, 5))
+
+        troot = Path(tempfile.mkdtemp(prefix="ct_temporal_"))
+        try:
+            ttc = timechain.Timechain(troot)
+            ttc.genesis(name="temporal-test")
+            trec = recall.Recall(troot, registry_root=SKILL)
+
+            def _tsess(txt, sid, date):
+                return ttc.seal("session", {"content": txt, "session_id": sid,
+                                            "date": date, "labels": trec.label(txt)})
+
+            t1 = _tsess("user: had lunch with my aunt today, she gave me a lovely necklace",
+                        "ts1", "2023/05/27 (Sat) 13:00")
+            t2 = _tsess("user: had lunch with Emma today to talk about language learning apps",
+                        "ts2", "2023/05/20 (Sat) 12:30")
+            t3 = _tsess("user: launched my freelance website today, so excited",
+                        "ts3", "2023/02/10 (Fri) 09:00")
+            t4 = _tsess("user: signed the contract with my first client this morning",
+                        "ts4", "2023/03/01 (Wed) 11:00")
+            r_rel = trec.retrieve("who gave me jewelry at lunch", max_blocks=4, neighbors=0,
+                                  relative="last Saturday", asked_on="2023/05/30 (Tue) 23:40")
+            check("retrieve: --relative window keeps only the target day's blocks",
+                  [b["index"] for b in r_rel["blocks"]] == [t1["index"]]
+                  and r_rel["date_window"] == ["2023-05-27", "2023-05-27"])
+            r_win = trec.retrieve("lunch", max_blocks=4, neighbors=0,
+                                  between=("2023-05-19", "2023-05-21"))
+            check("retrieve: --between keeps the other lunch, drops the target day's",
+                  [b["index"] for b in r_win["blocks"]] == [t2["index"]])
+            ep = trec.endpoints("launched my freelance website",
+                                "signed the contract with my first client")
+            check("endpoints: both anchors retrieved with their dates",
+                  ep["a"]["hits"] and ep["b"]["hits"]
+                  and ep["a"]["hits"][0]["index"] == t3["index"]
+                  and ep["b"]["hits"][0]["index"] == t4["index"])
+            check("endpoints: candidate interval computed exclusive+inclusive",
+                  ep["interval"] and ep["interval"]["days"] == 19
+                  and ep["interval"]["days_inclusive"] == 20)
+
+            # Update lineage (V4 P3) — latest-wins is a table read
+            u1 = _tsess("user: I keep my old sneakers in a box under my bed for now",
+                        "us1", "2023/01/05 (Thu) 09:00")
+            u2 = _tsess("user: reorganized today - moved my old sneakers to a shoe rack in my closet",
+                        "us2", "2023/04/02 (Sun) 15:00")
+            _tsess("user: my goal for my Apex Legends level is 100 by summer",
+                   "us3", "2023/06/01 (Thu) 20:00")
+            _tsess("user: updated my Apex Legends goal - now aiming for level 150",
+                   "us4", "2023/09/30 (Sat) 21:00")
+            tr = trec.track("old sneakers")
+            check("track: lineage finds both mentions chronologically",
+                  [x["index"] for x in tr["rows"][:2]] == [u1["index"], u2["index"]]
+                  if len(tr["rows"]) >= 2 else False)
+            check("track: CURRENT is the last dated row, PREVIOUS the one before",
+                  tr["current"] and tr["current"]["index"] == u2["index"]
+                  and tr["previous"] and tr["previous"]["index"] == u1["index"])
+            check("track: mention sentences extracted (not whole-block noise)",
+                  "shoe rack" in tr["current"]["mention"]
+                  and "under my bed" in tr["previous"]["mention"])
+            tr2 = trec.track("Apex Legends level goal")
+            check("track: values surface in lineage rows (100 -> 150)",
+                  tr2["current"] and any("150" in v for v in tr2["current"]["values"])
+                  and tr2["previous"] and any("100" in v for v in tr2["previous"]["values"]))
+
+            # Evidence assembly (V4 P5) — shape routing + narrow base
+            check("evidence: classifier routes shapes from text alone",
+                  "aggregate" in trec.classify_question("What is the total amount I spent on bikes?")
+                  and trec.classify_question("Who did I meet at lunch last Tuesday?",
+                                             "2023/05/30 (Tue) 23:40")[0] == "relative"
+                  and "interval" in trec.classify_question("How long had I been jogging when I raced?")
+                  and trec.classify_question("What did my sister give me?") == ["narrow"])
+            ev = trec.evidence("Where do I currently keep my old sneakers?",
+                               asked_on="2023/10/01 (Sun) 10:00")
+            kinds = [s["kind"] for s in ev["sections"]]
+            check("evidence: update question packages narrow base + lineage",
+                  kinds[0] == "narrow" and "lineage" in kinds and not ev["empty"])
+            check("evidence: top-ranked group ships FULL and the render marks it",
+                  ev["sections"][0]["blocks"]
+                  and any(b.get("full") for b in ev["sections"][0]["blocks"])
+                  and "[FULL SESSION]" in ev["text"] and "CURRENT" in ev["text"])
+            ev_events = [e for _, e in telemetry.Telemetry(troot).events()
+                         if e.get("event") == "evidence"]
+            check("telemetry: evidence calls record shapes and emptiness",
+                  ev_events and ev_events[-1]["data"]["shapes"]
+                  and ev_events[-1]["data"]["empty"] is False)
+        finally:
+            shutil.rmtree(troot, ignore_errors=True)
+
+        # Window-matched chunking (V4 P4) — chunks never exceed the embedder's window
+        check("embed: hashing embedder has no input window",
+              embed.get_embedder("hashing").window_chars is None)
+
+        class _StubWindowed:
+            name = "stub"
+            fingerprint = "stub:1:v1"
+            window_chars = 400          # ~100 tokens
+
+            def embed(self, text):
+                return [1.0]
+
+        wroot = Path(tempfile.mkdtemp(prefix="ct_window_"))
+        try:
+            wc = continuum.Continuum(wroot)
+            wc._embed = _StubWindowed()
+            wc._apply_window_cap()
+            check("continuum: data-height band caps to the embedder window",
+                  wc.max == 100 and wc.target <= 100 and wc.min <= 100)
+            wc2 = continuum.Continuum(wroot)
+            wc2._apply_window_cap()    # no embedder -> untouched
+            check("continuum: no embedder leaves the band untouched",
+                  wc2.max == continuum.MAX_TOKENS and wc2.target == continuum.TARGET_TOKENS)
+        finally:
+            shutil.rmtree(wroot, ignore_errors=True)
+
+        # ------------------------------------------------------------------ #
+        # V5 — the Run-4 lessons productized: grep (first ladder rung),
+        # speaker/provenance facets, mention grain, event identity, cited
+        # answers, inline deixis, the at-risk register, the entity gate
+        # ------------------------------------------------------------------ #
+        vroot = Path(tempfile.mkdtemp(prefix="ct_v5_"))
+        try:
+            shutil.copytree(SKILL / "registry", vroot / "registry")
+            vtc = timechain.Timechain(vroot)
+            vtc.genesis(name="v5test")
+            vrec = recall.Recall(vroot, registry_root=SKILL)
+
+            def _vsess(text, sid, date):
+                return vtc.seal("session", {"content": text, "session_id": sid,
+                                            "date": date, "labels": vrec.label(text)})
+
+            s1 = _vsess("user: I bought a new bike helmet for $45 yesterday and I love it.\n"
+                        "assistant: Great choice! A $45 helmet is solid.",
+                        "v1", "2023/05/20 (Sat) 10:00")
+            s2 = _vsess("user: Speaking of gear, I got that bike helmet for $45 last weekend, "
+                        "still great.\nassistant: Glad the helmet works.",
+                        "v2", "2023/05/24 (Wed) 09:00")
+            pasted = "user: " + ("The defendant constructed the dwelling. The tribunal found "
+                                 "breaches of statutory warranty in the build. " * 6)
+            _vsess(pasted, "v3", "2023/05/25 (Thu) 12:00")
+
+            # (1) grep — lexical first rung, role-filtered, sentence context
+            g = vrec.grep(r"helmet", role="user")
+            check("v5 grep: role-filtered hits with full-sentence context",
+                  g["returned"] == 2 and all(x["role"] == "user" for x in g["rows"])
+                  and "bought" in g["rows"][0]["context"])
+            check("v5 grep: inline deixis resolves against the row's OWN date",
+                  g["rows"][0]["deixis"] and g["rows"][0]["deixis"][0]["from"] == "2023-05-19")
+
+            # (2) speaker + provenance facets
+            check("v5 facets: first-person user turns label self-report",
+                  vrec.label("user: I bought a helmet and my bike is fixed.\nassistant: ok"
+                             ).get("provenance") == "self-report")
+            check("v5 facets: long quoted documents label pasted",
+                  vrec.label(pasted).get("provenance") == "pasted")
+            ga = vrec.gather("helmet", entities=["helmet"], quantities=True,
+                             provenance="self-report")
+            check("v5 facets: gather --prov self-report drops the pasted block",
+                  ga["returned"] >= 2 and all(r["group"] in ("v1", "v2") for r in ga["rows"]))
+
+            # (3) mention grain — values read in full sentences, not keyholes
+            check("v5 gather: rows carry full mention sentences with the value in place",
+                  any(r.get("mention") and "helmet" in r["mention"].lower()
+                      and "$45" in r["mention"] for r in ga["rows"]))
+
+            # (4) event identity — one helmet, told twice, conflicting dates
+            check("v5 events: drifting re-mentions cluster into ONE event, conflict flagged",
+                  any(e["date_conflict"] and e["n_mentions"] >= 2
+                      for e in (ga.get("events") or [])))
+
+            # (5) cited answers — no span, no assertion
+            a_ok = vrec.answer("how much was the helmet",
+                               "The helmet cost $45 and you bought it recently.",
+                               [s1["index"], s2["index"]])
+            a_bad = vrec.answer("how much was the helmet",
+                                "The helmet cost $45. It was manufactured in a Finnish "
+                                "carbon factory.", [s1["index"], s2["index"]])
+            check("v5 answer: fully-supported answer is CITED", a_ok["cited"])
+            check("v5 answer: the fabricated clause is NAMED, not averaged away",
+                  not a_bad["cited"]
+                  and any("Finnish" in u for u in a_bad["report"]["unsupported"]))
+
+            # (7) the at-risk register — conscience output as calibration data
+            _, vring, _ = vrec.seal(
+                "experience",
+                "The helmet total is $45; the second mention may be the same purchase retold.",
+                used_rings=[s1["index"], s2["index"]],
+                at_risk=["second mention may be a separate purchase"],
+                external_scores={"coherence": 220, "relevance": 230, "novelty": 180,
+                                 "consistency": 225, "depth": 200, "covenant": 245})
+            check("v5 at-risk: claims register seals into the ring",
+                  vring is not None and vring["payload"]["at_risk"]
+                  == ["second mention may be a separate purchase"])
+            v5_use = [e for _, e in telemetry.Telemetry(vroot).events()
+                      if e.get("event") == "use"]
+            check("v5 at-risk: telemetry counts the registered claims",
+                  v5_use and v5_use[-1]["data"].get("at_risk_n") == 1)
+
+            # (10) the entity-overlap gate — proper-noun anchors out-rank topical spam
+            _vsess("user: I tried a restaurant, then tried another restaurant; how I love a "
+                   "tried restaurant! How was the restaurant? I tried it. The restaurant I "
+                   "tried was a restaurant I had tried before.\nassistant: You tried many a "
+                   "restaurant; how fine each tried restaurant was.",
+                   "vA", "2023/05/26 (Fri) 10:00")
+            _vsess("user: My week was busy with gardening and bike repairs. Oh and the new "
+                   "Ethiopian place had wonderful injera.\nassistant: Sounds like a lovely "
+                   "week of varied activities and plants.",
+                   "vB", "2023/05/27 (Sat) 10:00")
+            ev5 = vrec.evidence("How was the Ethiopian restaurant I tried?", top_sessions=2)
+            v5_narrow = next(s for s in ev5["sections"] if s["kind"] == "narrow")
+            v5_full = next(b for b in v5_narrow["blocks"] if b.get("full"))["group"]
+            check("v5 gate: anchor-bearing group promoted over topically-loud misroute",
+                  ev5["gate_promoted"] and v5_full == "vB")
+
+            check("v5: chain verifies with at-risk + answer + facet payloads",
+                  vtc.verify()[0])
+        finally:
+            shutil.rmtree(vroot, ignore_errors=True)
 
         check("timechain: final verify", tc.verify()[0])
     finally:

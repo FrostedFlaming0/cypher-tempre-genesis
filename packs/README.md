@@ -34,6 +34,8 @@ promotion by recurring in your agent's own lived experience.
 | Pack | Version | Domain | Faculties | Notes |
 |---|---|---|---|---|
 | [trading-analysis](trading-analysis-v1.json) | 1.0 | trading & financial analysis | 8 senses + 6 modalities | regime shifts, risk asymmetry, liquidity, sentiment divergence, backtest integrity, catalysts, flow, cost friction; EV reasoning, regime conditioning, risk-first sizing, backtest skepticism, macro-micro fusion, thesis falsification |
+| [lme-recall-discipline](lme-recall-discipline-v1.json) | 1.0 | long-horizon conversational memory | 6 senses + 6 modalities | forged from LongMemEval sealed failure modes: aggregate completeness, quantity clauses, temporal anchors, latest-value drift, trap premises, scope boundaries; scope filtering, cross-session fusion, term-table arithmetic, timeline construction, lineage resolution, coverage accounting. Took the benchmark fleet 76.8% → 91.0% |
+| [lme-recall-discipline](lme-recall-discipline-v1.1.json) | 1.1 | long-horizon conversational memory | +4 senses, +2 modalities over v1.0 | earned in the 97.2% single-core run: variant drift (near-duplicate questions can hide different facts), list-position discipline, role-source routing, provenance-of-assertion (self-report vs pasted vs assistant); event-identity reconciliation (drifting re-mentions count once), answer-citation discipline (no span, no assertion) |
 
 **Covenant note (trading-analysis):** these are *analysis* lenses — they
 sharpen how an agent perceives and reasons about markets. They are not
