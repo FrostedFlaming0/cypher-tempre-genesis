@@ -148,8 +148,8 @@ QUANTITY_SEEKING = {"how", "much", "many", "far", "total", "percent", "percentag
 
 def quantities(text, cap=10):
     """Number+unit pairs ('5 mile', '$800', '40%') — the passing-remark facts a
-    block's topical keywords never carry. Benchmark-driven (LongMemEval q162):
-    aggregate questions die when buried quantities are invisible to labels."""
+    block's topical keywords never carry. Field-driven: aggregate questions
+    die when buried quantities are invisible to labels."""
     out = []
     for m in QUANTITY_RE.finditer(text or ""):
         q = re.sub(r"\s+", " ", m.group(0).lower().replace("-", " ")).strip()
@@ -166,7 +166,7 @@ def quantities(text, cap=10):
 
 def value_sentences(text, cap=260):
     """The sentences that carry REAL quantities — a term-table row is only as
-    good as its visible values (V4.1: the 76.8% run's dominant residual was
+    good as its visible values (V4.1: the dominant aggregate failure mode is
     values hidden outside ~100-word topical snippets). Bare list numerals and
     numeric noise are skipped; a value sentence has a currency/percent/unit-
     shaped number inside actual prose."""
@@ -299,7 +299,7 @@ def ring_group(ring):
 
 # --------------------------------------------------------------------------- #
 # V5 facets — WHO spoke, WHO asserted, WHICH sentences, WHICH event
-# (Run-4 lessons, productized: the single-core 97.2% run did all of this by
+# (field lessons, productized: long-horizon recall work did all of this by
 # hand with regex scans; these helpers make the winning moves first-class.)
 # --------------------------------------------------------------------------- #
 
@@ -606,9 +606,9 @@ class Recall:
              context_sentences=1):
         """Lexical scan — the FIRST rung of the recall ladder (V5).
 
-        Run-4 lesson, stated plainly: when you can NAME the thing, exact match
-        over the chain's content beats semantic packaging — the 97.2% run used
-        targeted scans hundreds of times and the embedding path twice. grep is
+        Field lesson, stated plainly: when you can NAME the thing, exact match
+        over the chain's content beats semantic packaging — in practice targeted
+        scans win constantly and the embedding path is the fallback. grep is
         that move as a first-class organ: regex (or literal) over block CONTENT,
         speaker-attributed (each hit reports the conversational role that spoke
         the matching line), date-annotated, returning the full sentence(s)
@@ -1013,8 +1013,8 @@ class Recall:
         """Fan-out retrieval: one retrieve per decomposed sub-query, results
         unioned with max-score-wins per ring. Decomposition is the MODEL's job —
         aggregate and paraphrase questions are exactly where a single query loses
-        to keyword noise (LongMemEval q162: 'total hike distance' lost to Miles
-        Davis; 'Red Rock' + '5-mile hike' + 'weekend trail' would not have).
+        to keyword noise ('total hike distance' loses to a homophone; 'Red
+        Rock' + '5-mile hike' + 'weekend trail' would not have).
         Each sub-query emits its own offer event stamped with a shared fanout id,
         so per-query credit attribution survives into the learners."""
         queries = [q for q in (queries or []) if q and q.strip()]
@@ -1045,9 +1045,8 @@ class Recall:
         retrieve() answers "what relates most?" under an appetite cap; gather()
         answers "put EVERY block that touches this topic/these entities on the
         table" — because a sum, count, ordering, or lineage is only correct if
-        every term is present (LongMemEval official run: multi-session aggregates
-        scored 43% precisely because one-shot top-k dropped terms). Union
-        inclusion, recall over parsimony:
+        every term is present (multi-session aggregates fail precisely when
+        one-shot top-k drops terms). Union inclusion, recall over parsimony:
             semantic >= floor  OR  an entity/label hit  OR
             (a quantity-bearing block at floor/2 when `quantities` is set).
         No appetite, no relative cut; bounded only by max_blocks (best groups
@@ -1397,8 +1396,8 @@ class Recall:
 
     def evidence(self, question, context="", asked_on=None, embed=False,
                  budget_chars=30000, shapes=None, top_sessions=5):
-        """One call -> a model-ready evidence package (V4 P5) — the official
-        LongMemEval pipeline's packaging lessons, productized:
+        """One call -> a model-ready evidence package (V4 P5) — long-horizon
+        recall packaging lessons, productized:
           - NARROW BASE always: the top-ranked group ships its FULL text (a
             passing remark hides anywhere; windows can't be trusted — Ring 45),
             ranks 2..top_sessions ship the best chunk ±1 neighbor, every excerpt
