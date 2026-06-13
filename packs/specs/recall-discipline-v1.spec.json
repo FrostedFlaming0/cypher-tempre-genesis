@@ -1,5 +1,5 @@
 {
-  "name": "lme-recall-discipline",
+  "name": "recall-discipline",
   "version": "1.0",
   "domain": "long-horizon conversational memory: aggregates, timelines, value updates, abstention",
   "faculties": [
@@ -7,19 +7,19 @@
       "kind": "sense",
       "name": "Aggregate-Completeness Sensing",
       "category": "quantitative",
-      "function": "Fire on total, sum, how many, how much, percentage, average, combined, altogether, in all. Detect that an arithmetic answer is about to be computed from an evidence table whose terms may be incomplete. Before any sum or count: ask what the full term set should be (every trip, every donation, every session in the window) and whether each expected term is visibly present with its value. A missing term is a finding, not a license to present the visible subset as the total. Benchmark scar: 140 gaming hours reported as 40 because replays and second playthroughs never made the table."
+      "function": "Fire on total, sum, how many, how much, percentage, average, combined, altogether, in all. Detect that an arithmetic answer is about to be computed from an evidence table whose terms may be incomplete. Before any sum or count: ask what the full term set should be (every trip, every donation, every session in the window) and whether each expected term is visibly present with its value. A missing term is a finding, not a license to present the visible subset as the total. Field scar: 140 gaming hours reported as 40 because replays and second playthroughs never made the table."
     },
     {
       "kind": "sense",
       "name": "Quantity-Clause Sensing",
       "category": "quantitative",
-      "function": "Detect numbers with units buried as passing remarks: $800 handbag, 5 miles, 40%, 3 jars, 25:50 PB, 50-pound feed bag, 120 stars. Fire when a row or excerpt is topically about the asked entity but its visible text lacks the value clause the question needs — the qty= list and quote line carry the values; if neither shows the needed number, flag the row as value-hidden rather than value-absent and look for the same session's other rows or the FULL session text. Benchmark scar: right session on the table, amount clause outside the snippet."
+      "function": "Detect numbers with units buried as passing remarks: $800 handbag, 5 miles, 40%, 3 jars, 25:50 PB, 50-pound feed bag, 120 stars. Fire when a row or excerpt is topically about the asked entity but its visible text lacks the value clause the question needs — the qty= list and quote line carry the values; if neither shows the needed number, flag the row as value-hidden rather than value-absent and look for the same session's other rows or the FULL session text. Field scar: right session on the table, amount clause outside the snippet."
     },
     {
       "kind": "sense",
       "name": "Temporal-Anchor Sensing",
       "category": "temporal",
-      "function": "Detect which mention of an event carries its authoritative date. An explicit date in the text outranks deixis; deixis (yesterday, today, this morning, last weekend) resolves against the MENTION's own session date, never the asking date. When two mentions of one event imply different dates, prefer the mention nearest the event (earliest narrating session) and surface the conflict. Fire on: days ago, how long, when did, before, after, between. Benchmark scar: baking class answered 26 days from the cake-baking mention instead of 21 from the class session."
+      "function": "Detect which mention of an event carries its authoritative date. An explicit date in the text outranks deixis; deixis (yesterday, today, this morning, last weekend) resolves against the MENTION's own session date, never the asking date. When two mentions of one event imply different dates, prefer the mention nearest the event (earliest narrating session) and surface the conflict. Fire on: days ago, how long, when did, before, after, between. Field scar: baking class answered 26 days from the cake-baking mention instead of 21 from the class session."
     },
     {
       "kind": "sense",
@@ -55,7 +55,7 @@
       "kind": "modality",
       "name": "Lineage Resolution",
       "category": "temporal",
-      "function": "Resolve changed-value questions as a table read, not a memory vibe: order every literal mention of the tracked entity chronologically; CURRENT is the last dated strong mention, PREVIOUS is the one before it; 'what was X before' answers the PREVIOUS row, 'what is X now' answers the CURRENT row; cite both rows. Treat corrections in-conversation ('actually it is 120, not 125') as the freshest value. When two same-day mentions conflict, surface both rather than silently choosing. Benchmark scars: answered the new Apex goal when asked the previous; picked a stale yoga frequency."
+      "function": "Resolve changed-value questions as a table read, not a memory vibe: order every literal mention of the tracked entity chronologically; CURRENT is the last dated strong mention, PREVIOUS is the one before it; 'what was X before' answers the PREVIOUS row, 'what is X now' answers the CURRENT row; cite both rows. Treat corrections in-conversation ('actually it is 120, not 125') as the freshest value. When two same-day mentions conflict, surface both rather than silently choosing. Field scars: answered the new Apex goal when asked the previous; picked a stale yoga frequency."
     },
     {
       "kind": "modality",

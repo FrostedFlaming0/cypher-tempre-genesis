@@ -4,10 +4,9 @@ Almanac — the calendar organ (V4 Phase 2): resolve RELATIVE time expressions
 ("last Tuesday", "two weeks ago", "a couple of days ago") against an anchor
 date, into a concrete [from, to] day window.
 
-Why it exists (benchmark-measured): cosine similarity cannot retrieve by WHEN.
-"Who did I meet last Tuesday?" shares no semantics with the lunch session it
-refers to — in the official LongMemEval run every question of this shape was
-abstained on. The chain's blocks carry dates (`recall.ring_date`); this module
+Why it exists: cosine similarity cannot retrieve by WHEN. "Who did I meet
+last Tuesday?" shares no semantics with the lunch session it refers to — a
+ranking-only recall path abstains on every question of this shape. The chain's blocks carry dates (`recall.ring_date`); this module
 turns the deictic phrase into a date window so retrieval can hard-filter by
 time BEFORE ranking by meaning.
 

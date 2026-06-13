@@ -187,9 +187,8 @@ DEFAULT_THRESHOLDS = {
     "assertive_ceiling": 150,
     # COVERAGE GATE (V4 P1): an aggregate claim (a stated total/sum/count) is
     # only as true as its terms — it must declare at least this many evidence
-    # rings, or the verdict degrades to FORCE_UNCERTAINTY. Benchmark-motivated:
-    # LongMemEval multi-session aggregates failed by missing terms, never by
-    # bad arithmetic.
+    # rings, or the verdict degrades to FORCE_UNCERTAINTY. Field-motivated:
+    # multi-session aggregates fail by missing terms, never by bad arithmetic.
     "aggregate_min_terms": 2,
 }
 

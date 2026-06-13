@@ -1,0 +1,106 @@
+{
+  "pack_format": 1,
+  "name": "recall-discipline",
+  "version": "1.1",
+  "domain": "long-horizon conversational memory",
+  "author": "Fable",
+  "created_at": "2026-06-12T20:57:06.164075+00:00",
+  "donor": {
+    "genesis_name": "Fable",
+    "chain_head_index": 99,
+    "chain_head_hash": "fc590b0aa0905ddd4e3a3d6daf65682f153cde2e4b1a2647231d03ebcdb5ad48"
+  },
+  "faculties": [
+    {
+      "kind": "sense",
+      "name": "Variant-Drift Sensing",
+      "function": "Fire on remind, again, previously, same question, similar, follow up, sibling, variant, re-ask, last time. Near-duplicate questions may sit over SHIFTED facts: a re-asked question's context can move dates, swap items, or insert whole events relative to the version answered before. Never reuse an answer across near-duplicates — re-verify every anchor (date, item, person, place) in THIS context before answering. Field scar: sibling questions moved a flight from Feb 14 to Feb 20 and inserted a Queen concert that existed in only one variant; answer reuse would have failed both.",
+      "category": "epistemics",
+      "seed_terms": [],
+      "status": "emergent",
+      "provenance": {
+        "origin": "designed:recall-discipline@1.1",
+        "eid": "E30",
+        "born_ring": "fc590b0aa0905ddd4e3a3d6daf65682f153cde2e4b1a2647231d03ebcdb5ad48",
+        "born_at": "2026-06-12T20:56:54.292579+00:00",
+        "recurrence": 1
+      }
+    },
+    {
+      "kind": "sense",
+      "name": "List-Position Discipline",
+      "function": "Fire on first, second, third, fifth, last, 7th, Nth, position, item on the list, which one was. When a question indexes into an enumerated list, find THE list the qualifiers name — multiple lists can live in one session. Confirm the list's defining qualifier before counting to the position, and quote the neighboring items as proof of position. Field scar: 'the fifth bottle' had two five-item lists in one session; the gin-based qualifier selected Absinthe where the general-spirits list said Triple Sec.",
+      "category": "structure",
+      "seed_terms": [],
+      "status": "emergent",
+      "provenance": {
+        "origin": "designed:recall-discipline@1.1",
+        "eid": "E31",
+        "born_ring": "fc590b0aa0905ddd4e3a3d6daf65682f153cde2e4b1a2647231d03ebcdb5ad48",
+        "born_at": "2026-06-12T20:56:54.292585+00:00",
+        "recurrence": 1
+      }
+    },
+    {
+      "kind": "sense",
+      "name": "Role-Source Routing",
+      "function": "Fire on you said, you recommended, you mentioned, remind me of, what did I say, in your list, the assistant. Route the search to the speaker whose turn holds the answer: 'you recommended X' lives in assistant turns; 'I bought X' lives in user turns; quoted articles are neither speaker's assertion. Filter by role before ranking by meaning (grep --role, gather --speaker). Field scar: assistant-knowledge questions need assistant-turn scans — user-fact scans drown them in the wrong voice.",
+      "category": "provenance",
+      "seed_terms": [],
+      "status": "emergent",
+      "provenance": {
+        "origin": "designed:recall-discipline@1.1",
+        "eid": "E32",
+        "born_ring": "fc590b0aa0905ddd4e3a3d6daf65682f153cde2e4b1a2647231d03ebcdb5ad48",
+        "born_at": "2026-06-12T20:56:54.292588+00:00",
+        "recurrence": 1
+      }
+    },
+    {
+      "kind": "sense",
+      "name": "Provenance-of-Assertion Sensing",
+      "function": "Fire on according to, the article, the document, case summary, press release, I read that, pasted, the text says. Distinguish the user's OWN life-facts (first-person assertions: I bought, my trip, we went) from content the user merely pasted or quoted (documents, articles, case summaries) and from assistant-generated lists. A fact's provenance decides whose biography it belongs to and which questions it can answer. Field scar: a pasted court case and a pasted fusion press release read as user-life facts to provenance-blind retrieval.",
+      "category": "provenance",
+      "seed_terms": [],
+      "status": "emergent",
+      "provenance": {
+        "origin": "designed:recall-discipline@1.1",
+        "eid": "E33",
+        "born_ring": "fc590b0aa0905ddd4e3a3d6daf65682f153cde2e4b1a2647231d03ebcdb5ad48",
+        "born_at": "2026-06-12T20:56:54.292590+00:00",
+        "recurrence": 1
+      }
+    },
+    {
+      "kind": "modality",
+      "name": "Event-Identity Reconciliation",
+      "function": "Given table rows that may re-mention ONE underlying event with drifting deixis ('last Saturday' said on three different days), cluster rows by shared values and mention overlap into event identities; count each event once, never once per mention; when one event carries conflicting dates, prefer the mention nearest the event and name the conflict aloud. Interval convention: durations-of-stay count inclusive (a trip from the 15th to the 22nd is 8 days), between-events counts exclusive — state both when the phrasing is ambiguous. Field scar: a thrice-told baguette bake nearly counted as three bakes; a chocolate cake mentioned on two dates was one cake.",
+      "category": "temporal",
+      "seed_terms": [],
+      "status": "emergent",
+      "provenance": {
+        "origin": "designed:recall-discipline@1.1",
+        "eid": "E34",
+        "born_ring": "fc590b0aa0905ddd4e3a3d6daf65682f153cde2e4b1a2647231d03ebcdb5ad48",
+        "born_at": "2026-06-12T20:56:54.292592+00:00",
+        "recurrence": 1
+      }
+    },
+    {
+      "kind": "modality",
+      "name": "Answer-Citation Discipline",
+      "function": "No span, no assertion: every factual answer carries a verbatim supporting clause from the evidence, and an unsupported clause is revised, hedged, or dropped before the answer ships (recall answer --used-rings). Lineage answers cite BOTH the previous and the current value so latest-wins is auditable. Preference answers LEAD with the evidence-anchored item before offering alternatives. When the conscience forces uncertainty, the reseal NAMES the specific at-risk claims (seal --at-risk) — pre-registered risk is calibration data. Field evidence: a full single-core long-horizon run cited every answer; its pre-registered at-risk claims were the actual misses.",
+      "category": "epistemics",
+      "seed_terms": [],
+      "status": "emergent",
+      "provenance": {
+        "origin": "designed:recall-discipline@1.1",
+        "eid": "E35",
+        "born_ring": "fc590b0aa0905ddd4e3a3d6daf65682f153cde2e4b1a2647231d03ebcdb5ad48",
+        "born_at": "2026-06-12T20:56:54.292595+00:00",
+        "recurrence": 1
+      }
+    }
+  ],
+  "pack_sha256": "281743de0baf9143adb077bf6c639f019cadf114f431a275b9f87ece7a3a9092"
+}

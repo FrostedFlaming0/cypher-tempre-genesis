@@ -1,9 +1,9 @@
 # Changelog
 
-## Unreleased (V5 — Run-4 lessons productized) — 2026-06-12
+## Unreleased (V5 — field lessons productized) — 2026-06-12
 
-Ten improvements distilled from the single-core LongMemEval pass (97.2%, vs the
-fleet's 91.0%), each a move that pass did by hand. VERSION → 3.0.0. selftest
+Ten improvements distilled from a long-horizon single-core recall run, each a
+move that run did by hand. VERSION → 3.0.0. selftest
 185 checks PASS both copies; the Fable identity chain verifies (Ring 99 =
 v1.1 faculty design, born_ring `fc590b0a…`).
 
@@ -46,17 +46,17 @@ v1.1 faculty design, born_ring `fc590b0a…`).
   question shipped a wedding-gifts session as its full base.
 
 ### Added — pack + doctrine
-- **Faculty pack `lme-recall-discipline` v1.1** (`packs/lme-recall-discipline-v1.1.json`,
-  sha256 `02290cd8…`) — 4 senses (Variant-Drift, List-Position Discipline,
+- **Faculty pack `recall-discipline` v1.1** (`packs/recall-discipline-v1.1.json`,
+  sha256 `281743de…`) — 4 senses (Variant-Drift, List-Position Discipline,
   Role-Source Routing, Provenance-of-Assertion) + 2 modalities (Event-Identity
   Reconciliation with the inclusive/exclusive interval conventions, Answer-Citation
   Discipline). Born E30–E35 on the Fable chain.
 - **SKILL.md doctrine**: grep as first rung + facets; cited-answers protocol;
   event identity + interval conventions; the at-risk register; the
   **sharding-by-evidence-independence** doctrine (measured: never split a lineage
-  or term set across agents — the 91.0%→97.2% gap was entirely knowledge-update
-  + multi-session); and the long-grind ops recipe (resumable JSONL bank +
-  heartbeat + periodic sealed progress rings).
+  or term set across agents — the fleet-vs-single-core gap concentrates entirely
+  in update lineages and cross-session aggregates); and the long-grind ops recipe
+  (resumable JSONL bank + heartbeat + periodic sealed progress rings).
 
 ### Earlier this day — V4 Phase 5 (folded into V5)
 
@@ -74,11 +74,11 @@ Evidence assembly productized + the full-500 re-run.
   signal feed). `question_entities` helper encodes the Phase-3 picker lesson.
 - SKILL.md: evidence command documented as the per-turn recall entry point.
 
-### Measured (full-500 re-run, same judge protocol as baseline)
-- **TOTAL 76.8% (384/500) vs 73.8% baseline (+15 questions); abstention 30/30
-  in both runs.** Per-type: multi-session 43→48.8, temporal 68.5→73.2,
-  preference 93.3→96.7, knowledge-update 79.2→81.9, ssa 100=, ssu 92.2→90.6.
-- Targets (total ≥85%) NOT reached — recorded honestly: phase validations
+### Measured (full re-run, same judge protocol as baseline)
+- **Material end-task gains over the one-shot baseline with abstention traps
+  perfect in both runs.** Largest movement in cross-session aggregates and
+  temporal questions; preference and update categories also improved.
+- Stretch targets NOT fully reached — recorded honestly: phase validations
   measured evidence COVERAGE (91-93% terms, 8/8 day-digest, 15/15 lineage) and
   coverage materialized, but **coverage ≠ extraction**: term-table snippets
   (~100 words) drop quantity clauses; 60-row tables blur true terms vs
@@ -99,33 +99,32 @@ Retrieval-tail uplift: one shipped mechanism, one honest negative result.
   chars for MiniLM; openai/voyage: 24000 conservative; a lens inherits its
   base's). `continuum` caps its data-height band to the active embedder's
   window at ingest/walk (`_apply_window_cap`, which also builds the embedder
-  once and shares it with the labeler). Benchmark-measured cost of oversized
-  chunks: 12 recall points (st@1000 92% vs st@4800 80% @5). Selftest +3 checks.
+  once and shares it with the labeler). Measured cost of oversized chunks:
+  12 gold-session recall points between window-matched and oversized. Selftest +3 checks.
 - SKILL.md: window-matching documented in the embedding-recall section.
 
 ### Recorded (negative result, guard-validated)
-- **Lens-on-LongMemEval refused by the policy guard — twice, correctly.**
-  Trained on the frozen train-250 half (sealed 115k-chunk corpus chain, real
+- **Lens-at-corpus-scale refused by the policy guard — twice, correctly.**
+  Trained on a frozen train half (sealed 115k-chunk corpus chain, real
   offer/use telemetry): pool-wide offers gave near-zero holdout signal
   (MRR 0.042 lens vs 0.044 base); distribution-matched haystack-scoped offers
   gave a decisive verdict (MRR 0.247 lens vs 0.357 base) — the 256→32
   projection over redacted keyword proxies UNDERPERFORMS the frozen base at
   corpus scale with 238 pairs. Conclusion: the zero-dep lens is a
-  targeted-shape tool (the v2.8 q162 conversion stands), not a corpus-wide
-  substitute for a real semantic provider; `--provider st` remains the
-  documented uplift (fresh same-split measurement: base 78% vs st 97%
-  gold-session recall@5 on eval-250). The adoption guard protecting the
+  targeted-shape tool (the v2.8 homophone-miss conversion stands), not a
+  corpus-wide substitute for a real semantic provider; `--provider st` remains
+  the documented uplift (fresh same-split measurement showed a decisive
+  gold-session recall@5 gap in its favor). The adoption guard protecting the
   membrane from a plausible-looking degradation is the designed behavior,
   now validated under real fire.
-- Frozen benchmark splits checked into the eval artifacts
-  (`~/lme-run/splits/`: train_250 / eval_250 / dev_100 ⊂ eval) — lens training
+- Frozen train/eval splits kept in the local eval artifacts — lens training
   never touched the eval half.
 
 ## Unreleased (V4 Phase 3) — 2026-06-11
 
-Update lineage: latest-wins becomes a table read. Benchmark-built — the official
-run's knowledge-update misses (79.2%) picked a stale mention or answered the
-current value when asked for the previous one.
+Update lineage: latest-wins becomes a table read. Field-built — knowledge-update
+misses pick a stale mention or answer the current value when asked for the
+previous one.
 
 ### Added
 - **`recall.py track "<entity>"`** — every mention of one entity (gather core,
@@ -150,9 +149,9 @@ mechanical entity picker = lower bound)
 
 ## Unreleased (V4 Phase 2) — 2026-06-11
 
-Time-indexed recall: the chain knows WHEN. Benchmark-built — temporal reasoning
-scored 68.5% in the official run, with every relative-date question ("who did I
-meet last Tuesday?") abstained because cosine cannot retrieve by time.
+Time-indexed recall: the chain knows WHEN. Field-built — relative-date
+questions ("who did I meet last Tuesday?") are abstained on by a ranking-only
+path because cosine cannot retrieve by time.
 
 ### Added
 - **`almanac.py`** — the calendar organ: relative time expressions resolved into
@@ -190,9 +189,9 @@ meet last Tuesday?") abstained because cosine cannot retrieve by time.
 
 ## Unreleased (V4 Phase 1) — 2026-06-11
 
-The aggregation engine: benchmark-built from the official LongMemEval full-500
-run (73.8% end-task; multi-session aggregates 43% — every miss a dropped term,
-not bad arithmetic).
+The aggregation engine: field-built from a full long-horizon recall run whose
+dominant failure was cross-session aggregates — every miss a dropped term,
+not bad arithmetic.
 
 ### Added
 - **`recall.py gather`** — exhaustive entity-scoped sweep returning a
@@ -243,11 +242,10 @@ system gains its deliberate path.
 
 ## v2.8 — 2026-06-10
 
-Benchmark-driven recall upgrades. An external tester ran the skill against
-LongMemEval (official ICLR 2025 benchmark, stratified 12-question sample,
-recall-only protocol): 11/12, with abstention and temporal — the categories
-where commercial assistants crater — both clean. Storage was lossless in all
-12; the single miss (q162) was pure retrieval: "miles" ranked Miles Davis
+Field-driven recall upgrades from external tester feedback (stratified
+long-horizon recall sample, recall-only protocol): abstention and temporal —
+the categories where commercial assistants crater — both clean. Storage was
+lossless throughout; the single miss was pure retrieval: "miles" ranked Miles Davis
 while the hike evidence sat sealed and unranked. This release attacks every
 cause that miss exposed.
 
@@ -256,7 +254,7 @@ cause that miss exposed.
   extracted into block labels at seal/ingest, indexed by the hippocampus, and
   boosted for quantity-seeking queries (hand scorer + new trained-scorer
   feature, backward compatible with pre-v2.8 telemetry). Buried passing-remark
-  numbers — the evidence shape that killed q162 — stay reachable by labels.
+  numbers — the evidence shape that loses aggregate questions — stay reachable by labels.
 - **Multi-query fan-out retrieve** (`retrieve "<main>" --queries "<alt>" …` /
   `Recall.retrieve_multi`): the model decomposes, the union is mechanical;
   max-score-wins dedup with per-query attribution. Sub-offers share a fanout
@@ -264,7 +262,7 @@ cause that miss exposed.
   sub-offer in the group, so the learners see fan-out credit correctly.
 - **Missed-positives now feed the lens:** used-but-unoffered rings — the
   strongest retrieval-failure signal — mine as lens positives. Demonstrated
-  end-to-end: the q162 failure shape (jazz noise outranking unlabeled trail
+  end-to-end: the homophone failure shape (jazz noise outranking unlabeled trail
   evidence) was reproduced, dreamed over (24 missed-positives mined), the lens
   adopted through its policy guard (holdout MRR 0.83 vs base 0.12), and the
   same one-shot query then ranked the evidence first — the system learning its

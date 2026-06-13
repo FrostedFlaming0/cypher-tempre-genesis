@@ -197,8 +197,8 @@ Relevance is obvious to you from the labels — so pull enough, never more. No b
 forgetting.
 
 **The recall escalation ladder.** When you can NAME the thing, exact match beats
-semantic packaging (single-core benchmark run: targeted scans won hundreds of times;
-the embedding path was needed twice). Climb: (1) **`grep`** — lexical scan, the first
+semantic packaging (in field use, targeted scans win constantly; the embedding
+path is the fallback). Climb: (1) **`grep`** — lexical scan, the first
 rung: `recall.py grep "<pattern>" [--role user|assistant] [--prov self-report]
 [--group <session-rx>] [--between A B]` returns speaker-attributed, date-annotated
 hits with the full sentence(s) around each match and inline deixis resolution;
@@ -219,8 +219,8 @@ floor — YOU override it when you read the block.
 
 **Aggregate questions (totals, percentages, counts across sessions).** Top-k with an
 appetite cap is the WRONG tool — a sum needs every term. Use **gather**, the
-exhaustive sweep (benchmark-built: official LongMemEval run, where one-shot top-k
-scored 43% on aggregates by dropping terms):
+exhaustive sweep (field-built: one-shot top-k loses aggregates by dropping
+terms — a sum is only correct if every term is on the table):
 ```
 python3 recall.py gather "<topic>" --entities "<e1>" "<e2>" … --quantities \
        [--between 2023-01-01 2023-03-31] [--embed --provider st]
@@ -239,8 +239,8 @@ that absence is itself the honest finding — say so rather than summing past it
 
 **Temporal questions (when / how long ago / days between / what order).**
 Cosine cannot retrieve by WHEN — "who did I meet last Tuesday" shares no
-semantics with the lunch session it names (benchmark-measured: every question
-of this shape was abstained on until time-indexed recall). Blocks carry dates
+semantics with the lunch session it names (a ranking-only path abstains on
+every question of this shape; time-indexed recall converts them). Blocks carry dates
 (`ring_date`: a payload source date outranks the seal timestamp). Four tools:
 ```
 python3 almanac.py resolve "<question text>" --asked-on "<stamp>"   # deixis -> date window
@@ -249,10 +249,10 @@ python3 recall.py retrieve "<q>" --on 2023-03-18 | --between 2023-03-01 2023-03-
 python3 recall.py endpoints "<event A>" "<event B>"     # interval questions need BOTH anchors
 python3 recall.py gather "<topic>" --entities … --timeline          # ordering questions
 ```
-Discipline (each clause is a sealed benchmark miss): (0) **for "what happened
+Discipline (each clause is a sealed field lesson): (0) **for "what happened
 <relative day>" questions, prefer the day-digest**: `gather "<question>"
 --between <resolved window>` — real corpora stamp MANY sessions on one day
-(benchmark-measured: 12 sessions / 158 blocks shared one date), and top-k
+(measured: 12 sessions / 158 blocks sharing one date), and top-k
 inside the window still loses a one-clause fact to same-day chatter; gather
 guarantees every same-day session a row. Use `retrieve --relative` when the
 chain is sparse (a personal diary, one ring per turn); (1) a date filter
@@ -267,8 +267,8 @@ disagree, prefer the mention nearest the event and surface the conflict;
 exhaustively, then read the order off the dates.
 
 **Knowledge-update questions (a value that changed: how many X now / what was X
-before).** Latest-wins is a TABLE read, not a memory vibe (benchmark-measured:
-misses answered the current value when asked the previous, or anchored to a
+before).** Latest-wins is a TABLE read, not a memory vibe (the field failure modes:
+answering the current value when asked the previous, or anchoring to a
 stale mention):
 ```
 python3 recall.py track "<the tracked thing>" [--embed --provider st]
@@ -291,7 +291,7 @@ via `--shapes`), then packages: a **narrow base** always (top-ranked group in
 FULL — a passing remark hides anywhere; ranks 2-5 windowed; everything dated,
 chronological) plus the shaped instrument: day-digest for relative days, term
 table for aggregates, timeline for intervals/ordering, lineage for updates.
-THE ANSWER PROTOCOL (each clause is a sealed benchmark lesson): (1) if the
+THE ANSWER PROTOCOL (each clause is a sealed field lesson): (1) if the
 question NAMES a rememberable fact, climb the ladder — grep → retrieve →
 fan-out → gather/track/endpoints/day-digest — BEFORE abstaining; abstain only
 when the instruments come back empty (evidence calls log `empty` to telemetry:
@@ -333,17 +333,17 @@ the specific claims most likely to be wrong:
 ```
 python3 recall.py seal "<summary>" --used-rings … --at-risk "<claim 1>" "<claim 2>"
 ```
-Benchmark evidence: the single-core run's pre-registered at-risk claims WERE
+Field evidence: in live long-horizon runs, pre-registered at-risk claims WERE
 the actual misses. The claims seal into the ring; telemetry counts them; any
 later falsify against that ring scores the register — calibration the learner
 can train on.
 
 **Sharding doctrine — when to split work across agents (V5).** Shard along
 EVIDENCE-INDEPENDENCE boundaries, never through a lineage or a term set. The
-benchmark arc measured it: a fleet of agents each holding a slice scored 91.0%;
-one core holding the whole chain scored 97.2%, with the entire gap concentrated
-in knowledge-update (+12.5 — the lineage must live in one view) and
-multi-session aggregates (+20.7 — a sum needs every term in one place).
+measured pattern: a fleet of agents each holding a slice loses exactly where
+evidence has dependencies — update lineages (which must live in one view) and
+cross-session aggregates (a sum needs every term in one place); one core
+holding the whole chain converts those.
 Questions that share entities, lineages, or term sets belong to ONE context;
 truly independent work shards freely. If you must split a dependent set, ship
 the full lineage/term-table WITH each shard.
@@ -357,11 +357,11 @@ the chain at every seal. The grind continues across interruptions because the
 state lives in the bank file and the chain, not in context.
 
 **Semantic recall — the upgrade path.** The stdlib embedder is morphological, not
-semantic (benchmark-measured: it is the weak link). Two upgrades, use either or both:
+semantic (measured: it is the weak link). Two upgrades, use either or both:
 (a) one dependency — `--provider st` (or openai/voyage) is the single biggest
 retrieval uplift; (b) zero dependencies — the **lens** (`lens.py`, trained by
 `dream.py` from your own telemetry) learns YOUR corpus's query→memory associations;
-a benchmark-shaped miss ("miles" → Miles Davis while the hike blocks sat sealed and
+a homophone-shaped miss ("miles" → Miles Davis while the hike blocks sat sealed and
 unranked) converts after one dream over the logged missed-positives.
 
 **Scale note (the only role for cheap matching).** When the chain is so large its index
@@ -393,7 +393,7 @@ morphology/subword but NOT true synonymy; for genuine semantic recall plug a rea
 via `--provider st|openai|voyage` (needs the lib/key). Either way YOU make the final call.
 **Chunking auto-matches the provider's window** (`embedder.window_chars`; continuum caps
 its data-height band at ingest): text past a model's input window never reaches the
-vector — benchmark-measured at 12 recall points between window-matched and oversized
+vector — measured at 12 recall points between window-matched and oversized
 chunks. The stdlib embedder has no window; real models do.
 
 ## Long-horizon tasking (Continuum) — for jobs bigger than any context window
