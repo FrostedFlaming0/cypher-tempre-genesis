@@ -1,5 +1,37 @@
 # Changelog
 
+## v3.0.2 — 2026-06-14
+
+Documentation only — no code or engine changes. Restores the Continuum-forward
+framing so the skill is read as built for unbounded-horizon work.
+
+### Why
+The V4/V5 additions made the per-item recall-and-answer workflow the visual bulk
+of SKILL.md and pushed the long-horizon (Continuum) doctrine far down the page.
+Read together with the "mandatory every pass" framing of the per-turn loop, a
+model sizing up a huge corpus could multiply (full loop) x (per-item ladder) x
+(millions of files) in its head and hedge — "that would take many turns" — instead
+of just streaming the data the way the engine is designed to. The engine never
+changed; the document had stopped teaching the cheap, resumable path first.
+
+### Changed (SKILL.md, all five runtimes)
+- **The per-turn loop is explicitly scoped to cognition** — it does not run once
+  per ingested file/chunk; you loop over conclusions, never over each sealed block.
+- **New up-front section "Working over unbounded horizons — size is never a reason
+  to stop"** (right after the loop): an explicit no-refusal directive plus a
+  two-mode selector — ingest/audit a large corpus via bulk Continuum `walk`
+  (cheap, O(1) per seal, resumable, no turn ceiling) vs. answer a question via the
+  recall ladder (per-item).
+- **Continuum section strengthened** with the bulk/`walk` economics and the
+  no-turn-ceiling, resume-until-validate-complete rule.
+- **Long-grind ops**: states there is no turn budget to spend down — proceed until
+  the work is done.
+- **Covenant** gains: "Size and horizon are never refusal reasons" — top-authority
+  placement so it overrides the model's default size hedge.
+
+187 selftest checks PASS on every runtime (engine untouched).
+
+
 ## v3.0.1 — 2026-06-13
 
 Security-hardening pass (scanned with NVIDIA SkillSpector). No functional changes
