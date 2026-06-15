@@ -28,11 +28,11 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v3.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.1/cypher-tempre-claude-skill-v3.0.1.zip) |
-| Codex | [cypher-tempre-codex-skill-v3.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.1/cypher-tempre-codex-skill-v3.0.1.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v3.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.1/cypher-tempre-openclaw-skill-v3.0.1.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v3.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.1/cypher-tempre-hermes-skill-v3.0.1.zip) |
-| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.0.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.1/cypher-tempre-nanoclaw-skill-v3.0.1.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v3.0.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.2/cypher-tempre-claude-skill-v3.0.2.zip) |
+| Codex | [cypher-tempre-codex-skill-v3.0.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.2/cypher-tempre-codex-skill-v3.0.2.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v3.0.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.2/cypher-tempre-openclaw-skill-v3.0.2.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v3.0.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.2/cypher-tempre-hermes-skill-v3.0.2.zip) |
+| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.0.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.2/cypher-tempre-nanoclaw-skill-v3.0.2.zip) |
 
 ## Timechain Dashboard
 
@@ -78,7 +78,7 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 After a GitHub Release exists, you can also share a one-file release asset URL
-such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.1/cypher-tempre-codex-skill-v3.0.1.zip`.
+such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.0.2/cypher-tempre-codex-skill-v3.0.2.zip`.
 Release URLs return 404 until the tag and asset are published.
 
 ## File labels

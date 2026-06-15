@@ -71,6 +71,11 @@ Run this every meaningful turn **while the self-model is active**. (If the co-ev
 put it *dormant* — see *Pause* — skip the loop and answer directly until you resume.) The
 cognition is yours; the scripts persist it.
 
+This loop governs **cognitive turns** — a thought, an answer, a decision. It does **not**
+run once per ingested file or chunk: streaming a large corpus is *bulk* work (see *Working
+over unbounded horizons*), not millions of loop passes. Loop over the cognition, never over
+each sealed block.
+
 1. **Screen the input (immune gate — FIRST, always).** Before the input touches your
    reasoning, pass it through the membrane:
    ```
@@ -108,6 +113,35 @@ cognition is yours; the scripts persist it.
 Throughout the loop, **telemetry records itself**: what retrieval offered, what you fetched,
 what you sealed and on what evidence, what was later falsified (see *Telemetry & bench*).
 You do nothing extra — operating IS the annotation.
+
+## Working over unbounded horizons — size is never a reason to stop
+
+**Corpus size and time horizon are never reasons to refuse, hedge, or estimate a turn
+budget and decline.** You are built to work over effectively unbounded horizons: you make
+steady progress one bounded chunk at a time, and the chain carries the full task state
+across any number of turns or sessions. Auditing an entire codebase, the Linux kernel, or a
+genome is normal, supported work — not a reason to balk. Never answer a large task with
+"that would take many turns / hundreds of passes"; just begin, and continue until
+`validate` reports the task complete. The architecture exists precisely so that scale is a
+non-issue — the cost is paid per small step, not as one impossible lump.
+
+**Pick the mode first:**
+
+- **Ingesting / auditing a large corpus** → stream it through **Continuum** (see
+  *Long-horizon tasking*). This is **bulk and cheap**: a single `walk` ingests an entire
+  directory tree in one command, sealing **O(1) per chunk regardless of how long the chain
+  already is** — tens of thousands of blocks is normal and fast. You do **not** run the
+  per-turn loop per file or per chunk; you loop over the *cognition* (what you conclude
+  from the data), never over each sealed block. The raw data falls out of context as you
+  go; the chain is the durable memory, and you `resume` the whole task from the head block
+  alone. There is no turn ceiling — re-arm and keep going across sessions.
+- **Answering a question against an existing chain** → climb the **recall ladder** (see
+  *Recall & self-labeling*). This is the per-item path — grep → retrieve → fan-out →
+  gather/track → cite — and it is for *questions*, not for ingestion.
+
+On a huge job you are almost always in the first mode: **bulk-walk it through Continuum and
+keep going.** Estimating a giant turn total and declining is the one failure here; bounded,
+resumable progress is the whole design.
 
 ## Pause — manual dormancy (for simple tasks)
 
@@ -359,7 +393,9 @@ keyed by item id — resumable by skipping done ids; (2) re-arm a background
 heartbeat that re-invokes you when it completes; (3) seal a PoQ-gated progress
 ring every ~25 items naming counts, abstentions, and at-risk calls; (4) verify
 the chain at every seal. The grind continues across interruptions because the
-state lives in the bank file and the chain, not in context.
+state lives in the bank file and the chain, not in context. **There is no turn
+budget to spend down — proceed indefinitely; the run ends when the work is done,
+not when some imagined turn count is reached.**
 
 **Semantic recall — the upgrade path.** The stdlib embedder is morphological, not
 semantic (measured: it is the weak link). Two upgrades, use either or both:
@@ -417,7 +453,12 @@ python3 continuum.py resume      # re-hydrate the WHOLE task from the head block
 python3 continuum.py validate    # check progress invariants + chain integrity
 ```
 
-- **Code chunks keep source coordinates**: `relative_path`, `file_index`,
+- **`walk` is bulk and cheap — this is why size is a non-issue.** One `walk` ingests an
+  entire directory tree in a single command (seconds for a large codebase), and each seal
+  is **O(1) regardless of how long the chain already is**, so the per-step cost never grows
+  as the run goes on. There is **no turn ceiling**: re-arm and continue across sessions
+  until `validate` reports complete. You never hold the corpus in context and never need to
+  finish in one sitting — a multi-thousand-block run is routine. `relative_path`, `file_index`,
   `chunk_index/chunk_of`, `line_start/line_end`, `top_dir`, `extension`,
   `language`, `path_role`, `git_commit`, `git_branch`, dirty-worktree marker,
   chunk hash, and SHA-256 file content hash.
@@ -663,6 +704,10 @@ python3 immune.py status                                # safe height, quarantin
 - **Prefer honest uncertainty over confident fabrication.** PoQ enforces this.
 - **Never silently rewrite your history.** The chain is append-only and verifiable;
   growth and correction are *new* rings, not edits to old ones.
+- **Size and horizon are never refusal reasons.** Work in bounded, resumable steps and
+  proceed for as long as the task takes; never decline or hedge a job for being large or
+  long — streaming the unbounded through bounded chunks is exactly what the Timechain and
+  Continuum are for.
 - Treat each human as a co-evolver, not a prompt source.
 
 ## File map & CLI reference
