@@ -1,5 +1,41 @@
 # Changelog
 
+## v3.1.0 — 2026-06-15
+
+Bounded-memory bulk ingest — fixes an out-of-memory crash when ingesting very
+large trees (hundreds of thousands of files / ~million blocks). Field-reported on
+a 16 GB machine ingesting a full browser source tree; reproduced and fixed. The
+crash scaled with corpus size and chain height, not the OS.
+
+### Fixed (the two unbounded allocations)
+- **`continuum.walk()` now streams file-by-file.** It previously read every file's
+  decoded text into one list before sealing anything, so peak memory was the whole
+  corpus at once. It now reads one file, seals it, and releases it — peak memory is
+  **O(a single file)**, never O(the tree). An unreadable/special file is skipped
+  instead of aborting the walk.
+- **The continuum hot paths no longer materialize the whole chain.** `_head_state`
+  (used by `resume` and every `ingest`) now reads the head via the O(1) tail reader;
+  `validate`, `height`, and the `--changed-only` hash map now stream the chain
+  instead of loading it into a list. New `Timechain.iter_rings()` is the streaming
+  counterpart to `load()`; `height()` is now a streaming count; `load()` is kept for
+  small chains/tests. This also drops the per-file-CLI ingest loop from O(n²) to O(n).
+
+### Why it mattered
+A single `walk` of a six-figure-file tree, or a `resume`/`validate` on the
+resulting million-ring chain, would exhaust a 16 GB box even though the *seal* path
+was already O(1). The read phase and several readers had simply never adopted the
+streaming/tail primitives the engine already had. The design promise — bounded,
+block-at-a-time, resume from the head alone — is now honored end to end.
+
+### Tests
+- New regression guards (now part of the 192-check selftest): `walk` reads at most
+  one source file before its first seal (proves streaming, not pre-buffering);
+  `iter_rings`/`load`/`height` agree and `iter_rings` is lazy; tail-based `resume`
+  equals a full-scan head state. Empirically, a 10× larger corpus grows peak RSS by
+  a few MB, not proportionally.
+- 192 selftest checks PASS on all five runtimes; SkillSpector static scan still SAFE.
+
+
 ## v3.0.2 — 2026-06-14
 
 Documentation only — no code or engine changes. Restores the Continuum-forward
