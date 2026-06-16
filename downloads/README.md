@@ -8,6 +8,8 @@ These files support the public Timechain dashboard at `https://cyphertempre.ai`.
   package users run on their own machines.
 - `cypher-tempre-codex-skill-v3.2.0.zip` is the Codex skill bundle with
   the Codex lifecycle hook installer and reviewable hook template.
+- `cypher-tempre-openclaw-skill-v3.2.0.zip` is the OpenClaw skill bundle with
+  hook-capable lifecycle wrappers and explicit mark/seal/stop-check fallback.
 - `cypher-tempre-hermes-skill-v3.2.0.zip` is the Hermes skill bundle with
   explicit Hermes self-enforcement instructions and subagent definition.
 

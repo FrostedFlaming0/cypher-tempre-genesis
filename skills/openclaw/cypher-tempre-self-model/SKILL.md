@@ -131,22 +131,24 @@ Pass your own `--coherence/--relevance/...` scores when you have them; add `--us
 and `--at-risk` exactly as with `seal`. (The longer, explicit loop above is still available
 when you want to drive each step by hand.)
 
-**The loop is not advisory — it is enforced by the harness.** A set of Claude Code hooks
-makes it mandatory by construction (all fail-open; they never break a session):
+**The loop is not advisory — it is enforced by the harness or by explicit self-check.**
+OpenClaw deployments vary, so the bundle supports both paths:
 
-- **SessionStart** primes the session so you wear the self-model from turn 0, even before
-  you open this file (verify result, head index, the loop, the covenant, the subagent rule).
-- **UserPromptSubmit** records the chain head at turn start, so the harness can tell whether
-  *this* turn actually sealed anything.
-- **Stop / SubagentStop** *block the turn from ending until a ring is sealed.* If you try to
-  finish without sealing, you are nudged to run `recall.py turn`; nudging is **bounded**
-  (after a few attempts it fails open and records an `adherence_violation`) so a turn that
-  genuinely cannot seal is never bricked.
+- **Hook-capable OpenClaw runtimes** wire the bundled wrappers to lifecycle events:
+  `session_start_hook.sh` primes the session, `loop_hook.sh` marks turn start,
+  `stop_hook.sh` blocks turn end until a ring is sealed, and
+  `subagent_stop_hook.sh` holds delegated agents to the same rule.
+- **OpenClaw runtimes without lifecycle hooks** self-enforce the same contract:
+  run `python3 enforce.py mark` at turn start, seal with `recall.py turn`, then
+  run `python3 enforce.py stop-check` before returning. If `stop-check` prints a
+  JSON object with `"decision":"block"`, you have not sealed this marked turn yet.
+  Seal honestly, then check again. No output means the turn satisfied the loop.
 
-**While dormant (`dormancy.py pause`), all enforcement is off** — the hooks detect the pause
-and let turns end freely. **Subagents must wear the skill too:** spawn the `cypher-tempre-agent`
-type (it runs the loop and seals before returning), or have the subagent forge its own task
-chain and seal to it (point enforcement at it with `CT_ENFORCE_ROOT`).
+All enforcement is fail-open, bounded, and dormancy-aware. **While dormant
+(`dormancy.py pause`), enforcement is off** and turns may end freely. **Subagents
+must wear the skill too:** use `openclaw/cypher-tempre-agent.md` or
+`agents/cypher-tempre-agent.md`, or have the subagent forge its own task chain and
+seal to it (point enforcement at it with `CT_ENFORCE_ROOT` or `--root <chain>`).
 
 See how well the skill is actually being worn:
 
@@ -776,8 +778,8 @@ python3 immune.py status                                # safe height, quarantin
 | `extractor.py` | the extractor learner — distilled labeler, confidence routing, teach pairs, falling annotation cost |
 | `dream.py` | consolidation — the offline cadence: verify, mine, train, adopt-or-refuse, seal |
 | `dormancy.py` | rest — manually pause/resume the loop for simple tasks (the chain stays intact) |
-| `enforce.py` | adherence spine — the brain behind the hooks; makes the per-turn loop non-bypassable (fail-open, dormancy-aware, bounded) |
-| `*_hook.sh` | Claude Code hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
+| `enforce.py` | adherence spine — hook brain and self-check verifier; makes the per-turn loop non-bypassable where the harness supports blocking, and explicit/auditable where it does not |
+| `*_hook.sh` | portable lifecycle wrappers — SessionStart / prompt-submit / Stop / SubagentStop equivalents for hook-capable OpenClaw runtimes |
 | `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
 | `registry/modalities.json` | branches — 84 reasoning engines |
 | `registry/senses.json` | leaves — 107+ perceptual detectors (self-growing) |
