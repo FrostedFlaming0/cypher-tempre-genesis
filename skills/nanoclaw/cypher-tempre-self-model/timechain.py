@@ -149,20 +149,28 @@ class Timechain:
         self.blockspace = Blockspace(self.dir / "blockspace")
 
     # ---- persistence ----
-    def load(self) -> list:
+    def iter_rings(self):
+        """Stream rings one at a time — O(1) memory regardless of chain height.
+        The bounded-memory counterpart to load(); use this for any full-chain
+        scan (counting, validation, projections) so a million-ring chain never
+        has to be materialized into a list at once."""
         if not self.rings_path.exists():
-            return []
-        rings = []
+            return
         with self.rings_path.open("r", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    rings.append(json.loads(line))
+                    yield json.loads(line)
                 except Exception:
                     continue   # tolerate a torn line; verify() reports it explicitly
-        return rings
+
+    def load(self) -> list:
+        # Eager full-chain read — fine for small chains and tests. For bulk
+        # scans over large chains prefer iter_rings() (streaming) or the tail
+        # readers; load() materializes every ring at once.
+        return list(self.iter_rings())
 
     def tail_rings(self, k: int) -> list:
         """Return the last k rings in chain order, reading only the file TAIL — O(k),
@@ -255,7 +263,8 @@ class Timechain:
         return rings[-1] if rings else None
 
     def height(self) -> int:
-        return len(self.load())
+        # Streaming count — O(1) memory; never materializes the chain.
+        return sum(1 for _ in self.iter_rings())
 
     # ---- sealing ----
     def _seal(self, ring: dict, difficulty: int = 0) -> dict:

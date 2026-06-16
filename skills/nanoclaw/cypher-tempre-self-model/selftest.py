@@ -122,6 +122,51 @@ def main():
         _, changed = c3.walk(code_root, (".py",), "cartography changed-only", changed_only=True)
         check("continuum: changed-only skips unchanged files", len(changed) == 0)
 
+        # --- bounded-memory ingest (regression guard for the large-corpus OOM) ---
+        # walk() must STREAM: read one file, seal it, release it — NOT pre-buffer
+        # the whole corpus. Proven structurally: at most ONE source file is read
+        # before the first seal fires (a pre-buffering walk reads them all first).
+        import pathlib as _pl
+        mem_root = os.path.join(root, "memwalk")
+        corpus = os.path.join(mem_root, "corpus")
+        os.makedirs(corpus, exist_ok=True)
+        for _i in range(8):
+            with open(os.path.join(corpus, f"m{_i}.py"), "w") as _fh:
+                _fh.write(f"def f{_i}():\n    return {_i}\n" * 20)
+        _ev = []
+        _cmem = continuum.Continuum(os.path.join(mem_root, "chain"))
+        _orig_ing = _cmem.ingest
+        _cmem.ingest = lambda name, *a, **k: (_ev.append(("seal", name)), _orig_ing(name, *a, **k))[1]
+        _orig_rt = _pl.Path.read_text
+        def _traced_rt(self, *a, **k):
+            _ev.append(("read", self.name)); return _orig_rt(self, *a, **k)
+        _pl.Path.read_text = _traced_rt
+        try:
+            _files, _res = _cmem.walk(_pl.Path(corpus), (".py",), "bounded-mem selftest",
+                                      label=False, redact=False)
+        finally:
+            _pl.Path.read_text = _orig_rt
+        _first_seal = next((i for i, e in enumerate(_ev) if e[0] == "seal"), len(_ev))
+        _reads_before = sum(1 for e in _ev[:_first_seal] if e[0] == "read" and e[1].endswith(".py"))
+        check("continuum: walk streams (≤1 file resident before first seal)", _reads_before <= 1)
+        check("continuum: walk sealed every file", len(_res) == 8)
+
+        # --- iter_rings / load / height parity, and iter_rings is lazy ---
+        import types as _types
+        _tcm = _cmem.tc
+        check("timechain: iter_rings is a lazy generator", isinstance(_tcm.iter_rings(), _types.GeneratorType))
+        check("timechain: iter_rings == load == height (streaming count)",
+              len(list(_tcm.iter_rings())) == len(_tcm.load()) == _tcm.height())
+
+        # --- resume() is tail-based and equals a full-scan head state ---
+        _tail_state = _cmem.resume()
+        _full_state = None
+        for _r in _tcm.iter_rings():
+            _s = (_r.get("payload") or {}).get("state")
+            if _s:
+                _full_state = _s
+        check("continuum: tail-based resume == full-scan head state", _tail_state == _full_state)
+
         # 5. Recall — self-label + retrieve (lexical and embedding)
         rec = recall.Recall(root, registry_root=SKILL)
         lab = rec.label("proof of work difficulty target")

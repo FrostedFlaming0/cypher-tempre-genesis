@@ -268,8 +268,10 @@ def should_skip_file(path: Path, skip_dirs):
 
 
 def latest_file_hashes(timechain: Timechain):
+    # Stream the chain (O(1) memory); retain only the path->hash map, which is
+    # bounded by file count, not by chain content.
     latest = {}
-    for ring in timechain.load():
+    for ring in timechain.iter_rings():
         data = ring.get("payload", {}).get("data") or {}
         rel = data.get("relative_path")
         h = data.get("file_content_hash")
@@ -350,11 +352,27 @@ class Continuum:
             pass                # a missing dep must never break plain ingestion
 
     def _head_state(self):
-        for r in reversed(self.tc.load()):
-            st = r.get("payload", {}).get("state")
+        # The head (last) ring of a continuum task carries a full state refresh,
+        # so read it from the TAIL — O(1), never materialize the whole chain.
+        last = self.tc._tail_ring()
+        if last:
+            st = (last.get("payload") or {}).get("state")
             if st:
                 return st
-        return None
+        # Tail wasn't state-bearing (e.g. a digest sealed at the very end):
+        # scan a bounded window of recent rings, newest first.
+        for r in reversed(self.tc.tail_rings(256)):
+            st = (r.get("payload") or {}).get("state")
+            if st:
+                return st
+        # Last resort (rare): stream the chain keeping only the most recent
+        # state — O(1) memory, O(n) time, no list materialization.
+        latest = None
+        for r in self.tc.iter_rings():
+            st = (r.get("payload") or {}).get("state")
+            if st:
+                latest = st
+        return latest
 
     def open_task(self, objective, items_total=None, difficulty=0):
         if self.tc.height() == 0:
@@ -451,7 +469,7 @@ class Continuum:
     def validate(self):
         ok, report = self.tc.verify()
         prev, sizes, heights, issues = None, [], [], []
-        for r in self.tc.load():
+        for r in self.tc.iter_rings():   # stream — never materialize the chain
             p = r.get("payload", {})
             if p.get("event") != "continuum":
                 continue
@@ -491,17 +509,22 @@ class Continuum:
             if p.is_file() and p.suffix in exts and not should_skip_file(p.relative_to(path), skip_dirs)
         )
         prior_hashes = latest_file_hashes(self.tc) if changed_only else {}
-        planned = []
+        git_info = git_info_for(path)
+        # items_total is the candidate count (an upper bound under --changed-only);
+        # it is progress metadata only, so we never read file content to compute it.
+        self.open_task(objective, items_total=len(files), difficulty=difficulty)
+        results = []
+        # STREAM the corpus: read ONE file, seal it, release it. Peak memory is
+        # O(a single file), never O(the whole tree) — the bounded-ingest promise.
+        # (The earlier pre-buffer of every file's text could OOM on large trees.)
         for file_index, f in enumerate(files, start=1):
-            text = f.read_text(errors="replace")
+            try:
+                text = f.read_text(errors="replace")
+            except Exception:
+                continue                 # unreadable/special file — skip, don't abort the walk
             rel = f.relative_to(path).as_posix()
             if changed_only and prior_hashes.get(rel) == sha256_text(text):
                 continue
-            planned.append((file_index, f, rel, text))
-        git_info = git_info_for(path)
-        self.open_task(objective, items_total=len(planned), difficulty=difficulty)
-        results = []
-        for file_index, f, rel, text in planned:
             sealed_text, redaction_count = redact_secrets(text) if redact else (text, 0)
             ndef = text.count("def "); ncls = text.count("class ")
             finding = f"{text.count(chr(10))+1} lines, {ndef} defs, {ncls} classes"
@@ -512,6 +535,7 @@ class Continuum:
             sealed, _ = self.ingest(rel, sealed_text, finding=finding, difficulty=difficulty,
                                     label=label, metadata=meta)
             results.append((rel, len(sealed)))
+            text = sealed_text = None     # release this file before the next
         return files, results
 
 
