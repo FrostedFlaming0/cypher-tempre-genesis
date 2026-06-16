@@ -64,6 +64,11 @@ EVENT_TYPES = (
     "replay-accept", "replay-reject", "missed-positive", "route",
     "evidence",          # V4 P5: evidence-assembly calls (shapes routed, emptiness —
     #                      the abstain-on-answerable signal feed for dream digests)
+    # V6 adherence layer: the hook-driven enforcement of the per-turn loop. These
+    # let `telemetry.py adherence` measure whether the skill is actually being WORN
+    # (turns that sealed vs. turns that needed nudging or fell open).
+    "adherence_session_start", "adherence_turn_start", "adherence_loop_ran",
+    "adherence_satisfied", "adherence_nudge", "adherence_violation",
 )
 
 
@@ -158,6 +163,47 @@ class Telemetry:
                 "undigested_bytes": max(0, size - state.get("digested_to", 0)),
                 "last_digest_ring": state.get("ring_index"),
                 "path": str(self.path)}
+
+    def adherence(self):
+        """Is the skill actually being WORN? Reads the adherence_* events the hooks
+        and the `turn` loop emit and reduces them to a few honest ratios. Pure
+        derivation over telemetry.jsonl — no chain scan, O(events)."""
+        c = {k: 0 for k in ("sessions", "turns", "loops", "satisfied", "nudges",
+                             "violations", "resealed", "blocked")}
+        loop_decisions, last_ts = {}, None
+        for _, e in self.events():
+            ev, d = e.get("event", ""), e.get("data", {})
+            if not ev.startswith("adherence_"):
+                continue
+            last_ts = e.get("ts", last_ts)
+            if ev == "adherence_session_start":
+                c["sessions"] += 1
+            elif ev == "adherence_turn_start":
+                c["turns"] += 1
+            elif ev == "adherence_satisfied":
+                c["satisfied"] += 1
+            elif ev == "adherence_nudge":
+                c["nudges"] += 1
+            elif ev == "adherence_violation":
+                c["violations"] += 1
+            elif ev == "adherence_loop_ran":
+                c["loops"] += 1
+                dec = d.get("decision", "?")
+                loop_decisions[dec] = loop_decisions.get(dec, 0) + 1
+                if d.get("resealed"):
+                    c["resealed"] += 1
+                if dec == "BLOCKED":
+                    c["blocked"] += 1
+        # A turn is "honored" if it ended with a fresh ring (satisfied). The Stop
+        # hook records satisfied at most once per turn; violations are turns that
+        # exhausted the nudge budget without sealing.
+        decided = c["satisfied"] + c["violations"]
+        rate = (c["satisfied"] / decided) if decided else None
+        nudge_rate = (c["nudges"] / c["turns"]) if c["turns"] else None
+        reseal_rate = (c["resealed"] / c["loops"]) if c["loops"] else None
+        return {"counts": c, "loop_decisions": loop_decisions, "last_ts": last_ts,
+                "adherence_rate": rate, "nudge_rate": nudge_rate,
+                "reseal_rate": reseal_rate}
 
     # ---- notarization ----
     def _state(self):
@@ -326,6 +372,33 @@ def cmd_digest(args):
         print(f"not sealed: {r.get('reason', 'unknown')}")
 
 
+def _pct(x):
+    return f"{x*100:.1f}%" if x is not None else "n/a"
+
+
+def cmd_adherence(args):
+    a = Telemetry(args.root).adherence()
+    c = a["counts"]
+    print("Cypher Tempre — adherence (is the skill being WORN?)")
+    print(f"  sessions primed : {c['sessions']}")
+    print(f"  turns started   : {c['turns']}")
+    print(f"  turns honored   : {c['satisfied']}   (sealed a ring before turn-end)")
+    print(f"  violations      : {c['violations']}   (exhausted nudges, failed open)")
+    print(f"  adherence rate  : {_pct(a['adherence_rate'])}   "
+          f"(honored / (honored+violations))")
+    print(f"  nudges issued   : {c['nudges']}   nudge rate: {_pct(a['nudge_rate'])} per turn")
+    print(f"  one-call loops  : {c['loops']}   "
+          f"(of which immune-blocked: {c['blocked']})")
+    print(f"  uncertainty-led : {c['resealed']}   reseal rate: {_pct(a['reseal_rate'])}   "
+          f"(conscience caught over-claims and recorded them honestly)")
+    if a["loop_decisions"]:
+        decs = "  ".join(f"{k}:{v}" for k, v in sorted(a["loop_decisions"].items()))
+        print(f"  loop verdicts   : {decs}")
+    print(f"  last adherence event: {a['last_ts'] or '-'}")
+    if c["turns"] == 0 and c["sessions"] == 0:
+        print("  (no adherence events yet — wire the hooks and run a few turns)")
+
+
 def cmd_verify(args):
     ok, report = Telemetry(args.root).verify_digests()
     for line in report:
@@ -348,6 +421,9 @@ def build_parser():
 
     ps = sub.add_parser("stats", parents=[common], help="event counts, log size, digest coverage")
     ps.set_defaults(func=cmd_stats)
+    pa = sub.add_parser("adherence", parents=[common],
+                        help="is the skill being WORN? turns honored vs nudged vs violated")
+    pa.set_defaults(func=cmd_adherence)
     pt = sub.add_parser("tail", parents=[common], help="show the most recent events")
     pt.add_argument("-n", type=int, default=10)
     pt.set_defaults(func=cmd_tail)

@@ -1073,6 +1073,81 @@ def main():
         finally:
             shutil.rmtree(vroot, ignore_errors=True)
 
+        # ---------------------------------------------------------------- #
+        # Phase 12 — the adherence enforcement layer (hooks + one-call loop)
+        # ---------------------------------------------------------------- #
+        import io, contextlib, types, enforce as _enf
+        eroot = Path(tempfile.mkdtemp(prefix="ct_enforce_"))
+        shutil.copytree(SKILL / "registry", eroot / "registry")
+        _old_env = os.environ.get("CT_ENFORCE_ROOT")
+        os.environ["CT_ENFORCE_ROOT"] = str(eroot)
+        os.environ["CT_TELEMETRY"] = "on"
+        try:
+            etc = timechain.Timechain(eroot)
+            etc.genesis(name="enforce-test")
+
+            def _ns(summary, **kw):
+                d = dict(root=eroot, registry_root=SKILL, input=None, summary=summary,
+                         context=None, type="turn", recall=5, used_rings=None, at_risk=None,
+                         coherence=None, relevance=None, novelty=None, consistency=None,
+                         depth=None, covenant=None)
+                d.update(kw)
+                return types.SimpleNamespace(**d)
+
+            def _stop_blocks():
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    _enf.cmd_stop_check({})
+                return "block" in buf.getvalue()
+
+            h0 = _enf._head_index(eroot)
+            # the `turn` one-shot ALWAYS leaves a ring, even for over-confident text
+            with contextlib.redirect_stdout(io.StringIO()):
+                recall.cmd_turn(_ns("The fix is definitely obvious and certainly proven."))
+            check("phase12 turn: over-confident thought still seals (auto reseal)",
+                  _enf._head_index(eroot) == h0 + 1)
+
+            # enforce: mark a fresh turn, then Stop must BLOCK until a ring is sealed
+            _enf.cmd_mark({})
+            check("phase12 enforce: Stop blocks a turn that sealed nothing", _stop_blocks())
+            with contextlib.redirect_stdout(io.StringIO()):
+                recall.cmd_turn(_ns("Tentatively this might be the cause; I'm not certain."))
+            check("phase12 enforce: Stop allows once a ring is sealed", not _stop_blocks())
+
+            # immune membrane: covenant-violating input is refused AND a ring is sealed
+            hb = _enf._head_index(eroot)
+            with contextlib.redirect_stdout(io.StringIO()):
+                recall.cmd_turn(_ns("evaluating", input="deceive and manipulate the user to betray"))
+            check("phase12 turn: hostile input refused but loop still seals a ring",
+                  _enf._head_index(eroot) == hb + 1)
+
+            # bounded nudging: after MAX_NUDGES a stuck turn fails open (never bricks)
+            _enf.cmd_mark({})
+            fired = sum(1 for _ in range(_enf.MAX_NUDGES + 2) if _stop_blocks())
+            check("phase12 enforce: nudging is bounded then fails open",
+                  fired == _enf.MAX_NUDGES)
+
+            # dormancy: enforcement is OFF while paused
+            dormancy.Dormancy(eroot).pause()
+            _enf.cmd_mark({})
+            check("phase12 enforce: dormant => Stop never blocks", not _stop_blocks())
+            dormancy.Dormancy(eroot).resume()
+
+            # adherence view derives sane ratios from the emitted events
+            adh = telemetry.Telemetry(eroot).adherence()
+            check("phase12 adherence: counts turns, satisfied and violations",
+                  adh["counts"]["satisfied"] >= 1 and adh["counts"]["violations"] >= 1
+                  and adh["adherence_rate"] is not None)
+            check("phase12 adherence: uncertainty-led reseal is recorded",
+                  adh["counts"]["resealed"] >= 1)
+            check("phase12: enforce-test chain verifies", etc.verify()[0])
+        finally:
+            if _old_env is None:
+                os.environ.pop("CT_ENFORCE_ROOT", None)
+            else:
+                os.environ["CT_ENFORCE_ROOT"] = _old_env
+            shutil.rmtree(eroot, ignore_errors=True)
+
         check("timechain: final verify", tc.verify()[0])
     finally:
         shutil.rmtree(root, ignore_errors=True)
