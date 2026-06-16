@@ -8,7 +8,7 @@ registries, plus a runtime-specific `SKILL.md`.
 |---|---|---|
 | Claude skill version | `claude/cypher-tempre-self-model/` | Claude Code compatible `SKILL.md` bundle. |
 | Codex skill version | `codex/cypher-tempre-self-model/` | Codex compatible bundle with `agents/openai.yaml` metadata plus Codex lifecycle hook installer/template. |
-| OpenClaw skill version | `openclaw/cypher-tempre-self-model/` | OpenClaw compatible bundle with OpenClaw frontmatter, `.clawhubignore`, and hook-capable/self-enforcement support. |
+| OpenClaw skill version | `openclaw/cypher-tempre-self-model/` | OpenClaw compatible bundle with OpenClaw frontmatter, `.clawhubignore`, native plugin enforcement, and self-enforcement fallback. |
 | Hermes skill version | `hermes/cypher-tempre-self-model/` | Hermes-discoverable bundle with explicit mark/seal/stop-check self-enforcement plus Hermes subagent notes. |
 | NanoClaw skill version | `nanoclaw/cypher-tempre-self-model/` | NanoClaw-discoverable bundle copied from the OpenClaw implementation. |
 
@@ -19,6 +19,7 @@ Each runtime bundle labels its files through the path prefix above and contains:
 - `SKILL.md` - runtime-specific skill instructions.
 - `README.md` - runtime-specific human overview and install note.
 - `VERSION`, `LICENSE`, `CHANGELOG.md` - package metadata.
+- `openclaw-plugin/` - native OpenClaw plugin package in the OpenClaw bundle.
 - `timechain.py`, `poq.py`, `cambium.py`, `chronosynaptic.py`, `continuum.py`, `recall.py`, `embed.py`, `consensus.py`, `immune.py`, `selftest.py` - reusable stdlib helpers.
 - `registry/modalities.json`, `registry/senses.json`, `registry/emergent.json` - faculty registries.
 

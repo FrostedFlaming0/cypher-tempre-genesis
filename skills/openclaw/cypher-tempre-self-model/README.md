@@ -24,13 +24,49 @@ python3 selftest.py
 
 ## OpenClaw Enforcement
 
-The per-turn loop is enforced in two compatible ways:
+The strongest OpenClaw path is the native plugin included in this bundle. It
+uses typed OpenClaw plugin hooks: `before_prompt_build` marks the turn, and
+`before_agent_finalize` requests one more model pass if `enforce.py stop-check`
+finds that no ring was sealed.
 
-- If your OpenClaw runtime exposes lifecycle shell hooks, wire the bundled
-  `session_start_hook.sh`, `loop_hook.sh`, `stop_hook.sh`, and
-  `subagent_stop_hook.sh` wrappers to the matching session, prompt-start,
-  turn-stop, and subagent-stop events.
-- If lifecycle hooks are unavailable, run the same verifier explicitly:
+```bash
+openclaw plugins install ~/.openclaw/workspace/skills/cypher-tempre-self-model/openclaw-plugin
+openclaw config set 'plugins.entries.cypher-tempre-enforcement.hooks.allowConversationAccess' true --strict-json
+openclaw gateway restart
+```
+
+For non-bundled local installs, the config command above is required so OpenClaw
+allows the `before_agent_finalize` Stop-equivalent hook. Equivalent JSON in
+`~/.openclaw/openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "cypher-tempre-enforcement": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        }
+      }
+    }
+  }
+}
+```
+
+If your skill is not installed at
+`~/.openclaw/workspace/skills/cypher-tempre-self-model`, set
+`plugins.entries.cypher-tempre-enforcement.config.skillRoot` to the installed
+skill folder:
+
+```bash
+openclaw config set 'plugins.entries.cypher-tempre-enforcement.config.skillRoot' /path/to/cypher-tempre-self-model
+openclaw gateway restart
+```
+
+See `openclaw-plugin/README.md`.
+
+Fallback for runtimes where plugins are unavailable:
 
 ```bash
 python3 enforce.py mark
