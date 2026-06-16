@@ -396,7 +396,7 @@ def cmd_adherence(args):
         print(f"  loop verdicts   : {decs}")
     print(f"  last adherence event: {a['last_ts'] or '-'}")
     if c["turns"] == 0 and c["sessions"] == 0:
-        print("  (no adherence events yet — wire the hooks and run a few turns)")
+        print("  (no adherence events yet — wire lifecycle hooks where supported, or run the Hermes mark -> seal -> stop-check loop)")
 
 
 def cmd_verify(args):

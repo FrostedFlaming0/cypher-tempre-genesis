@@ -31,7 +31,7 @@ against live source before making conclusions.
 | Claude Code | [cypher-tempre-claude-skill-v3.1.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-claude-skill-v3.1.0.zip) |
 | Codex | [cypher-tempre-codex-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.2.0.zip) |
 | OpenClaw | [cypher-tempre-openclaw-skill-v3.1.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-openclaw-skill-v3.1.0.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v3.1.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-hermes-skill-v3.1.0.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.2.0.zip) |
 | NanoClaw | [cypher-tempre-nanoclaw-skill-v3.1.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-nanoclaw-skill-v3.1.0.zip) |
 
 ## Timechain Dashboard
@@ -47,6 +47,7 @@ Downloads:
 | [cyphertempre-static-site.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-static-site.zip) | Static files for Hostinger `public_html` |
 | [cyphertempre-dashboard-local-bridge.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge.zip) | Local bridge users run to pair their own Timechain files |
 | [cypher-tempre-codex-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.2.0.zip) | Codex skill bundle with lifecycle hook installer |
+| [cypher-tempre-hermes-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.2.0.zip) | Hermes skill bundle with self-enforcement instructions |
 
 User bridge commands:
 
