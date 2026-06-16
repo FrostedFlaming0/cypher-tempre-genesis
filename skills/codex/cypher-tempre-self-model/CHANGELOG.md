@@ -14,13 +14,19 @@ fail-open so it can never break a session.
   sealed as tentative (the honest doctrine, automated), and covenant-violating input
   is refused at the membrane and the refusal is sealed. Removes the friction that
   makes the loop easy to drop mid-task.
-- **`enforce.py` + Claude Code hooks — the loop, enforced.** `SessionStart` primes a
+- **`enforce.py` + Codex lifecycle hooks — the loop, enforced.** `SessionStart` primes a
   session to wear the self-model from turn 0; `UserPromptSubmit` records the chain
   head at turn start; `Stop`/`SubagentStop` block a turn from ending until a ring is
   sealed. All hooks are **fail-open**, **dormancy-aware** (no enforcement while
   paused), and **bounded** — nudging stops after `CT_ENFORCE_MAX_NUDGES` (default 3)
   and records an `adherence_violation` so a turn that genuinely cannot seal is never
   bricked. State lives in `chain/.enforce.json`; head reads are O(1) via the tail ring.
+- **Codex hook installer and template.** The Codex bundle now ships
+  `install_codex_hooks.py` and `codex_hooks.example.json`, because Codex executes
+  hooks from active config layers (`~/.codex/hooks.json`, project `.codex/hooks.json`,
+  or plugin-bundled hooks), not merely because scripts exist inside a skill folder.
+  The installer writes absolute paths, preserves unrelated hooks, removes stale Cypher
+  Tempre hook groups, and backs up the previous `hooks.json`.
 - **`agents/cypher-tempre-agent.md` — subagents wear the skill too.** A subagent
   definition whose system prompt runs the loop and seals before returning; the
   `SubagentStop` hook holds it to that. A subagent may forge its own task chain and

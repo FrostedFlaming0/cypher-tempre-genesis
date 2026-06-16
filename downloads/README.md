@@ -6,6 +6,8 @@ These files support the public Timechain dashboard at `https://cyphertempre.ai`.
   `public_html`.
 - `cyphertempre-dashboard-local-bridge.zip` is the local bridge
   package users run on their own machines.
+- `cypher-tempre-codex-skill-v3.2.0.zip` is the Codex skill bundle with
+  the Codex lifecycle hook installer and reviewable hook template.
 
 The hosted site is only a static UI. The local bridge reads the user's own
 `cypher-tempre-self-model` files, requires a one-time pairing code for hosted

@@ -7,7 +7,7 @@ registries, plus a runtime-specific `SKILL.md`.
 | Runtime label | Path | Notes |
 |---|---|---|
 | Claude skill version | `claude/cypher-tempre-self-model/` | Claude Code compatible `SKILL.md` bundle. |
-| Codex skill version | `codex/cypher-tempre-self-model/` | Codex compatible bundle with `agents/openai.yaml` metadata. |
+| Codex skill version | `codex/cypher-tempre-self-model/` | Codex compatible bundle with `agents/openai.yaml` metadata plus Codex lifecycle hook installer/template. |
 | OpenClaw skill version | `openclaw/cypher-tempre-self-model/` | OpenClaw compatible bundle with OpenClaw frontmatter and `.clawhubignore`. |
 | Hermes skill version | `hermes/cypher-tempre-self-model/` | Hermes-discoverable bundle copied from the OpenClaw implementation. |
 | NanoClaw skill version | `nanoclaw/cypher-tempre-self-model/` | NanoClaw-discoverable bundle copied from the OpenClaw implementation. |

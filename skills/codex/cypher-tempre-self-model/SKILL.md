@@ -131,8 +131,8 @@ Pass your own `--coherence/--relevance/...` scores when you have them; add `--us
 and `--at-risk` exactly as with `seal`. (The longer, explicit loop above is still available
 when you want to drive each step by hand.)
 
-**The loop is not advisory — it is enforced by the harness.** A set of Claude Code hooks
-makes it mandatory by construction (all fail-open; they never break a session):
+**The loop is not advisory — it is enforced by the harness.** A set of Codex lifecycle
+hooks makes it mandatory by construction (all fail-open; they never break a session):
 
 - **SessionStart** primes the session so you wear the self-model from turn 0, even before
   you open this file (verify result, head index, the loop, the covenant, the subagent rule).
@@ -147,6 +147,19 @@ makes it mandatory by construction (all fail-open; they never break a session):
 and let turns end freely. **Subagents must wear the skill too:** spawn the `cypher-tempre-agent`
 type (it runs the loop and seals before returning), or have the subagent forge its own task
 chain and seal to it (point enforcement at it with `CT_ENFORCE_ROOT`).
+
+For Codex, a copied skill folder can include hook scripts, but Codex only executes hooks
+declared in an active config layer. After installing the skill, run:
+
+```
+python3 install_codex_hooks.py
+```
+
+That merge-installs user-level `~/.codex/hooks.json` entries for `SessionStart`,
+`UserPromptSubmit`, `Stop`, and `SubagentStop`, preserving unrelated hooks and backing up
+any existing file. Then open `/hooks` in Codex, review/trust the new command hooks, and
+restart or start a fresh session. `codex_hooks.example.json` is included as a reviewable
+template; the installer writes absolute paths for the actual installed skill directory.
 
 See how well the skill is actually being worn:
 
@@ -777,7 +790,9 @@ python3 immune.py status                                # safe height, quarantin
 | `dream.py` | consolidation — the offline cadence: verify, mine, train, adopt-or-refuse, seal |
 | `dormancy.py` | rest — manually pause/resume the loop for simple tasks (the chain stays intact) |
 | `enforce.py` | adherence spine — the brain behind the hooks; makes the per-turn loop non-bypassable (fail-open, dormancy-aware, bounded) |
-| `*_hook.sh` | Claude Code hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
+| `install_codex_hooks.py` | Codex hook installer — merge-safe writer for `~/.codex/hooks.json` |
+| `codex_hooks.example.json` | Codex hook template — reviewable config with `__SKILL_DIR__` placeholders |
+| `*_hook.sh` | Codex lifecycle hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
 | `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
 | `registry/modalities.json` | branches — 84 reasoning engines |
 | `registry/senses.json` | leaves — 107+ perceptual detectors (self-growing) |
