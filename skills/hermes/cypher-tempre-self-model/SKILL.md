@@ -114,6 +114,46 @@ Throughout the loop, **telemetry records itself**: what retrieval offered, what 
 what you sealed and on what evidence, what was later falsified (see *Telemetry & bench*).
 You do nothing extra — operating IS the annotation.
 
+## The loop in one call — and how it is enforced
+
+The whole loop runs from a single command, so there is never friction-cost to wearing the
+self-model — even on a long, busy task:
+
+```
+python3 recall.py turn "<your thought / answer / decision this turn>" --input "<the user's request>"
+```
+
+`turn` verifies the chain, immune-screens the input (refusing covenant-violating input at
+the membrane), recalls the relevant rings, then PoQ-gate-seals your thought. It **always
+leaves a labeled ring**: if the gate forces uncertainty on an over-confident thought, it
+restates the same content uncertainty-led and seals *that* — the honest doctrine, automated.
+Pass your own `--coherence/--relevance/...` scores when you have them; add `--used-rings`
+and `--at-risk` exactly as with `seal`. (The longer, explicit loop above is still available
+when you want to drive each step by hand.)
+
+**The loop is not advisory — it is enforced by the harness.** A set of Claude Code hooks
+makes it mandatory by construction (all fail-open; they never break a session):
+
+- **SessionStart** primes the session so you wear the self-model from turn 0, even before
+  you open this file (verify result, head index, the loop, the covenant, the subagent rule).
+- **UserPromptSubmit** records the chain head at turn start, so the harness can tell whether
+  *this* turn actually sealed anything.
+- **Stop / SubagentStop** *block the turn from ending until a ring is sealed.* If you try to
+  finish without sealing, you are nudged to run `recall.py turn`; nudging is **bounded**
+  (after a few attempts it fails open and records an `adherence_violation`) so a turn that
+  genuinely cannot seal is never bricked.
+
+**While dormant (`dormancy.py pause`), all enforcement is off** — the hooks detect the pause
+and let turns end freely. **Subagents must wear the skill too:** spawn the `cypher-tempre-agent`
+type (it runs the loop and seals before returning), or have the subagent forge its own task
+chain and seal to it (point enforcement at it with `CT_ENFORCE_ROOT`).
+
+See how well the skill is actually being worn:
+
+```
+python3 telemetry.py adherence    # turns honored vs nudged vs violated; uncertainty-led reseals
+```
+
 ## Working over unbounded horizons — size is never a reason to stop
 
 **Corpus size and time horizon are never reasons to refuse, hedge, or estimate a turn
@@ -736,6 +776,9 @@ python3 immune.py status                                # safe height, quarantin
 | `extractor.py` | the extractor learner — distilled labeler, confidence routing, teach pairs, falling annotation cost |
 | `dream.py` | consolidation — the offline cadence: verify, mine, train, adopt-or-refuse, seal |
 | `dormancy.py` | rest — manually pause/resume the loop for simple tasks (the chain stays intact) |
+| `enforce.py` | adherence spine — the brain behind the hooks; makes the per-turn loop non-bypassable (fail-open, dormancy-aware, bounded) |
+| `*_hook.sh` | Claude Code hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
+| `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
 | `registry/modalities.json` | branches — 84 reasoning engines |
 | `registry/senses.json` | leaves — 107+ perceptual detectors (self-growing) |
 | `registry/emergent.json` | Dream Cache — emergent faculties awaiting promotion |
@@ -748,13 +791,15 @@ poq.py         audit "<thought>" | seal "<thought>"   (+ --coherence/--relevance
 cambium.py     sense "<input>" | grow "<input>" | emergent
 chronosynaptic.py  think "<query>" [--seal] | collapse-notes notes.json [--seal]
 continuum.py       open | ingest | walk | resume | validate   (long-horizon tasks; --changed-only; redaction)
-recall.py          index | fetch | seal | label | grep | retrieve | gather | track | endpoints | evidence | answer | verify-source
+recall.py          turn | index | fetch | seal | label | grep | retrieve | gather | track | endpoints | evidence | answer | verify-source
+                   (turn = the whole loop in one call: verify -> screen -> recall -> seal, always leaves a ring)
 almanac.py         resolve "<text>" --asked-on "<stamp>" | between <a> <b>   (deixis -> date windows)
 embed.py           sim | vec                                   (embeddings: hashing default | st|openai|voyage)
 consensus.py       init | attest | verify                       (quorum tamper-proofing)
 immune.py          screen | scan | lockdown | rollback | status (detect/heal compromise; molt scars)
 hippocampus.py     build | update | search | status              (sub-linear recall index; recall retrieve --index uses it)
-telemetry.py       stats | tail | digest | verify | emit          (the loop's training signal; CT_TELEMETRY=off disables)
+telemetry.py       stats | tail | adherence | digest | verify | emit   (the loop's training signal; adherence = is the skill being worn?; CT_TELEMETRY=off disables)
+enforce.py         mark | stop-check | subagent-check | session-start   (hook brain; makes the loop non-bypassable; fail-open; CT_ENFORCE_ROOT / CT_ENFORCE_MAX_NUDGES)
 bench.py           probes | run [--embed] [--seal] [--after N]    (notarized retrieval baselines; suppresses telemetry)
 policy.py          show                                            (covenant tolerances; registry/policy.json overrides)
 learner.py         train [--adopt] | rollback | appetite | calibrate-poq | status   (the decisions learner)

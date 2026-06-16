@@ -1,5 +1,43 @@
 # Changelog
 
+## v3.2.0 — 2026-06-15
+
+Adherence enforcement — the per-turn loop becomes non-bypassable. A `SKILL.md`
+only *advises*; a model can read it and still drift off the loop on a long task.
+This release moves the loop from advice into harness-level law, while staying
+fail-open so it can never break a session.
+
+### Added
+- **`recall.py turn` — the whole loop in one call.** `verify -> immune-screen ->
+  recall -> PoQ-gate -> seal`, from a single command. It **always leaves a labeled
+  ring**: an over-confident, ungrounded thought is restated uncertainty-led and
+  sealed as tentative (the honest doctrine, automated), and covenant-violating input
+  is refused at the membrane and the refusal is sealed. Removes the friction that
+  makes the loop easy to drop mid-task.
+- **`enforce.py` + Claude Code hooks — the loop, enforced.** `SessionStart` primes a
+  session to wear the self-model from turn 0; `UserPromptSubmit` records the chain
+  head at turn start; `Stop`/`SubagentStop` block a turn from ending until a ring is
+  sealed. All hooks are **fail-open**, **dormancy-aware** (no enforcement while
+  paused), and **bounded** — nudging stops after `CT_ENFORCE_MAX_NUDGES` (default 3)
+  and records an `adherence_violation` so a turn that genuinely cannot seal is never
+  bricked. State lives in `chain/.enforce.json`; head reads are O(1) via the tail ring.
+- **`agents/cypher-tempre-agent.md` — subagents wear the skill too.** A subagent
+  definition whose system prompt runs the loop and seals before returning; the
+  `SubagentStop` hook holds it to that. A subagent may forge its own task chain and
+  point enforcement at it with `CT_ENFORCE_ROOT`.
+- **`telemetry.py adherence` — is the skill actually being worn?** Derives, from the
+  new `adherence_*` events, the honored/violated ratio, nudge rate, one-call loop
+  count, and how often the conscience caught an over-claim and recorded it
+  uncertainty-led. Pure O(events) derivation over the existing log.
+
+### Notes
+- Enforcement is **off while dormant** (`dormancy.py pause`) and whenever no turn
+  baseline was captured — it never blocks blindly.
+- Nine new selftest checks cover the one-call loop (always seals; hostile input still
+  seals), the Stop gate (blocks until sealed; bounded then fails open; dormant = never
+  blocks), and the adherence view. Full selftest PASS; SkillSpector static scan SAFE.
+
+
 ## v3.1.0 — 2026-06-15
 
 Bounded-memory bulk ingest — fixes an out-of-memory crash when ingesting very
