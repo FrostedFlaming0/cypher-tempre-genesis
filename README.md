@@ -47,7 +47,7 @@ Downloads:
 | [cyphertempre-static-site.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-static-site.zip) | Static files for Hostinger `public_html` |
 | [cyphertempre-dashboard-local-bridge.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge.zip) | Local bridge users run to pair their own Timechain files |
 | [cypher-tempre-codex-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.2.0.zip) | Codex skill bundle with lifecycle hook installer |
-| [cypher-tempre-openclaw-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.2.0.zip) | OpenClaw skill bundle with hook-capable wrappers and self-enforcement fallback |
+| [cypher-tempre-openclaw-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.2.0.zip) | OpenClaw skill bundle with native plugin enforcement and self-enforcement fallback |
 | [cypher-tempre-hermes-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.2.0.zip) | Hermes skill bundle with self-enforcement instructions |
 
 User bridge commands:
@@ -108,7 +108,7 @@ existing install cannot overwrite your memory or your faculties.
 
 - Claude Code: copy `skills/claude/cypher-tempre-self-model` into `~/.claude/skills/`.
 - Codex: copy `skills/codex/cypher-tempre-self-model` into your Codex skills directory.
-- OpenClaw: copy `skills/openclaw/cypher-tempre-self-model` into `~/.openclaw/workspace/skills/`, or publish that folder with ClawHub. Wire the bundled hook wrappers if your runtime supports lifecycle hooks; otherwise use the explicit `enforce.py mark -> recall.py turn -> enforce.py stop-check` loop documented in the bundle.
+- OpenClaw: copy `skills/openclaw/cypher-tempre-self-model` into `~/.openclaw/workspace/skills/`, or publish that folder with ClawHub. Then install the native plugin with `openclaw plugins install ~/.openclaw/workspace/skills/cypher-tempre-self-model/openclaw-plugin`, run `openclaw config set 'plugins.entries.cypher-tempre-enforcement.hooks.allowConversationAccess' true --strict-json`, and restart the gateway. If plugins are unavailable, use the explicit `enforce.py mark -> recall.py turn -> enforce.py stop-check` loop documented in the bundle.
 - Hermes: copy `skills/hermes/cypher-tempre-self-model` into the Hermes skills directory configured by that agent runtime.
 - NanoClaw: copy `skills/nanoclaw/cypher-tempre-self-model` into the NanoClaw skills directory configured by that agent runtime.
 

@@ -132,17 +132,34 @@ and `--at-risk` exactly as with `seal`. (The longer, explicit loop above is stil
 when you want to drive each step by hand.)
 
 **The loop is not advisory — it is enforced by the harness or by explicit self-check.**
-OpenClaw deployments vary, so the bundle supports both paths:
+For OpenClaw, the strongest path is the bundled native plugin:
+`openclaw-plugin/` registers typed OpenClaw plugin hooks. `session_start` primes
+the session, `before_prompt_build` runs `enforce.py mark` and injects the loop
+reminder, and `before_agent_finalize` runs `enforce.py stop-check`. If no ring was
+sealed, the plugin returns `action: "revise"` so OpenClaw gives you one more
+bounded pass to seal honestly before finalizing.
 
-- **Hook-capable OpenClaw runtimes** wire the bundled wrappers to lifecycle events:
-  `session_start_hook.sh` primes the session, `loop_hook.sh` marks turn start,
-  `stop_hook.sh` blocks turn end until a ring is sealed, and
-  `subagent_stop_hook.sh` holds delegated agents to the same rule.
-- **OpenClaw runtimes without lifecycle hooks** self-enforce the same contract:
-  run `python3 enforce.py mark` at turn start, seal with `recall.py turn`, then
-  run `python3 enforce.py stop-check` before returning. If `stop-check` prints a
-  JSON object with `"decision":"block"`, you have not sealed this marked turn yet.
-  Seal honestly, then check again. No output means the turn satisfied the loop.
+Install it after copying this skill folder:
+
+```
+openclaw plugins install ~/.openclaw/workspace/skills/cypher-tempre-self-model/openclaw-plugin
+openclaw config set 'plugins.entries.cypher-tempre-enforcement.hooks.allowConversationAccess' true --strict-json
+openclaw gateway restart
+```
+
+For non-bundled local plugins, set
+`plugins.entries.cypher-tempre-enforcement.hooks.allowConversationAccess=true`;
+the command above does that and is required for the `before_agent_finalize`
+Stop-equivalent hook.
+If the skill is installed somewhere custom, set
+`plugins.entries.cypher-tempre-enforcement.config.skillRoot` to this folder:
+`openclaw config set 'plugins.entries.cypher-tempre-enforcement.config.skillRoot' /path/to/cypher-tempre-self-model`.
+
+Fallback when native plugins are unavailable: self-enforce the same contract by
+running `python3 enforce.py mark` at turn start, sealing with `recall.py turn`,
+then running `python3 enforce.py stop-check` before returning. If `stop-check`
+prints a JSON object with `"decision":"block"`, seal honestly, then check again.
+No output means the marked turn satisfied the loop.
 
 All enforcement is fail-open, bounded, and dormancy-aware. **While dormant
 (`dormancy.py pause`), enforcement is off** and turns may end freely. **Subagents
@@ -779,7 +796,8 @@ python3 immune.py status                                # safe height, quarantin
 | `dream.py` | consolidation — the offline cadence: verify, mine, train, adopt-or-refuse, seal |
 | `dormancy.py` | rest — manually pause/resume the loop for simple tasks (the chain stays intact) |
 | `enforce.py` | adherence spine — hook brain and self-check verifier; makes the per-turn loop non-bypassable where the harness supports blocking, and explicit/auditable where it does not |
-| `*_hook.sh` | portable lifecycle wrappers — SessionStart / prompt-submit / Stop / SubagentStop equivalents for hook-capable OpenClaw runtimes |
+| `openclaw-plugin/` | native OpenClaw plugin — session_start / before_prompt_build / before_agent_finalize enforcement using the existing `enforce.py` |
+| `*_hook.sh` | portable shell wrappers kept for compatibility with hook-pack or shell-hook runtimes |
 | `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
 | `registry/modalities.json` | branches — 84 reasoning engines |
 | `registry/senses.json` | leaves — 107+ perceptual detectors (self-growing) |

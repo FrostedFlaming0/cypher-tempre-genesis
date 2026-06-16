@@ -5,18 +5,16 @@ spine that turns the per-turn loop from *advisory* into *non-bypassable*.
 
 A SKILL.md only ADVISES; strong models honor it, weak/long-horizon models drop
 it and the skill becomes useless. This module provides the enforcement primitives
-behind lifecycle hooks on hook-capable runtimes and behind explicit self-audits
-on OpenClaw:
+behind the native OpenClaw plugin and behind explicit self-audits:
 
-  UserPromptSubmit -> `enforce.py mark`          (record turn start: head index, reset nudges)
-  Stop             -> `enforce.py stop-check`    (HARD: block turn end until a ring is sealed)
-  SubagentStop     -> `enforce.py subagent-check`(block subagent return until it sealed)
-  SessionStart     -> `enforce.py session-start` (prime: verify + recall + covenant)
+  before_prompt_build  -> `enforce.py mark`          (record turn start: head index, reset nudges)
+  before_agent_finalize-> `enforce.py stop-check`    (request one more pass until sealed)
+  subagent_ended       -> `enforce.py subagent-check`(diagnostic; OpenClaw documents this as observation)
+  session_start        -> `enforce.py session-start` (prime: verify + recall + covenant)
 
-OpenClaw note: if your OpenClaw runtime exposes lifecycle shell hooks, wire the
-bundled `*_hook.sh` wrappers to the matching events. If it does not, OpenClaw
-agents run `mark` at turn start and read `stop-check` themselves before
-returning.
+OpenClaw note: install the bundled `openclaw-plugin/` package for native typed
+plugin hooks. If plugins are unavailable, OpenClaw agents run `mark` at turn
+start and read `stop-check` themselves before returning.
 
 Design guarantees:
   * FAIL-OPEN ALWAYS. A hook must never break the user's session; any internal
@@ -149,7 +147,7 @@ def cmd_mark(_data):
 
 
 def cmd_stop_check(data):
-    """Stop / SubagentStop: HARD block until a ring was sealed this turn.
+    """Stop / before_agent_finalize: pressure until a ring was sealed this turn.
 
     Emits the Stop-hook JSON contract:
       block -> {"decision":"block","reason":"..."}
@@ -191,9 +189,10 @@ def cmd_stop_check(data):
 
 
 def cmd_subagent_check(data):
-    """SubagentStop: same block-until-seal pressure for spawned agents. A subagent
-    that forged its own task chain should seal to it (set CT_ENFORCE_ROOT); by
-    default we enforce against the identity chain the parent shares."""
+    """Subagent check: same seal verifier for spawned agents. OpenClaw currently
+    documents subagent_ended as observation, so the native plugin logs this as a
+    diagnostic. A subagent that forged its own task chain should seal to it (set
+    CT_ENFORCE_ROOT); by default we verify against the shared identity chain."""
     cmd_stop_check(data)
 
 

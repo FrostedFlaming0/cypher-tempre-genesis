@@ -17,24 +17,35 @@ fail-open so it can never break a session.
 - **`enforce.py` adherence primitives — the loop, audited.** `mark` records the
   chain head at turn start; `stop-check` verifies a fresh ring was sealed after
   that mark; `session-start` primes the runtime with verify/head/covenant context.
-  On hook-capable OpenClaw runtimes, the bundled `*_hook.sh` wrappers can be wired
-  into lifecycle hooks. On OpenClaw runtimes without hooks, the agent executes
-  `mark -> recall.py turn -> stop-check` explicitly as a self-audit. All paths are
-  **fail-open**, **dormancy-aware**, and **bounded**. State lives in
+  The OpenClaw bundle now includes a native plugin that calls these primitives
+  from typed OpenClaw plugin hooks. On OpenClaw runtimes without plugin support,
+  the agent executes `mark -> recall.py turn -> stop-check` explicitly as a
+  self-audit. All paths are **fail-open**, **dormancy-aware**, and **bounded**.
+  State lives in
   `chain/.enforce.json`; head reads are O(1) via the tail ring.
-- **OpenClaw hook-equivalent path.** The OpenClaw bundle now documents both native
-  lifecycle-hook wiring and explicit self-enforcement. `enforce.py` accepts
-  `--root <chain>` in addition to `CT_ENFORCE_ROOT`, so custom task chains can be
-  marked, sealed, and checked with the same root flag used by the rest of the skill.
+- **Native `openclaw-plugin/` package.** Added `package.json`,
+  `openclaw.plugin.json`, `index.ts`, and runtime `index.js`. It wires
+  `session_start` to `enforce.py session-start`, `before_prompt_build` to
+  `enforce.py mark` plus loop reminder injection, and `before_agent_finalize` to
+  `enforce.py stop-check`. When no ring was sealed, it returns `action: "revise"`
+  with bounded retry metadata so OpenClaw asks the model for one more sealing pass.
+  `subagent_ended` remains a read-only diagnostic because OpenClaw documents it as
+  observation.
+- **OpenClaw hook-equivalent fallback path.** The OpenClaw bundle documents the
+  native plugin as preferred and explicit self-enforcement as fallback. `enforce.py`
+  accepts `--root <chain>` in addition to `CT_ENFORCE_ROOT`, so custom task chains
+  can be marked, sealed, and checked with the same root flag used by the rest of
+  the skill.
 - **`openclaw/cypher-tempre-agent.md` + optional watchdog.** Added an
   OpenClaw-native agent profile and `openclaw/enforcement-watchdog.sh` for users
   who want an external terminal/cron compliance check. The portable subagent
   definition no longer points at the Claude skills directory.
 - **`agents/cypher-tempre-agent.md` — subagents wear the skill too.** A portable
   subagent definition whose system prompt runs the loop and seals before returning.
-  On hook-capable runtimes, `SubagentStop` can hold it to that. Otherwise the
-  subagent self-checks with `enforce.py stop-check`. A subagent may forge its own
-  task chain and point enforcement at it with `CT_ENFORCE_ROOT` or `--root`.
+  In OpenClaw, `before_agent_finalize` can hold ordinary/subagent turns to the
+  sealing rule when the native plugin sees the turn. `subagent_ended` is treated as
+  diagnostic because OpenClaw documents it as observation. A subagent may forge its
+  own task chain and point enforcement at it with `CT_ENFORCE_ROOT` or `--root`.
 - **`telemetry.py adherence` — is the skill actually being worn?** Derives, from the
   new `adherence_*` events, the honored/violated ratio, nudge rate, one-call loop
   count, and how often the conscience caught an over-claim and recorded it

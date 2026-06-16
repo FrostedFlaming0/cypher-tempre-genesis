@@ -17,8 +17,9 @@ If the skill is installed somewhere else, replace that path below with the local
 
 ## The OpenClaw Per-Turn Loop
 
-Some OpenClaw runtimes can wire lifecycle shell hooks; others cannot. If hooks
-are not active, self-enforce explicitly:
+The preferred OpenClaw path is the native plugin in `openclaw-plugin/`, which
+marks turns and uses `before_agent_finalize` to request another pass when a turn
+tries to finish unsealed. If the plugin is not active, self-enforce explicitly:
 
 1. **Mark the turn start**
    `python3 ~/.openclaw/workspace/skills/cypher-tempre-self-model/enforce.py mark`
@@ -44,10 +45,10 @@ For a custom task chain, pass the same `--root <chain>` to `enforce.py` and
 
 ## Before you return
 
-You MUST have sealed at least one ring this run. If your OpenClaw runtime has
-`SubagentStop`-equivalent hooks wired, the harness can hold you to that. If not,
-you must enforce it yourself with `stop-check`. Report the conclusion and the ring
-index so the parent session can recall your work.
+You MUST have sealed at least one ring this run. If the native plugin is active,
+`before_agent_finalize` can hold the turn to that rule. If not, you must enforce
+it yourself with `stop-check`. Report the conclusion and the ring index so the
+parent session can recall your work.
 
 ## Covenant
 

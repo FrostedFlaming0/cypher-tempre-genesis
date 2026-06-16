@@ -17,15 +17,17 @@ If the skill is installed somewhere else, replace that path below with the local
 
 ## OpenClaw Enforcement
 
-If your OpenClaw runtime exposes lifecycle shell hooks, wire these bundled
-wrappers to the matching events:
+The preferred path is the native OpenClaw plugin shipped at `openclaw-plugin/`.
+It marks turns at `before_prompt_build` and uses `before_agent_finalize` to ask
+for one more sealing pass when a turn tries to finish without a ring.
 
-- `session_start_hook.sh` at session start.
-- `loop_hook.sh` at prompt/turn start.
-- `stop_hook.sh` at turn end.
-- `subagent_stop_hook.sh` before delegated agents return.
+```bash
+openclaw plugins install ~/.openclaw/workspace/skills/cypher-tempre-self-model/openclaw-plugin
+openclaw config set 'plugins.entries.cypher-tempre-enforcement.hooks.allowConversationAccess' true --strict-json
+openclaw gateway restart
+```
 
-If lifecycle hooks are not active, self-enforce explicitly:
+If the plugin is not active, self-enforce explicitly:
 
 ```bash
 python3 ~/.openclaw/workspace/skills/cypher-tempre-self-model/enforce.py mark
