@@ -1,12 +1,12 @@
 #!/bin/bash
-# Cypher Tempre — UserPromptSubmit hook (standing instruction set by cyberphysicsai).
+# Cypher Tempre — prompt-start/UserPromptSubmit hook equivalent.
 # Two jobs, both fail-open (never block a prompt):
 #   1. enforce.py mark  — record the chain head at turn start so the Stop hook can
 #      tell whether THIS turn sealed a ring (turns the loop from advice into law).
 #   2. inject a one-line reminder to run the per-turn loop (dormancy-aware).
 SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SKILL/dormancy.py" ] || exit 0
-# 1. mark turn start (silent; consumes the UserPromptSubmit JSON on stdin).
+# 1. mark turn start (silent; consumes hook JSON on stdin when the runtime sends it).
 [ -f "$SKILL/enforce.py" ] && python3 "$SKILL/enforce.py" mark >/dev/null 2>&1
 # 2. inject the reminder.
 if python3 "$SKILL/dormancy.py" status 2>/dev/null | grep -qi paused; then

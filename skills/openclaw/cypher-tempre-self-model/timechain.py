@@ -493,7 +493,7 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pi = sub.add_parser("init", parents=[common], help="create the Genesis Block (Ring 0)")
-    pi.add_argument("--name", default="Claude")
+    pi.add_argument("--name", default="OpenClaw")
     pi.add_argument("--difficulty", type=int, default=0, help="PoW leading hex zeros (0 = none)")
     pi.set_defaults(func=cmd_init)
 
