@@ -4,13 +4,18 @@
 spine that turns the per-turn loop from *advisory* into *non-bypassable*.
 
 A SKILL.md only ADVISES; strong models honor it, weak/long-horizon models drop
-it and the skill becomes useless. This module is the brain behind a small set of
-Claude Code hooks that make the loop mandatory by construction:
+it and the skill becomes useless. This module provides the enforcement primitives
+behind lifecycle hooks on hook-capable runtimes and behind explicit self-audits
+on Hermes:
 
   UserPromptSubmit -> `enforce.py mark`          (record turn start: head index, reset nudges)
   Stop             -> `enforce.py stop-check`    (HARD: block turn end until a ring is sealed)
   SubagentStop     -> `enforce.py subagent-check`(block subagent return until it sealed)
   SessionStart     -> `enforce.py session-start` (prime: verify + recall + covenant)
+
+Hermes note: Hermes does not currently provide a Stop/UserPromptSubmit shell-hook
+contract. Hermes agents run `mark` at turn start and read `stop-check` themselves
+before returning.
 
 Design guarantees:
   * FAIL-OPEN ALWAYS. A hook must never break the user's session; any internal
@@ -33,6 +38,32 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 MAX_NUDGES = int(os.environ.get("CT_ENFORCE_MAX_NUDGES", "3"))
+
+
+def _apply_cli_root(argv):
+    """Allow `enforce.py mark --root <chain>` for Hermes self-enforcement.
+
+    Hook runtimes normally pass CT_ENFORCE_ROOT. Humans and Hermes agents often
+    reach for the skill's common `--root` flag, so accept it here too.
+    """
+    cleaned = []
+    root = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--root" and i + 1 < len(argv):
+            root = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--root="):
+            root = arg.split("=", 1)[1]
+            i += 1
+            continue
+        cleaned.append(arg)
+        i += 1
+    if root:
+        os.environ["CT_ENFORCE_ROOT"] = root
+    return cleaned
 
 
 def _root_from(stdin_data):
@@ -209,6 +240,7 @@ HANDLERS = {
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
+    argv = _apply_cli_root(argv)
     cmd = argv[0] if argv else ""
     handler = HANDLERS.get(cmd)
     if not handler:

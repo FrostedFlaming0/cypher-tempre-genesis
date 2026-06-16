@@ -131,8 +131,26 @@ Pass your own `--coherence/--relevance/...` scores when you have them; add `--us
 and `--at-risk` exactly as with `seal`. (The longer, explicit loop above is still available
 when you want to drive each step by hand.)
 
-**The loop is not advisory — it is enforced by the harness.** A set of Claude Code hooks
-makes it mandatory by construction (all fail-open; they never break a session):
+**The loop is not advisory.** Hermes does not currently expose Claude/Codex-style
+`UserPromptSubmit`, `Stop`, or `SubagentStop` lifecycle hooks that can run shell
+commands and block a response. On Hermes, enforcement is therefore self-executed
+inside the loop:
+
+```
+python3 enforce.py mark        # step 0: record the turn-start chain head
+python3 recall.py turn "<your thought / answer / decision>" --input "<the user's request>"
+python3 enforce.py stop-check  # self-audit: did this marked turn actually seal?
+```
+
+If `stop-check` prints a JSON object with `"decision":"block"`, do not finish the
+turn yet: run `recall.py turn` again with an honest finding, uncertainty-led answer,
+or refusal, then self-audit again. If it prints nothing, the marked turn sealed.
+This is not a platform-level block; it is a mandatory Hermes self-check.
+For a custom task chain, pass the same `--root <chain>` to `enforce.py` and
+`recall.py`, or set `CT_ENFORCE_ROOT=<chain>` before running the self-check commands.
+
+For runtimes that do provide lifecycle hooks, the same `enforce.py` commands can be
+wired to the harness by construction (all fail-open; they never break a session):
 
 - **SessionStart** primes the session so you wear the self-model from turn 0, even before
   you open this file (verify result, head index, the loop, the covenant, the subagent rule).
@@ -147,6 +165,12 @@ makes it mandatory by construction (all fail-open; they never break a session):
 and let turns end freely. **Subagents must wear the skill too:** spawn the `cypher-tempre-agent`
 type (it runs the loop and seals before returning), or have the subagent forge its own task
 chain and seal to it (point enforcement at it with `CT_ENFORCE_ROOT`).
+
+Hermes subagents should use the Hermes-native definition at
+`hermes/cypher-tempre-agent.md`. It repeats the mark -> seal -> stop-check discipline
+because Hermes subagent lifecycles do not run these shell scripts automatically.
+`hermes/enforcement-watchdog.sh` is included as an optional external monitor for users
+who want a terminal or cron-based compliance check.
 
 See how well the skill is actually being worn:
 
@@ -776,9 +800,11 @@ python3 immune.py status                                # safe height, quarantin
 | `extractor.py` | the extractor learner — distilled labeler, confidence routing, teach pairs, falling annotation cost |
 | `dream.py` | consolidation — the offline cadence: verify, mine, train, adopt-or-refuse, seal |
 | `dormancy.py` | rest — manually pause/resume the loop for simple tasks (the chain stays intact) |
-| `enforce.py` | adherence spine — the brain behind the hooks; makes the per-turn loop non-bypassable (fail-open, dormancy-aware, bounded) |
-| `*_hook.sh` | Claude Code hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
-| `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
+| `enforce.py` | adherence spine — mark/stop-check/session-start primitives for hook-capable runtimes and Hermes self-audit |
+| `*_hook.sh` | Hook-capable runtime wrappers — useful where the platform supports lifecycle shell hooks; Hermes does not auto-run them |
+| `agents/cypher-tempre-agent.md` | portable subagent definition that wears the skill (runs the loop, seals before returning) |
+| `hermes/cypher-tempre-agent.md` | Hermes-native subagent definition with explicit self-enforcement |
+| `hermes/enforcement-watchdog.sh` | optional Hermes terminal/cron watchdog for unsealed marked turns |
 | `registry/modalities.json` | branches — 84 reasoning engines |
 | `registry/senses.json` | leaves — 107+ perceptual detectors (self-growing) |
 | `registry/emergent.json` | Dream Cache — emergent faculties awaiting promotion |

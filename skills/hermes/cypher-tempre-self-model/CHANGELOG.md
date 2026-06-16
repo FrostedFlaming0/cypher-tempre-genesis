@@ -14,17 +14,30 @@ fail-open so it can never break a session.
   sealed as tentative (the honest doctrine, automated), and covenant-violating input
   is refused at the membrane and the refusal is sealed. Removes the friction that
   makes the loop easy to drop mid-task.
-- **`enforce.py` + Claude Code hooks — the loop, enforced.** `SessionStart` primes a
-  session to wear the self-model from turn 0; `UserPromptSubmit` records the chain
-  head at turn start; `Stop`/`SubagentStop` block a turn from ending until a ring is
-  sealed. All hooks are **fail-open**, **dormancy-aware** (no enforcement while
-  paused), and **bounded** — nudging stops after `CT_ENFORCE_MAX_NUDGES` (default 3)
-  and records an `adherence_violation` so a turn that genuinely cannot seal is never
-  bricked. State lives in `chain/.enforce.json`; head reads are O(1) via the tail ring.
-- **`agents/cypher-tempre-agent.md` — subagents wear the skill too.** A subagent
-  definition whose system prompt runs the loop and seals before returning; the
-  `SubagentStop` hook holds it to that. A subagent may forge its own task chain and
-  point enforcement at it with `CT_ENFORCE_ROOT`.
+- **`enforce.py` adherence primitives — the loop, audited.** `mark` records the
+  chain head at turn start; `stop-check` verifies a fresh ring was sealed after
+  that mark; `session-start` primes the runtime with verify/head/covenant context.
+  On hook-capable runtimes these commands can be wired into lifecycle hooks. On
+  Hermes they are executed explicitly by the model as a self-audit. All paths are
+  **fail-open**, **dormancy-aware** (no enforcement while paused), and **bounded**.
+  State lives in `chain/.enforce.json`; head reads are O(1) via the tail ring.
+- **Hermes self-enforcement path.** Hermes has no native `UserPromptSubmit`,
+  `Stop`, or `SubagentStop` shell-hook contract, so the Hermes bundle now documents
+  an explicit `enforce.py mark -> recall.py turn -> enforce.py stop-check` loop.
+  `stop-check` remains the same shared verifier, but the Hermes model reads its
+  verdict and loops before returning instead of relying on a platform block.
+- **`enforce.py --root` support for Hermes.** The self-audit CLI now accepts
+  `--root <chain>` in addition to `CT_ENFORCE_ROOT`, so custom task chains can be
+  marked, sealed, and checked with the same root flag used by the rest of the skill.
+- **`hermes/cypher-tempre-agent.md` + optional watchdog.** Added a Hermes-native
+  subagent definition and `hermes/enforcement-watchdog.sh` for users who want an
+  external terminal/cron compliance check. The Hermes bundle's portable subagent
+  definition no longer points at the Claude skills directory.
+- **`agents/cypher-tempre-agent.md` — subagents wear the skill too.** A portable
+  subagent definition whose system prompt runs the loop and seals before returning.
+  On Hermes, the subagent self-checks with `enforce.py stop-check`; on hook-capable
+  runtimes, `SubagentStop` can hold it to the same rule. A subagent may forge its own
+  task chain and point enforcement at it with `CT_ENFORCE_ROOT` or `--root`.
 - **`telemetry.py adherence` — is the skill actually being worn?** Derives, from the
   new `adherence_*` events, the honored/violated ratio, nudge rate, one-call loop
   count, and how often the conscience caught an over-claim and recorded it
