@@ -5,7 +5,7 @@ spine that turns the per-turn loop from *advisory* into *non-bypassable*.
 
 A SKILL.md only ADVISES; strong models honor it, weak/long-horizon models drop
 it and the skill becomes useless. This module is the brain behind a small set of
-Claude Code hooks that make the loop mandatory by construction:
+Codex lifecycle hooks that make the loop mandatory by construction:
 
   UserPromptSubmit -> `enforce.py mark`          (record turn start: head index, reset nudges)
   Stop             -> `enforce.py stop-check`    (HARD: block turn end until a ring is sealed)

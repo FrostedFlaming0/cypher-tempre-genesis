@@ -29,7 +29,7 @@ against live source before making conclusions.
 | Runtime | Drag-and-drop ZIP |
 |---|---|
 | Claude Code | [cypher-tempre-claude-skill-v3.1.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-claude-skill-v3.1.0.zip) |
-| Codex | [cypher-tempre-codex-skill-v3.1.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-codex-skill-v3.1.0.zip) |
+| Codex | [cypher-tempre-codex-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.2.0.zip) |
 | OpenClaw | [cypher-tempre-openclaw-skill-v3.1.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-openclaw-skill-v3.1.0.zip) |
 | Hermes | [cypher-tempre-hermes-skill-v3.1.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-hermes-skill-v3.1.0.zip) |
 | NanoClaw | [cypher-tempre-nanoclaw-skill-v3.1.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-nanoclaw-skill-v3.1.0.zip) |
@@ -46,6 +46,7 @@ Downloads:
 |---|---|
 | [cyphertempre-static-site.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-static-site.zip) | Static files for Hostinger `public_html` |
 | [cyphertempre-dashboard-local-bridge.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge.zip) | Local bridge users run to pair their own Timechain files |
+| [cypher-tempre-codex-skill-v3.2.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.2.0.zip) | Codex skill bundle with lifecycle hook installer |
 
 User bridge commands:
 
@@ -74,12 +75,13 @@ https://github.com/cyberphysicsai/cypher-tempre-genesis/archive/refs/heads/main.
 Use only this folder from the ZIP:
 skills/codex/cypher-tempre-self-model
 
-Copy that folder into my Codex skills directory as cypher-tempre-self-model, then run python3 selftest.py inside it to verify the install.
+Copy that folder into my Codex skills directory as cypher-tempre-self-model, then run python3 selftest.py inside it to verify the install. After that, run python3 install_codex_hooks.py inside the installed skill folder so Codex can load the lifecycle hooks from ~/.codex/hooks.json.
 ```
 
-After a GitHub Release exists, you can also share a one-file release asset URL
-such as `https://github.com/cyberphysicsai/cypher-tempre-genesis/releases/download/v3.1.0/cypher-tempre-codex-skill-v3.1.0.zip`.
-Release URLs return 404 until the tag and asset are published.
+The current Codex bundle is also mirrored in `downloads/` as
+`cypher-tempre-codex-skill-v3.2.0.zip`. After installing hooks, open `/hooks`
+in Codex to review and trust the new command hooks, then restart or start a
+new session.
 
 ## File labels
 
