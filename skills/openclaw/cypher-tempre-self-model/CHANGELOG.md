@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.3.1 — 2026-06-17
+
+Patch hardening for the v3.3 exhaustive-audit governor.
+
+### Fixed
+- `audit.py --help` no longer crashes: argparse help strings now escape literal
+  percent signs.
+- The exhaustive review queue is set-based instead of high-water-only. If an
+  agent records a later block before an earlier block, `audit.py next` now
+  returns the missed lower-index block instead of stranding the queue.
+- `audit.py record` rejects block IDs that are not in-scope Continuum blocks
+  instead of silently ignoring them, and requires exactly one explicit judgment:
+  `--finding` or `--clean`.
+- OpenClaw plugin metadata now matches the skill version, and its README states
+  that `subagent_ended` is diagnostic rather than a blocking subagent finalizer
+  in the current OpenClaw hook surface.
+- Public drag-and-drop skill zips have been rebuilt from the current source
+  bundles so downloaded installs include the v3.3 audit governor.
+
 ## v3.3.0 — 2026-06-16
 
 Two hardening layers: an exhaustive-audit **coverage governor** so a "read every

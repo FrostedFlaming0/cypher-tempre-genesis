@@ -24,11 +24,11 @@ drives completion off an unreviewed-block queue:
   audit.py report    --root <chain> [--final]            # refuses "FINAL" below 100% — labels "INTERIM"
 
 DESIGN. The hot path (progress, the enforce.py turn-end governor) reads an O(1),
-*bounded* audit sub-state from the head block (a contiguous review cursor + a
-high-water ring index + counts). The cold path (validate / report --final) is
-RIGOROUS: it streams the chain, rebuilds the reviewed set from the sealed
-`audit_review` rings' `reviewed_indices`, and checks set-equality against the
-in-scope continuum blocks — no sequential assumption, fully tamper-evident.
+*bounded* audit sub-state from the head block (reviewed counts + recent findings).
+The queue and final proof stream the chain, rebuild the reviewed set from sealed
+`audit_review` rings, and compare it against the in-scope continuum blocks. That
+means out-of-order reviews do not strand missed blocks, and the final report never
+rests on a sequential assumption.
 
 Stdlib only. Python 3.8+. Companion to continuum.py / timechain.py.
 """
@@ -135,6 +135,21 @@ class Audit:
         st = self._head_state()
         return (st or {}).get("audit")
 
+    def _review_sets(self, scope):
+        """Return (in_scope, reviewed) index sets by streaming the chain."""
+        in_scope, reviewed = set(), set()
+        for r in self.tc.iter_rings():
+            p = r.get("payload") or {}
+            if _is_continuum_block(p) and _in_scope(p["data"], scope):
+                in_scope.add(r["index"])
+            elif p.get("event") == "audit_review":
+                for i in (p.get("data") or {}).get("reviewed_indices", []):
+                    try:
+                        reviewed.add(int(i))
+                    except (TypeError, ValueError):
+                        continue
+        return in_scope, reviewed & in_scope
+
     # -- open --------------------------------------------------------------- #
     def open(self, objective=None, roles=None, exclude_roles=None, difficulty=0):
         st = self._head_state()
@@ -159,8 +174,8 @@ class Audit:
             "scope": scope,
             "total_blocks": total_blocks,
             "total_lines": total_lines,
-            "review_cursor": 0,            # contiguous reviewed in-scope blocks (bounded)
-            "review_high_water": -1,       # highest ring index recorded reviewed
+            "review_cursor": 0,            # reviewed in-scope block count (bounded)
+            "review_high_water": -1,       # legacy/non-authoritative max reviewed ring
             "reviewed_blocks": 0,
             "reviewed_lines": 0,
             "findings_total": 0,
@@ -180,10 +195,11 @@ class Audit:
         a = (st or {}).get("audit")
         if not a:
             raise RuntimeError("No audit open — run `audit.py open` first.")
-        scope, hw = a["scope"], a["review_high_water"]
+        scope = a["scope"]
+        _, reviewed = self._review_sets(scope)
         out = []
         for r in self.tc.iter_rings():
-            if r["index"] <= hw:
+            if r["index"] in reviewed:
                 continue
             p = r.get("payload") or {}
             if _is_continuum_block(p) and _in_scope(p["data"], scope):
@@ -203,25 +219,31 @@ class Audit:
             raise RuntimeError("No audit open — run `audit.py open` first.")
         st = json.loads(json.dumps(st))
         a = st["audit"]
-        # Resolve the cited rings -> count only blocks NEW past the high-water mark
-        # (so re-review never double-advances the cursor). In-scope only.
         idxset = set(int(i) for i in indices)
-        newly, new_lines, paths = 0, 0, []
+        if not idxset:
+            raise RuntimeError("No block indices supplied.")
+
+        in_scope, reviewed_before = self._review_sets(a["scope"])
+        invalid = sorted(idxset - in_scope)
+        if invalid:
+            raise RuntimeError("Block index(es) are not reviewable in-scope continuum blocks: "
+                               + ", ".join(str(i) for i in invalid))
+
+        new_idxs = idxset - reviewed_before
+        new_lines, paths = 0, []
         for r in self.tc.iter_rings():
             if r["index"] not in idxset:
                 continue
             p = r.get("payload") or {}
-            if not (_is_continuum_block(p) and _in_scope(p["data"], a["scope"])):
-                continue
-            if r["index"] > a["review_high_water"]:
-                newly += 1
+            if r["index"] in new_idxs:
                 new_lines += _block_lines(p["data"])
             paths.append(p["data"].get("relative_path"))
-        a["review_cursor"] += newly
-        a["reviewed_blocks"] += newly
+        newly = len(new_idxs)
+        reviewed_after = reviewed_before | idxset
+        a["review_cursor"] = len(reviewed_after)
+        a["reviewed_blocks"] = len(reviewed_after)
         a["reviewed_lines"] += new_lines
-        if idxset:
-            a["review_high_water"] = max(a["review_high_water"], max(idxset))
+        a["review_high_water"] = max(reviewed_after) if reviewed_after else -1
         if finding:
             tag = ", ".join(sorted(set(p for p in paths if p))) or "?"
             a["recent_findings"] = (a["recent_findings"] + [f"{tag}: {finding}"])[-RECENT_FINDINGS_CAP:]
@@ -327,8 +349,12 @@ def cmd_next(args):
 
 
 def cmd_record(args):
-    a, ring, newly = Audit(args.root).record(args.block, finding=args.finding, clean=args.clean,
-                                             status=args.status)
+    try:
+        a, ring, newly = Audit(args.root).record(args.block, finding=args.finding, clean=args.clean,
+                                                 status=args.status)
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
     print(f"recorded review of {newly} new block(s) (Ring {ring['index']}). "
           f"coverage {a['review_cursor']}/{a['total_blocks']}.")
     print(f"NEXT: {a['next_action']}")
@@ -391,8 +417,9 @@ def build_parser():
 
     pr = sub.add_parser("record", parents=[common], help="seal a review record for block(s) you read")
     pr.add_argument("--block", nargs="+", type=int, required=True, help="ring index(es) just reviewed")
-    pr.add_argument("--finding", default=None, help="a real finding (omit + use --clean if nothing)")
-    pr.add_argument("--clean", action="store_true", help="reviewed, nothing of note")
+    prx = pr.add_mutually_exclusive_group(required=True)
+    prx.add_argument("--finding", default=None, help="a real finding (omit + use --clean if nothing)")
+    prx.add_argument("--clean", action="store_true", help="reviewed, nothing of note")
     pr.add_argument("--status", default="reviewed")
     pr.set_defaults(func=cmd_record)
 
@@ -400,10 +427,10 @@ def build_parser():
     pp.set_defaults(func=cmd_progress)
 
     pv = sub.add_parser("validate", parents=[common], help="PROVE coverage by streaming the chain")
-    pv.add_argument("--require-complete", action="store_true", help="fail unless 100% reviewed")
+    pv.add_argument("--require-complete", action="store_true", help="fail unless 100%% reviewed")
     pv.set_defaults(func=cmd_validate)
 
-    prp = sub.add_parser("report", parents=[common], help="audit report (refuses FINAL below 100%)")
+    prp = sub.add_parser("report", parents=[common], help="audit report (refuses FINAL below 100%%)")
     prp.add_argument("--final", action="store_true", help="request a FINAL report (refused if incomplete)")
     prp.set_defaults(func=cmd_report)
 
