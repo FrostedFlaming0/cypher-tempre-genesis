@@ -1,5 +1,28 @@
 # Changelog
 
+## v3.3.6 — 2026-06-17
+
+Cross-runtime hook safety — the per-turn reminder is guidance, never a runnable command.
+
+### Fixed
+- **Injected hook reminders no longer contain a verbatim-runnable command.** On Claude
+  Code the reminder is passive context, but OpenClaw's gateway fires the
+  `UserPromptSubmit`-equivalent on every `openclaw infer model run` sub-inference and
+  tries to **execute** an injected `python3 …` string — flash-failing on each call
+  (worst on background/benchmark runners doing hundreds of inferences). `loop_hook.sh`
+  and the `enforce.py` Stop / SessionStart / audit-governor reasons now describe the loop
+  and **name** the commands (recall.py `turn`, dormancy.py `pause`, audit.py
+  `next`/`record`/`progress`) instead of emitting a runnable line; the exact syntax stays
+  in `SKILL.md` / `AGENTS.md`. The flash is gone, and the enforcement guidance is unchanged
+  on harnesses that read it as context.
+
+### Note
+- Scoping the hook so it never fires on sub-inference primitives is a separate,
+  runtime-side fix (the OpenClaw gateway). For background throughput jobs (e.g. a
+  benchmark runner), drive the loop yourself and run inferences with `--local` to bypass
+  the gateway hooks — enforcement-by-hook is for interactive agent turns, not raw
+  inference fan-out.
+
 ## v3.3.5 — 2026-06-17
 
 Debug flag polish.
