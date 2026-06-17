@@ -1,5 +1,25 @@
 # Changelog
 
+## v3.3.2 — 2026-06-17
+
+Fixes a harness-level "Stop hook error: JSON validation failed" some environments
+hit. The Stop/SubagentStop hooks must emit **exactly** the decision JSON (or
+nothing) on stdout; on some setups an import-time message or a warning merged into
+that stream and corrupted the JSON the harness parses. The gate was already
+fail-open (the session was never bricked), but the error was noisy and dropped the
+block decision.
+
+### Fixed
+- **`enforce.py` now quarantines its own stdout.** While a hook handler runs,
+  stdout is redirected to stderr and the *only* thing written to the real stdout is
+  the decision the handler explicitly queues — so no import side-effect, stray
+  print, or warning can ever corrupt it. Warnings are also silenced. Applies to
+  `stop-check`, `subagent-check`, and `session-start`.
+- **`stop_hook.sh` / `subagent_stop_hook.sh` redirect stderr to `/dev/null`** as a
+  second layer, so even a harness that merges stderr into stdout reads clean JSON.
+- New selftest check: the Stop decision on stdout is pure JSON even when a helper
+  prints mid-handler.
+
 ## v3.3.1 — 2026-06-17
 
 Patch hardening for the v3.3 exhaustive-audit governor.

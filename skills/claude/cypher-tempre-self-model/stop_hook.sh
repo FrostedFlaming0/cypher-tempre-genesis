@@ -7,5 +7,8 @@
 # after a few nudges and an adherence_violation is recorded — never bricked.
 SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SKILL/enforce.py" ] || exit 0
-python3 "$SKILL/enforce.py" stop-check
+# stderr -> /dev/null so a warning or import message can NEVER bleed into the
+# stdout the harness parses as the decision JSON (enforce.py also quarantines its
+# own stdout to guarantee this). exit 0 always: the gate is fail-open by design.
+python3 "$SKILL/enforce.py" stop-check 2>/dev/null
 exit 0
