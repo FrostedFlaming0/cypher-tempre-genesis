@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.7.1 — 2026-06-17
+
+Real-time learning, unbounded — alignment is the guardrail, not a count.
+
+### Changed
+- **`CT_MAX_GROWN` defaults to 0 (unlimited)** (was 4096/kind). The artificial faculty
+  ceiling is removed. What keeps unbounded real-time growth safe is the **conscience**, not a
+  number: the **genesis covenant** (baked-in alignment), the **PoQ gate** on every seal, and
+  the **immune membrane** — which screens each request and refuses hostile/injection input
+  *before* it can grow anything (verified: the per-turn loop blocks at the membrane and never
+  reaches growth). The cap remains as an optional **performance** knob (detect_gap/label cost
+  rises with faculty count) — explicitly not a safety control.
+
+### Notes
+- Makes the v3.7.0 autonomous, real-time, sense+modality growth genuinely unbounded by default,
+  for a real-time learning agent. Growth is still bounded by gap **diversity** (kind-aware
+  dedup) and the **dissonance floor** — only genuine, novel, covenant-clean gaps grow; the base
+  21/21 stay pristine; growth is per-user + gitignored. selftest PASS; SkillSpector SAFE.
+
 ## v3.7.0 — 2026-06-17
 
 Eager growth — the recurrence threshold is torn down; gaps are filled on sight.

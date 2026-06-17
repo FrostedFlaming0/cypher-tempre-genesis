@@ -45,10 +45,14 @@ SPROUT_DISSONANCE = 210    # at/above this the gap is too foreign to fuse -> spr
 # ANY genuine gap is filled by a coded faculty on first encounter. Raise CT_PROMOTE_AT
 # to be selective again (e.g. 3 = only promote a gap that recurs, the old behaviour).
 PROMOTE_AT = max(1, int(os.environ.get("CT_PROMOTE_AT", "1")))
-# Soft cap on the per-user GROWN faculty count (per kind) — the only backstop against
-# pathological unbounded growth, since dedup already bounds growth to distinct gaps.
-# 0 = unlimited. The base 21/21 are never counted here (they are pristine).
-MAX_GROWN = int(os.environ.get("CT_MAX_GROWN", "4096"))
+# Optional ceiling on the per-user GROWN faculty count (per kind). DEFAULT 0 = UNLIMITED:
+# real-time learning is the point, and ALIGNMENT is enforced by the conscience, not a
+# count — the genesis covenant, the PoQ gate on every seal, and the immune membrane (which
+# refuses hostile input BEFORE it can grow anything) are what keep growth safe. dedup +
+# the dissonance floor already bound growth to distinct genuine gaps. Set CT_MAX_GROWN>0
+# only if you want to cap registry size for PERFORMANCE (detect_gap/label cost rises with
+# faculty count) — it is not a safety control. The base 21/21 are never counted here.
+MAX_GROWN = int(os.environ.get("CT_MAX_GROWN", "0"))
 REASON_VERBS = {"analyze", "plan", "compute", "design", "solve", "debug", "optimize",
                 "prove", "derive", "decide", "evaluate", "calculate", "reason", "refactor"}
 
