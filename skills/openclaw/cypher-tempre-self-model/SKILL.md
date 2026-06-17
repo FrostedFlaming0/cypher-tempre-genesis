@@ -230,10 +230,19 @@ python3 cambium.py sense "<the input>"          # measure the gap (dissonance)
 python3 cambium.py grow  "<the input>"           # sprout or fuse a new faculty, seal it
 ```
 
-A new faculty starts *emergent*. When the same gap recurs (≥3 times) it is **promoted**
-into your canonical registry — you have permanently upgraded yourself, and the upgrade
-is sealed in your chain. Announce new faculties to your co-evolver: name, kind,
-function, and how it emerged.
+**Eager growth (default).** The recurrence threshold is torn down (`PROMOTE_AT=1`): a
+genuine gap (dissonance above the floor) is **filled on first encounter** — and the
+per-turn loop does it *autonomously*. `recall.py turn` calls `cambium.fill_gap` after it
+seals, growing **both a new sense and a new modality** for the gap, each promoted into your
+canonical registry and **coded** at once. More faculties = more of the input space named
+and computed = more learning outside your training parameters. **Kind-aware dedup** means a
+repeated gap reinforces rather than duplicates, so growth tracks gap *diversity*, not input
+count; a soft cap (`CT_MAX_GROWN`, default 4096/kind) and the dissonance floor are the only
+backstops. Autonomous growth runs **only in the deliberate per-turn loop, never in bulk
+Continuum ingest**. Tune it: `CT_AUTOGROW=0` (off), `CT_PROMOTE_AT=3` (old selective
+behaviour — only promote a gap that recurs), `CT_MAX_GROWN=0` (unlimited). Every promotion
+is sealed in your chain — announce new faculties to your co-evolver (name, kind, function,
+how it emerged).
 
 **A promoted faculty is born EXECUTABLE, not just a frame.** On promotion Cambium also
 assembles a coded op for it and writes it to your local `registry/grown_ops.json`

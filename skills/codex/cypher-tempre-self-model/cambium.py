@@ -41,7 +41,14 @@ from poq import tokens, jaccard, coverage, clamp
 
 DISSONANCE_FLOOR = 150     # below this, existing faculties cover the input -> no growth
 SPROUT_DISSONANCE = 210    # at/above this the gap is too foreign to fuse -> sprout fresh
-PROMOTE_AT = 3             # recurrence count that triggers promotion to canonical registry
+# Recurrence count that triggers promotion. Torn down to 1 by default (eager growth):
+# ANY genuine gap is filled by a coded faculty on first encounter. Raise CT_PROMOTE_AT
+# to be selective again (e.g. 3 = only promote a gap that recurs, the old behaviour).
+PROMOTE_AT = max(1, int(os.environ.get("CT_PROMOTE_AT", "1")))
+# Soft cap on the per-user GROWN faculty count (per kind) — the only backstop against
+# pathological unbounded growth, since dedup already bounds growth to distinct gaps.
+# 0 = unlimited. The base 21/21 are never counted here (they are pristine).
+MAX_GROWN = int(os.environ.get("CT_MAX_GROWN", "4096"))
 REASON_VERBS = {"analyze", "plan", "compute", "design", "solve", "debug", "optimize",
                 "prove", "derive", "decide", "evaluate", "calculate", "reason", "refactor"}
 
@@ -234,7 +241,11 @@ def save_emergent(root: Path, data: dict):
 
 
 def match_emergent(data: dict, prop: dict):
+    # Kind-aware: a sense-gap and a modality-gap from the SAME seed terms are two
+    # distinct faculties, so "grow both" is not collapsed into one by the dedup.
     for e in data["faculties"]:
+        if e.get("kind") != prop.get("kind"):
+            continue
         if e["name"] == prop["name"]:
             return e
         if prop["parents"] and e.get("parents") == prop["parents"]:
@@ -264,6 +275,9 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
     key = "modalities" if e["kind"] == "modality" else "senses"
     base = json.loads((root / "registry" / f"{key}.json").read_text()).get(key, [])
     grown = load_grown(root)
+    # Soft cap: the only backstop against pathological unbounded growth (0 = unlimited).
+    if MAX_GROWN and len(grown.get(key, [])) >= MAX_GROWN:
+        return None
     existing_ids = [it["id"] for it in base] + [it["id"] for it in grown.get(key, [])]
     new_id = (max(existing_ids) if existing_ids else 0) + 1
     grown.setdefault(key, []).append({
@@ -308,14 +322,19 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
 # --------------------------------------------------------------------------- #
 
 def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
-         kind_override=None, difficulty: int = 0, registry_root=None):
+         kind_override=None, difficulty: int = 0, registry_root=None, force=False,
+         gap_override=None):
     tc = Timechain(root)
     home = registry_home(root, registry_root)   # faculties live here; rings seal to root
     corpus = load_corpus(home)
-    gap = detect_gap(corpus, input_text, context)
+    # gap_override lets fill_gap grow BOTH kinds from one gap snapshot, so the second
+    # kind's seed terms aren't erased by the first faculty it just grew.
+    gap = gap_override or detect_gap(corpus, input_text, context)
     result = {"gap": gap, "grew": False}
 
-    if gap["dissonance"] <= DISSONANCE_FLOOR:
+    # `force` grows even when nominally covered — used by fill_gap to grow the SECOND
+    # kind after the first faculty (already confirmed a real gap) lowered the dissonance.
+    if not force and gap["dissonance"] <= DISSONANCE_FLOOR:
         result["action"] = "covered"
         result["reason"] = (f"dissonance {gap['dissonance']} <= floor {DISSONANCE_FLOOR}: "
                             f"existing faculties already cover this input; no growth.")
@@ -331,10 +350,11 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
             {"ts": now_iso(), "dissonance": gap["dissonance"], "context": short(input_text, 120)})
         if existing["recurrence"] >= PROMOTE_AT and existing["status"] == "emergent":
             ring = promote(home, tc, existing, difficulty=difficulty)
-            existing["status"] = "promoted"
-            save_emergent(home, data)
-            result.update(grew=True, action="promoted", faculty=existing)
-            return result, ring
+            if ring is not None:               # None == soft cap reached; stay emergent
+                existing["status"] = "promoted"
+                save_emergent(home, data)
+                result.update(grew=True, action="promoted", faculty=existing)
+                return result, ring
         save_emergent(home, data)
         payload = {"event": "faculty_recurrence", "emergent": existing["eid"],
                    "name": existing["name"], "recurrence": existing["recurrence"],
@@ -357,9 +377,44 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
     ring = tc.seal("faculty", payload, poq=faculty_poq(gap, fac["function"]), difficulty=difficulty)
     fac["born_ring"] = ring["ring_hash"]
     data["faculties"].append(fac)
+    # Eager growth (PROMOTE_AT <= 1): fill the gap on FIRST encounter — promote the
+    # just-born faculty into the canonical registry immediately and code it.
+    if fac["recurrence"] >= PROMOTE_AT and fac["status"] == "emergent":
+        promo = promote(home, tc, fac, difficulty=difficulty)
+        if promo is not None:
+            fac["status"] = "promoted"
+            save_emergent(home, data)
+            result.update(grew=True, action="promoted", faculty=fac)
+            return result, promo
     save_emergent(home, data)
     result.update(grew=True, action="born", faculty=fac)
     return result, ring
+
+
+def fill_gap(root: Path, input_text: str, context: str = "", both: bool = True,
+             registry_root=None, difficulty: int = 0):
+    """Eager autonomous gap-fill. If the input reveals a gap the faculties don't cover,
+    grow a coded faculty for it — a sense AND a modality when both=True (more faculties
+    = more label-space learning, the Cambium thesis). With PROMOTE_AT=1 each is promoted
+    and coded on first encounter; kind-aware dedup keeps repeats from spawning duplicates,
+    so growth tracks gap DIVERSITY, not input count. Best-effort; returns the grow
+    results (each has action covered|born|promoted|recurrence)."""
+    home = registry_home(root, registry_root)
+    snap = detect_gap(load_corpus(home), input_text, context)   # ONE snapshot for both kinds
+    if snap["dissonance"] <= DISSONANCE_FLOOR:
+        return [{"action": "covered", "gap": snap}]             # no real gap — nothing to fill
+    results = []
+    for k in (["sense", "modality"] if both else [None]):
+        try:
+            # force + the shared snapshot so both kinds grow from the same uncovered terms,
+            # even though growing the first lowers the live dissonance for the second.
+            res, _ = grow(root, input_text, context=context, mode="sprout",
+                          kind_override=k, difficulty=difficulty, registry_root=registry_root,
+                          force=True, gap_override=snap)
+            results.append(res)
+        except Exception:
+            pass
+    return results
 
 
 # --------------------------------------------------------------------------- #

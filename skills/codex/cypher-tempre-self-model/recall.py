@@ -2124,6 +2124,21 @@ def cmd_turn(args):
     else:
         print("not sealed — reseal uncertainty-led before finishing (the loop must leave a ring).")
     _emit_loop_ran(root, verdict.get("decision", "?"), resealed=reseal)
+    # 6. Eager autonomous growth: if this turn revealed a gap the faculties don't cover,
+    # fill it — grow a coded sense AND modality (deduped). Tunable via CT_AUTOGROW=0.
+    # Only in the deliberate per-turn loop, never in bulk Continuum ingest (label()).
+    import os as _os
+    if _os.environ.get("CT_AUTOGROW", "1").lower() not in ("0", "false", "no", "off"):
+        try:
+            import cambium
+            grown = cambium.fill_gap(root, probe, context=args.context or "",
+                                     both=True, registry_root=reg)
+            names = sorted({g["faculty"]["name"] for g in grown
+                            if g.get("action") in ("born", "promoted") and g.get("faculty")})
+            if names:
+                print("grew faculties to cover the gap: " + ", ".join(names))
+        except Exception:
+            pass
 
 
 def _emit_loop_ran(root, decision, resealed=False):
