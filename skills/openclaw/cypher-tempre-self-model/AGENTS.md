@@ -43,3 +43,12 @@ python3 $SK/audit.py report  --root <chain> --final              # refused below
 **Ingest coverage (blocks sealed) is NOT review coverage (blocks read).** A
 "Final Report" before 100% review coverage is a persistence/covenant miss — keep
 going, or honestly label the report *interim*.
+
+**Review coverage is not review DEPTH.** A bare `--clean` or "looks fine" counts as
+*shallow*; a DEEP review cites specific lines/symbols and says what and why. For a
+real audit, record findings with specifics and gate completion on depth:
+
+```bash
+python3 $SK/audit.py validate --root <chain> --require-complete --require-depth
+python3 $SK/audit.py report   --root <chain> --final --require-depth   # refused if any block is shallow
+```

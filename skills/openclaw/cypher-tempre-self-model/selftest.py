@@ -1314,6 +1314,50 @@ def main():
             for d in (aroot, groot, corpus):
                 shutil.rmtree(d, ignore_errors=True)
 
+        # -- phase14: frames->mechanisms (21/21 cap, executable modality, depth, effort) -- #
+        import modality_ops as _mo
+        import audit as _aud3
+        _modn = len(json.loads((SKILL / "registry" / "modalities.json").read_text())["modalities"])
+        _senn = len(json.loads((SKILL / "registry" / "senses.json").read_text())["senses"])
+        check("phase14 registry: capped to 21 modalities + 21 senses", _modn == 21 and _senn == 21)
+
+        _sh = _mo.richness("Reviewed. Looks fine, no issues.")
+        _dp = _mo.richness("validation.cpp L1423-1450: CheckTxInputs() sums nValueIn without a "
+                           "MoneyRange() guard, so a crafted input set wraps the int64 total; "
+                           "therefore the fee assertion passes spuriously — compare against MAX_MONEY.")
+        check("phase14 richness: hollow claim shallow, cited finding deep",
+              _sh["score"] < _mo.RICHNESS_FLOOR <= _dp["score"] and _sh["hollow"])
+        check("phase14 ops: executable op runs for Richness Scoring only",
+              _mo.run_for("Richness Scoring", "any text")["richness"]["score"] >= 0
+              and _mo.run_for("Recursive Abstraction", "x") is None)
+
+        # PoQ surfaces the under-effort signal on a hollow completion claim (advisory)
+        _rec14 = recall.Recall(root, registry_root=SKILL)
+        _v14, _, _ = _rec14.seal("experience",
+                                 "Everything has been reviewed and it all looks fine; no issues, complete.")
+        check("phase14 poq: under-effort flagged on a hollow completion claim",
+              _v14.get("low_effort") is True)
+
+        # audit depth governor: require_depth fails on a shallow review, passes when deepened
+        dcorpus = root / "p14corpus"; dcorpus.mkdir()
+        (dcorpus / "a.py").write_text("def a():\n    return 1\n")
+        (dcorpus / "b.py").write_text("def b():\n    return 2\n")
+        droot = root / "p14chain"
+        continuum.Continuum(droot).walk(str(dcorpus), [".py"], "depth selftest")
+        _A = _aud3.Audit(droot); _A.open(objective="review all")
+        _dids = [b["index"] for b in _A.next_batch(99)[0]]
+        _A.record([_dids[0]], clean=True)                                   # shallow
+        _A.record([_dids[1]], finding="b.py L1-2: b() returns constant 2, no bounds check; "
+                  "because callers treat it as a count a negative index is reachable — compare to MAX.")
+        _okc, _ = _A.validate(require_complete=True)
+        _okd, _ = _A.validate(require_complete=True, require_depth=True)
+        check("phase14 audit depth: coverage complete but require_depth fails on a shallow review",
+              _okc and not _okd)
+        _A.record([_dids[0]], finding="a.py L1-2: a() returns constant 1, pure, no inputs — verified safe.")
+        _okd2, _ = _A.validate(require_complete=True, require_depth=True)
+        check("phase14 audit depth: require_depth passes once every block is deeply reviewed", _okd2)
+        _aud3._clear_active(droot)
+
         check("timechain: final verify", tc.verify()[0])
     finally:
         shutil.rmtree(root, ignore_errors=True)

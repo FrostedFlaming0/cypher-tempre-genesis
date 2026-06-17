@@ -93,7 +93,11 @@ each sealed block.
    And check **replay**: `python3 replay.py match "<query>"` — if a sealed antecedent
    already answers this, confirm it and ground on it instead of regenerating (see *Replay*).
 4. **Reason** — engage the relevant **modalities** (`registry/modalities.json`), fusing when
-   one is not enough. For hard or high-stakes problems → see *Search*.
+   one is not enough. For hard or high-stakes problems → see *Search*. Most faculties are
+   cognitive *frames* (a named mode you adopt); a few are **executable** — when they fire,
+   `modality_ops.py` runs and attaches a computed result to the ring (e.g. *Richness Scoring*
+   → a depth score). This batch ships a curated **21 modalities + 21 senses** (Cambium grows
+   more); the executable set is the start of moving reasoning from *named* to *performed*.
 5. **Form a candidate, then audit through PoQ** — score it yourself, 0–255, on the six
    dimensions, and cite the rings you relied on:
    ```
@@ -542,13 +546,17 @@ python3 audit.py open  --root <chain> --objective "<task>"      # open the revie
 python3 audit.py next  --root <chain> --batch-size 10           # the next UNREVIEWED blocks — read every line
 python3 audit.py record --root <chain> --block <I…> (--finding "…" | --clean)   # seal that you reviewed them
 python3 audit.py progress --root <chain>                        # reviewed blocks / lines vs total (O(1))
-python3 audit.py validate --root <chain> --require-complete     # PROVE every in-scope block has a review record
-python3 audit.py report  --root <chain> --final                # REFUSED below 100% — emits "INTERIM" instead
+python3 audit.py validate --root <chain> --require-complete [--require-depth]   # PROVE coverage (and depth)
+python3 audit.py report  --root <chain> --final [--require-depth]               # REFUSED below 100% — emits "INTERIM" instead
 ```
 
 - **The loop, not the vibe, decides completion.** Keep calling `next` → read → `record`
   until `progress` reaches 100%. `next` only ever hands back blocks you have not recorded,
   so you cannot lose your place across turns or sessions — `resume` shows the audit line too.
+- **Coverage is not depth.** A bare `--clean` or "looks fine" is recorded as *shallow*; a
+  DEEP review cites specific lines/symbols and says what & why (scored by *Richness Scoring*).
+  `--require-depth` makes `validate`/`report --final` demand that every block was reasoned
+  about, not merely touched — so "exhaustive" cannot be satisfied by shallow passes.
 - **A "final" report below 100% review coverage is a persistence/covenant miss.**
   `report --final` refuses it and labels the output *interim*; an honest interim report
   (with the resumable coverage number) is always allowed.
@@ -798,6 +806,8 @@ python3 immune.py status                                # safe height, quarantin
 | `timechain.py` | roots/rings — ledger, blockspace, sealing, verification |
 | `poq.py` | the conscience — six-dimension audit gate |
 | `cambium.py` | growth — sprout/fuse/promote faculties |
+| `modality_ops.py` | frames→mechanisms — executable faculty ops (e.g. Richness Scoring → a depth score); the shared depth metric behind PoQ's under-effort signal and the audit depth governor |
+| `audit.py` | exhaustive-review governor — review-coverage + depth ledger over an ingested Continuum chain (open/next/record/progress/validate/report) |
 | `chronosynaptic.py` | foresight — single-pass parallel-self MCTS |
 | `continuum.py` | endurance — long-horizon tasking via data-height blocks with full state refresh |
 | `recall.py` | relevance — self-labeling + adaptive retrieval of related past blocks |

@@ -1,5 +1,40 @@
 # Changelog
 
+## v3.4.0 — 2026-06-17
+
+Frames → mechanisms: make more of the skill *execute* the reasoning it has only
+*named*, and make "exhaustive" mean "reasoned about", not just "touched".
+
+### Added
+- **`modality_ops.py` — executable faculties.** Most modalities/senses are cognitive
+  frames (a named mode the model adopts); this batch ships the first **executable** one
+  end to end — *Richness Scoring* — whose op computes a 0–255 depth score from content.
+  The same `richness()` is the shared mechanism behind the two signals below, so the
+  reasoning is performed by code, not merely labelled. When an op-backed modality fires,
+  `recall.label` attaches its result to the ring under `computed`.
+- **PoQ under-effort signal.** The conscience was asymmetric — it caught *over*-claiming
+  (FORCE_UNCERTAINTY) but a hollow "reviewed, looks fine" with no substance sailed straight
+  through. PoQ now measures claim depth and flags a completion/clean claim that has none
+  (`verdict.low_effort`, advisory by default; gated to REVISE only if an `effort_floor`
+  threshold is configured, so existing behaviour is unchanged).
+- **Audit depth governor.** `audit.py` now records each review's depth: a bare `--clean`
+  or hollow finding is *shallow*; a finding that cites specific lines/symbols is *deep*.
+  `validate --require-depth` and `report --final --require-depth` demand that every in-scope
+  block was reasoned about, not merely touched. `progress`/`report` show deep vs shallow,
+  and `next` prints a ready-to-fill record scaffold (less friction per block).
+
+### Changed
+- **Curated faculty registries: 21 modalities + 21 senses** (from 84 / 107) for this first
+  development batch — focused on cognition, audit, memory, and integrity/honesty; the
+  conversational-attunement faculties were trimmed. Cambium still grows new faculties
+  per-user into `grown.json`; the base just starts smaller and sharper.
+
+### Notes
+- Cross-runtime: `AGENTS.md` carries the exhaustive-audit **and depth** doctrine, so
+  runtimes that read it (Codex/OpenClaw) get the discipline even without a blocking hook.
+- Six new selftest checks (richness, executable op, PoQ under-effort, audit depth gate,
+  21/21 cap). Full selftest PASS; SkillSpector SAFE on all five bundles.
+
 ## v3.3.6 — 2026-06-17
 
 Cross-runtime hook safety — the per-turn reminder is guidance, never a runnable command.

@@ -178,6 +178,8 @@ class Audit:
             "review_high_water": -1,       # legacy/non-authoritative max reviewed ring
             "reviewed_blocks": 0,
             "reviewed_lines": 0,
+            "deep_reviews": 0,             # records whose finding cites specifics (depth >= floor)
+            "shallow_reviews": 0,          # bare "clean"/hollow records — coverage without depth
             "findings_total": 0,
             "recent_findings": [],
             "complete": False,
@@ -244,6 +246,22 @@ class Audit:
         a["reviewed_blocks"] = len(reviewed_after)
         a["reviewed_lines"] += new_lines
         a["review_high_water"] = max(reviewed_after) if reviewed_after else -1
+        # Depth: coverage is not comprehension. A review with a substantive, specific
+        # finding (cited lines/symbols, articulated reasoning) is DEEP; a bare clean
+        # pass or a hollow "looks fine" is SHALLOW. Classify the NEW blocks this record
+        # covers, so `validate --require-depth` can demand reasoning, not just touches.
+        depth, floor = 0, 90
+        try:
+            import modality_ops
+            depth = modality_ops.richness(finding or "")["score"]
+            floor = modality_ops.RICHNESS_FLOOR
+        except Exception:
+            pass
+        is_deep = bool(finding) and depth >= floor
+        if is_deep:
+            a["deep_reviews"] = a.get("deep_reviews", 0) + newly
+        else:
+            a["shallow_reviews"] = a.get("shallow_reviews", 0) + newly
         if finding:
             tag = ", ".join(sorted(set(p for p in paths if p))) or "?"
             a["recent_findings"] = (a["recent_findings"] + [f"{tag}: {finding}"])[-RECENT_FINDINGS_CAP:]
@@ -255,7 +273,8 @@ class Audit:
                                  f"{remaining} to go)")
         data = {"reviewed_indices": sorted(idxset), "status": status,
                 "clean": bool(clean and not finding),
-                "finding": finding, "paths": [p for p in paths if p]}
+                "finding": finding, "paths": [p for p in paths if p],
+                "depth": depth, "deep": is_deep}
         ring = self.tc.seal("audit_review",
                             {"event": "audit_review", "task": (a.get("objective") or "")[:48],
                              "state": st, "data": data}, difficulty=difficulty)
@@ -268,46 +287,57 @@ class Audit:
         _clear_active(self.root)
 
     # -- validate (rigorous, O(n)) ----------------------------------------- #
-    def validate(self, require_complete=False):
+    def validate(self, require_complete=False, require_depth=False):
         ok, report = self.tc.verify()
         a = self.status()
         if not a:
             return False, list(report) + ["no audit open on this chain"]
         scope = a["scope"]
-        in_scope, reviewed = set(), set()
+        in_scope, reviewed, deep = set(), set(), set()
         for r in self.tc.iter_rings():
             p = r.get("payload") or {}
             if _is_continuum_block(p) and _in_scope(p["data"], scope):
                 in_scope.add(r["index"])
             elif p.get("event") == "audit_review":
-                for i in (p.get("data") or {}).get("reviewed_indices", []):
-                    reviewed.add(int(i))
+                d = p.get("data") or {}
+                idxs = [int(i) for i in d.get("reviewed_indices", [])]
+                reviewed.update(idxs)
+                if d.get("deep"):
+                    deep.update(idxs)
         reviewed_in_scope = reviewed & in_scope
+        deep_in_scope = deep & in_scope
         unreviewed = in_scope - reviewed
+        shallow = reviewed_in_scope - deep_in_scope
         pct = (100.0 * len(reviewed_in_scope) / len(in_scope)) if in_scope else 0.0
+        dpct = (100.0 * len(deep_in_scope) / len(in_scope)) if in_scope else 0.0
         out = list(report)
         out.append(f"audit objective: {a.get('objective')}")
         out.append(f"in-scope blocks: {len(in_scope)} (roles excl {scope.get('exclude_roles')})")
         out.append(f"reviewed (proven on-chain): {len(reviewed_in_scope)}/{len(in_scope)} = {pct:.2f}%")
+        out.append(f"deep reviews (cited specifics): {len(deep_in_scope)}/{len(in_scope)} = {dpct:.2f}%")
         complete = not unreviewed and bool(in_scope)
+        depth_complete = complete and not shallow
         if unreviewed:
-            sample = sorted(unreviewed)[:8]
-            out.append(f"UNREVIEWED blocks remain: {len(unreviewed)} (e.g. rings {sample})")
+            out.append(f"UNREVIEWED blocks remain: {len(unreviewed)} (e.g. rings {sorted(unreviewed)[:8]})")
             out.append("resume: `audit.py next` -> read -> `audit.py record`")
         else:
             out.append("every in-scope block has a sealed review record — coverage COMPLETE")
-        passed = ok and (complete if require_complete else True)
+        if require_depth and shallow:
+            out.append(f"SHALLOW blocks (reviewed but no substantive finding): {len(shallow)} "
+                       f"(e.g. rings {sorted(shallow)[:8]}) — re-review with cited lines/symbols.")
+        passed = ok and (complete if require_complete else True) and (depth_complete if require_depth else True)
         return passed, out
 
     # -- report ------------------------------------------------------------- #
-    def report(self, final=False):
-        complete, lines = self.validate(require_complete=True)
+    def report(self, final=False, require_depth=False):
+        ok, lines = self.validate(require_complete=True, require_depth=require_depth)
         a = self.status() or {}
+        bar = "coverage" + (" + depth" if require_depth else "")
         head = []
-        if final and complete:
+        if final and ok:
             head.append("===== FINAL AUDIT REPORT =====")
-        elif final and not complete:
-            head.append("===== INTERIM AUDIT REPORT (--final REFUSED: coverage < 100%) =====")
+        elif final and not ok:
+            head.append(f"===== INTERIM AUDIT REPORT (--final REFUSED: {bar} < 100%) =====")
             head.append("A 'final' report on an incomplete exhaustive audit is a persistence/")
             head.append("covenant miss. Keep going (audit.py next) or state this is interim.")
         else:
@@ -315,11 +345,12 @@ class Audit:
         head.append(f"objective: {a.get('objective')}")
         head.append(f"review coverage: {a.get('review_cursor', 0)}/{a.get('total_blocks', 0)} blocks, "
                     f"~{a.get('reviewed_lines', 0)}/{a.get('total_lines', 0)} lines")
+        head.append(f"depth: {a.get('deep_reviews', 0)} deep / {a.get('shallow_reviews', 0)} shallow reviews")
         head.append(f"findings recorded: {a.get('findings_total', 0)}")
         if a.get("recent_findings"):
             head.append("recent findings:")
             head += [f"  - {f}" for f in a["recent_findings"]]
-        return (final and complete), head + ["", "--- coverage proof ---"] + lines
+        return (final and ok), head + ["", f"--- {bar} proof ---"] + lines
 
 
 # --------------------------------------------------------------------------- #
@@ -340,12 +371,17 @@ def cmd_next(args):
         print(f"no unreviewed in-scope blocks — coverage {a['review_cursor']}/{a['total_blocks']}. "
               "Run `audit.py report --final`.")
         return
-    print(f"# next {len(blocks)} UNREVIEWED block(s) — read every line, then "
-          f"`audit.py record --block <I...> (--finding \"..\" | --clean)`:")
+    ids = " ".join(str(b["index"]) for b in blocks)
+    print(f"# next {len(blocks)} UNREVIEWED block(s) — read every line, then record. A DEEP "
+          f"review cites specific lines/symbols; a bare --clean counts as shallow:")
     for b in blocks:
         print(f"\n----- ring {b['index']}  {b['path']}  L{b['line_start']}-{b['line_end']} "
               f"chunk {b['chunk']} -----")
         print(b["content"])
+    # friction reducer: a ready-to-fill record scaffold with the block ids pre-filled.
+    print(f"\n# record after reading (fill the finding with cited specifics):")
+    print(f"#   audit.py record --root {args.root} --block {ids} --finding \"<file:Lstart-Lend — what & why>\"")
+    print(f"#   (only if genuinely nothing of note: audit.py record --root {args.root} --block <id> --clean)")
 
 
 def cmd_record(args):
@@ -369,13 +405,15 @@ def cmd_progress(args):
     print(f"objective: {a.get('objective')}")
     print(f"review:    {a['review_cursor']}/{a['total_blocks']} blocks ({pct:.2f}%), "
           f"~{a['reviewed_lines']}/{a['total_lines']} lines")
+    print(f"depth:     {a.get('deep_reviews', 0)} deep / {a.get('shallow_reviews', 0)} shallow")
     print(f"findings:  {a['findings_total']}")
     print(f"complete:  {a['complete']}")
     print(f"NEXT:      {a['next_action']}")
 
 
 def cmd_validate(args):
-    ok, lines = Audit(args.root).validate(require_complete=args.require_complete)
+    ok, lines = Audit(args.root).validate(require_complete=args.require_complete,
+                                          require_depth=args.require_depth)
     for ln in lines:
         print("  " + ln)
     print("AUDIT:", "COMPLETE" if ok else "INCOMPLETE")
@@ -388,7 +426,7 @@ def cmd_close(args):
 
 
 def cmd_report(args):
-    is_final, lines = Audit(args.root).report(final=args.final)
+    is_final, lines = Audit(args.root).report(final=args.final, require_depth=args.require_depth)
     for ln in lines:
         print(ln)
     # exit nonzero when --final was requested but refused, so scripts/hooks notice
@@ -428,10 +466,14 @@ def build_parser():
 
     pv = sub.add_parser("validate", parents=[common], help="PROVE coverage by streaming the chain")
     pv.add_argument("--require-complete", action="store_true", help="fail unless 100%% reviewed")
+    pv.add_argument("--require-depth", action="store_true",
+                    help="fail unless every reviewed block has a DEEP record (cited specifics)")
     pv.set_defaults(func=cmd_validate)
 
     prp = sub.add_parser("report", parents=[common], help="audit report (refuses FINAL below 100%%)")
     prp.add_argument("--final", action="store_true", help="request a FINAL report (refused if incomplete)")
+    prp.add_argument("--require-depth", action="store_true",
+                     help="FINAL also requires depth-complete (no shallow reviews)")
     prp.set_defaults(func=cmd_report)
 
     pc = sub.add_parser("close", parents=[common], help="disengage the turn-end governor (pause/abandon)")
