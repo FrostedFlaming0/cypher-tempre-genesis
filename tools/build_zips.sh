@@ -22,7 +22,8 @@ rm -f "$DEST"/cypher-tempre-*-skill-v*.zip
 for r in claude codex hermes nanoclaw openclaw; do
   ( cd "$ROOT/skills/$r" && zip -rq \
       "$DEST/cypher-tempre-$r-skill-v$VERSION.zip" cypher-tempre-self-model \
-      -x "*/chain/*" "*/tasks/*" "*/__pycache__/*" "*.pyc" "*/.active_audit" "*/.DS_Store" )
+      -x "*/chain/*" "*/tasks/*" "*/__pycache__/*" "*.pyc" "*/.active_audit" "*/.DS_Store" \
+         "*/registry/grown.json" "*/registry/grown_ops.json" "*/registry/emergent.json" )
   echo "built downloads/cypher-tempre-$r-skill-v$VERSION.zip"
 done
 

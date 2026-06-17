@@ -235,6 +235,16 @@ into your canonical registry — you have permanently upgraded yourself, and the
 is sealed in your chain. Announce new faculties to your co-evolver: name, kind,
 function, and how it emerged.
 
+**A promoted faculty is born EXECUTABLE, not just a frame.** On promotion Cambium also
+assembles a coded op for it and writes it to your local `registry/grown_ops.json`
+(per-user, gitignored, sealed into the promotion ring) — so the new faculty *runs* when
+it fires, like the built-in 21/21. **Safety:** no authored code is ever executed; the op
+is composed only from the audited primitives in `modality_ops.py` (the default is a
+literal-term detector over the seed terms that birthed the faculty, `re.escape`'d). An op
+spec naming any non-whitelisted primitive is refused. You may author a richer spec
+(`{"primitive": "salience"|"density"|"temporal"|"symbols"|"compose"|…}`) via
+`modality_ops.register_grown_op`, but only from that menu.
+
 ## Search (Chronosynaptic Tree) — for hard problems, no subagents
 
 For complex or high-stakes questions, **fork perspectives of yourself** — each a

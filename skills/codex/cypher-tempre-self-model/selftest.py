@@ -1365,6 +1365,31 @@ def main():
         check("phase14 audit depth: require_depth passes once every block is deeply reviewed", _okd2)
         _aud3._clear_active(droot)
 
+        # -- phase15: autonomous coded faculties — Cambium grows AND codes a faculty -- #
+        # Safety: build_op never executes spec-supplied code; an unknown primitive yields no op.
+        # Only the audited primitive menu builds an op; anything else (incl. a spec that
+        # tries to smuggle code in a field) yields no op — build_op never executes specs.
+        check("phase15 cambium ops: a non-whitelisted op spec is refused (no code execution)",
+              _mo.build_op({"primitive": "arbitrary_unlisted_primitive", "payload": "ignored"}) is None
+              and _mo.build_op({"primitive": "markers", "terms": []}) is None)
+        _novel = "Photonics waveguide resonator microring lithography metamaterial plasmonics nanofabrication."
+        _gact, _gname = None, None
+        for _ in range(cambium.PROMOTE_AT):
+            _gr, _ = cambium.grow(root, _novel, registry_root=root)
+            _gact = _gr.get("action")
+            if _gact == "promoted":
+                _gname = _gr["faculty"]["name"]      # the faculty just promoted, not some earlier one
+        _gops = _mo.load_grown_ops(root)
+        check("phase15 cambium ops: promotion registers a LOCAL executable op for the grown faculty",
+              _gact == "promoted" and _gname in _gops)
+        check("phase15 cambium ops: the grown faculty's coded op runs and detects its seed terms",
+              bool(_gname) and _gops[_gname]("a microring resonator waveguide on the photonics die").get("count", 0) >= 1)
+        # end-to-end: recall.label fires the grown faculty AND runs its coded op
+        _grec = recall.Recall(root, registry_root=root)
+        _glab = _grec.label("waveguide resonator microring photonics lithography")
+        check("phase15 cambium ops: recall.label runs the grown faculty's op into labels.computed",
+              isinstance(_glab.get("computed"), dict) and _gname in _glab.get("computed", {}))
+
         check("timechain: final verify", tc.verify()[0])
     finally:
         shutil.rmtree(root, ignore_errors=True)
