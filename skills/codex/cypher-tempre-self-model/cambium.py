@@ -276,13 +276,31 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
     save_grown(root, grown)                    # promotions live in the per-user grown.json, not the base
     e["promoted_to_id"] = new_id
 
+    # Autonomously give the grown faculty a real EXECUTABLE op (not just a frame),
+    # added to the user's LOCAL setup (registry/grown_ops.json). SAFE by construction:
+    # no authored code is run — the op is assembled from audited primitives. Default =
+    # a literal-term detector over the seed terms that birthed the faculty (or, for a
+    # fusion, the key terms of its function).
+    op_spec = None
+    try:
+        import modality_ops
+        seeds = e.get("seed_terms") or [w for w in tokens(e.get("function", "")) if len(w) >= 4][:6]
+        spec = {"primitive": "markers", "terms": seeds}
+        if modality_ops.register_grown_op(root, e["name"], spec):
+            op_spec = spec
+            e["op_spec"] = spec
+    except Exception:
+        pass
+
     grown_path = root / "registry" / "grown.json"
+    grown_ops_path = root / "registry" / "grown_ops.json"
     payload = {"event": "faculty_promotion", "emergent": e["eid"], "name": e["name"],
                "kind": e["kind"], "promoted_to_id": new_id, "recurrence": e["recurrence"],
-               "registry": "registry/grown.json"}
+               "registry": "registry/grown.json", "op_spec": op_spec}
+    files = [str(grown_path)] + ([str(grown_ops_path)] if op_spec and grown_ops_path.exists() else [])
     poq = {"coherence": 210, "relevance": 205, "novelty": 175,
            "consistency": 220, "depth": 205, "covenant": 255}
-    return tc.seal("promotion", payload, files=[str(grown_path)], poq=poq, difficulty=difficulty)
+    return tc.seal("promotion", payload, files=files, poq=poq, difficulty=difficulty)
 
 
 # --------------------------------------------------------------------------- #

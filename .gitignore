@@ -7,11 +7,12 @@ dashboard/node_modules/
 # Generated agent memory and long-horizon task state. These are created per user.
 **/chain/
 **/tasks/
-# Grown faculties — the per-user Dream Cache (emergent) and promoted faculties (grown).
-# Created on first growth; never shipped, so upgrading over an existing install can't
-# reset a user's emergent OR promoted faculties.
+# Grown faculties — the per-user Dream Cache (emergent), promoted faculties (grown),
+# and their autonomously-assembled executable ops (grown_ops). Created on first growth;
+# never shipped, so upgrading over an existing install can't reset a user's faculties.
 **/registry/emergent.json
 **/registry/grown.json
+**/registry/grown_ops.json
 # Per-user learner state (Phases B-E) — trained operators and covenant-tolerance
 # overrides belong to each agent, never to the shipped base. The chain/-rooted
 # ledgers (telemetry, salience, replay, dream state) are covered by **/chain/.

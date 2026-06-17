@@ -1,5 +1,31 @@
 # Changelog
 
+## v3.6.0 — 2026-06-17
+
+Cambium-grown faculties are born **executable** — autonomous, local, and safe.
+
+### Added
+- **Promotion now codes the faculty, not just names it.** When Cambium grows a faculty and
+  promotes it (after the recurrence threshold), it autonomously assembles an executable op
+  for it and writes it to the per-user, gitignored `registry/grown_ops.json` (sealed into
+  the promotion ring). The grown faculty then RUNS when it fires, like the built-in 21/21 —
+  `recall.label` loads and runs local grown ops alongside the base ops.
+- **Safe-by-construction op factory (`modality_ops.build_op` / `register_grown_op`).** NO
+  authored code is ever executed. A grown op is ASSEMBLED only from the audited primitive
+  menu; the default autonomous op is a literal-term detector over the faculty's birth seed
+  terms (`re.escape`'d — no regex injection, no catastrophic backtracking). An op spec naming
+  a non-whitelisted primitive is refused; `register_grown_op` validates before persisting.
+
+### Notes
+- The model may author a richer spec (`salience|density|temporal|symbols|repeats|concepts|
+  overlap|richness|entities|numbers|markers|compose`) — but only from that fixed menu.
+  Grown faculties without a registrable spec simply stay frames.
+- Gated by Cambium's existing recurrence/promotion discipline (no per-gap flooding); the
+  op's birth is attested on-chain; `build_zips.sh` excludes grown/emergent files so a dev's
+  local growth never ships, and `grown_ops.json` is gitignored.
+- Three new selftest checks (refuses a code-bearing spec; promotion registers a local op;
+  the grown op runs and reaches `labels.computed`). Full selftest PASS; SkillSpector SAFE.
+
 ## v3.5.0 — 2026-06-17
 
 All 42 curated faculties are now executable — frames→mechanisms, completed for the batch.

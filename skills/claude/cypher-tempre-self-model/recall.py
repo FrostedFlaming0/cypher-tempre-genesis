@@ -591,6 +591,8 @@ def brief_block(ring, score=None, lab=None, words=60, query=""):
 class Recall:
     def __init__(self, chain_root, registry_root=None, embedder=None):
         self.tc = Timechain(chain_root)
+        self._registry_root = registry_root or Path(__file__).resolve().parent
+        self._grown_ops = None        # lazy: local executable ops for Cambium-grown faculties
         self.corpus = load_corpus(registry_root or Path(__file__).resolve().parent)
         self.telemetry = telem.Telemetry(chain_root)
         self.policy = policymod.load_policy(registry_root)
@@ -660,8 +662,10 @@ class Recall:
         # performs the mechanical extract/measure/detect; the model reasons over it.
         try:
             import modality_ops
+            if self._grown_ops is None:    # Cambium-grown faculties carry local coded ops too
+                self._grown_ops = modality_ops.load_grown_ops(self._registry_root)
             fired = [f["name"] for f in senses] + [m["name"] for m in mods]
-            computed = modality_ops.run_all(fired, content, context)
+            computed = modality_ops.run_all(fired, content, context, extra_ops=self._grown_ops)
             if computed:
                 lab["computed"] = computed
         except Exception:

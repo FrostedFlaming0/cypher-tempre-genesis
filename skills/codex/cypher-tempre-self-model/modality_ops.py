@@ -19,8 +19,10 @@ These ops do NOT replace the model's reasoning; they perform the mechanical part
 
 Stdlib only. Python 3.8+.
 """
+import json
 import re
 from collections import Counter
+from pathlib import Path
 
 # --------------------------------------------------------------------------- #
 # lexicons & regexes
@@ -289,6 +291,104 @@ def _timeline(text):
     return {"dates": dates[:_MAX], "in_order": ordered}
 
 
+# --------------------------------------------------------------------------- #
+# Grown-faculty ops — autonomous, LOCAL, and SAFE.
+#
+# When Cambium grows a new faculty (sprout/fuse) and promotes it, it should get a
+# real executable op too — not stay a frame. The hard safety rule: NO model- or
+# Cambium-authored CODE is ever executed. An op is ASSEMBLED from this fixed menu
+# of already-audited primitives via a declarative spec stored in the per-user,
+# gitignored registry/grown_ops.json. The default autonomous op is a literal-term
+# detector built from the faculty's birth seed terms (re.escape'd, so no regex
+# injection and no catastrophic backtracking). SkillSpector stays SAFE: the only
+# new operation is re.compile of escaped literals + reading/writing one JSON file.
+# --------------------------------------------------------------------------- #
+_PRIMITIVE_OPS = {
+    "salience": lambda t, c="": {"anchors": top_terms(t)},
+    "density": lambda t, c="": density(t),
+    "temporal": lambda t, c="": temporal(t),
+    "symbols": lambda t, c="": {"symbols": symbols(t)},
+    "repeats": lambda t, c="": {"repeats": repeats(t)},
+    "concepts": lambda t, c="": {"relations": concept_pairs(t)},
+    "overlap": lambda t, c="": {"context_overlap": overlap(t, c)},
+    "richness": lambda t, c="": {"richness": richness(t, c)},
+    "entities": lambda t, c="": {"entities": entities(t)},
+    "numbers": lambda t, c="": {"numbers": numbers(t)},
+}
+
+
+def _markers_op(terms):
+    clean = [re.escape(str(w)) for w in (terms or []) if str(w).strip()][:12]
+    if not clean:
+        return None
+    rx = re.compile(r"\b(?:" + "|".join(clean) + r")\b", re.I)
+    return lambda t, c="", _rx=rx: hits(_rx, t)
+
+
+def build_op(spec):
+    """Assemble an executable op from a declarative spec using ONLY audited
+    primitives. Returns a callable or None. NEVER executes spec-supplied code."""
+    if not isinstance(spec, dict):
+        return None
+    prim = spec.get("primitive")
+    if prim == "markers":
+        return _markers_op(spec.get("terms"))
+    if prim in _PRIMITIVE_OPS:
+        return _PRIMITIVE_OPS[prim]
+    if prim == "compose":
+        ofs = [p for p in (spec.get("of") or []) if p in _PRIMITIVE_OPS]
+        if not ofs:
+            return None
+        def composed(t, c="", _ofs=ofs):
+            out = {}
+            for p in _ofs:
+                try:
+                    out[p] = _PRIMITIVE_OPS[p](t, c)
+                except Exception:
+                    pass
+            return out
+        return composed
+    return None      # unknown primitive -> no op (safe by construction)
+
+
+def _grown_ops_path(registry_root):
+    return Path(registry_root) / "registry" / "grown_ops.json"
+
+
+def load_grown_ops(registry_root):
+    """Build the local {name: callable} ops for Cambium-grown faculties. Best-effort."""
+    out = {}
+    try:
+        p = _grown_ops_path(registry_root)
+        if p.is_file():
+            for name, spec in (json.loads(p.read_text()).get("ops") or {}).items():
+                op = build_op(spec)
+                if op is not None:
+                    out[name] = op
+    except Exception:
+        pass
+    return out
+
+
+def register_grown_op(registry_root, name, spec):
+    """Persist a grown faculty's op spec to the local grown_ops.json — but only if
+    it assembles into a usable op from the audited primitives. Returns True/False.
+    This is the autonomous 'add the coded faculty to the user's local setup' step."""
+    if not name or build_op(spec) is None:
+        return False
+    try:
+        p = _grown_ops_path(registry_root)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        data = json.loads(p.read_text()) if p.is_file() else {}
+        if "ops" not in data or not isinstance(data.get("ops"), dict):
+            data = {"registry": "grown_ops", "ops": {}}
+        data["ops"][name] = spec
+        p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        return True
+    except Exception:
+        return False
+
+
 def run_for(name, text, context=""):
     """Run the executable op for a fired faculty `name`, or None if it has none."""
     op = OPS.get(name)
@@ -300,11 +400,17 @@ def run_for(name, text, context=""):
         return None      # an op must never break labeling/sealing
 
 
-def run_all(fired_names, text, context=""):
-    """Run every executable op among the fired faculty names; return {name: result}."""
+def run_all(fired_names, text, context="", extra_ops=None):
+    """Run every executable op among the fired faculty names — base OPS first, then
+    any local grown-faculty ops (extra_ops). Returns {name: result}."""
     out = {}
     for nm in fired_names or []:
         r = run_for(nm, text, context)
+        if r is None and extra_ops and nm in extra_ops:
+            try:
+                r = extra_ops[nm](text, context)
+            except Exception:
+                r = None
         if r is not None:
             out[nm] = r
     return out
