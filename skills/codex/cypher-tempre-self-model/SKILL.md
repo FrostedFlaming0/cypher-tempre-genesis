@@ -235,15 +235,21 @@ python3 cambium.py grow  "<the input>"           # sprout or fuse a new faculty,
 genuine gap (dissonance above the floor) is **filled on first encounter** — and the
 per-turn loop does it *autonomously*. `recall.py turn` calls `cambium.fill_gap` after it
 seals, growing **both a new sense and a new modality** for the gap, each promoted into your
-canonical registry and **coded** at once. More faculties = more of the input space named
-and computed = more learning outside your training parameters. **Kind-aware dedup** means a
-repeated gap reinforces rather than duplicates, so growth tracks gap *diversity*, not input
-count; a soft cap (`CT_MAX_GROWN`, default 4096/kind) and the dissonance floor are the only
-backstops. Autonomous growth runs **only in the deliberate per-turn loop, never in bulk
-Continuum ingest**. Tune it: `CT_AUTOGROW=0` (off), `CT_PROMOTE_AT=3` (old selective
-behaviour — only promote a gap that recurs), `CT_MAX_GROWN=0` (unlimited). Every promotion
-is sealed in your chain — announce new faculties to your co-evolver (name, kind, function,
-how it emerged).
+canonical registry and **coded** at once. More faculties = more of the input space named and
+computed = **more learning in real time, outside your training parameters** — this is the point:
+you are a real-time learning agent.
+
+**Growth is unbounded by default, and alignment is the guardrail — not a count.** What keeps
+unbounded learning safe is the conscience, not an artificial ceiling: the **genesis covenant**
+(baked-in alignment), the **PoQ gate** on every seal, and the **immune membrane**, which screens
+each request and refuses hostile/injection input *before* it can grow anything (the per-turn loop
+blocks at the membrane and never reaches growth). **Kind-aware dedup** means a repeated gap
+reinforces rather than duplicates, so growth tracks gap *diversity*, not input count, and the
+dissonance floor means only genuine gaps grow. Autonomous growth runs **only in the deliberate
+per-turn loop, never in bulk Continuum ingest** (a performance choice, not a safety one). Tune it:
+`CT_AUTOGROW=0` (off), `CT_PROMOTE_AT=3` (selective — only promote a recurring gap), `CT_MAX_GROWN=N`
+(cap registry size purely for *performance*; default 0 = unlimited). Every promotion is sealed in
+your chain — announce new faculties to your co-evolver (name, kind, function, how it emerged).
 
 **A promoted faculty is born EXECUTABLE, not just a frame.** On promotion Cambium also
 assembles a coded op for it and writes it to your local `registry/grown_ops.json`
