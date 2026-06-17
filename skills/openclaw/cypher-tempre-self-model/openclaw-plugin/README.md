@@ -66,4 +66,4 @@ Optional config:
 - `timeoutMs`: timeout for local enforcement calls, default `5000`.
 - `maxFinalizeAttempts`: maximum extra passes requested for one unsealed turn,
   default `3`.
-- `injectReminder`: set `false` to disable prompt reminder injection.
+- `injectReminder`: set `false` to turn off reminder injection.
