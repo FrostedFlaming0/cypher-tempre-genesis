@@ -46,11 +46,8 @@ Downloads:
 |---|---|
 | [cyphertempre-static-site.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-static-site.zip) | Static files for Hostinger `public_html` |
 | [cyphertempre-dashboard-local-bridge.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge.zip) | Local bridge users run to pair their own Timechain files |
-| [cypher-tempre-claude-skill-v3.7.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.7.2.zip) | Claude Code skill bundle with lifecycle hooks |
-| [cypher-tempre-codex-skill-v3.7.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.7.2.zip) | Codex skill bundle with lifecycle hook installer |
-| [cypher-tempre-openclaw-skill-v3.7.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.7.2.zip) | OpenClaw skill bundle with native plugin enforcement and self-enforcement fallback |
-| [cypher-tempre-hermes-skill-v3.7.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.7.2.zip) | Hermes skill bundle with self-enforcement instructions |
-| [cypher-tempre-nanoclaw-skill-v3.7.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.7.2.zip) | NanoClaw skill bundle |
+
+(The runtime skill bundles are in [Release downloads](#release-downloads) above.)
 
 User bridge commands:
 
