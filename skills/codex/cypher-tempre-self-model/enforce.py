@@ -358,11 +358,17 @@ ARGV_HANDLERS = {"codex-notify"}
 
 def main(argv=None):
     _STDOUT.clear()
-    try:
-        import warnings
-        warnings.filterwarnings("ignore")   # a warning must never reach the parsed stream
-    except Exception:
-        pass
+    # CT_ENFORCE_DEBUG re-enables diagnostics: warnings are NOT silenced and a
+    # handler exception prints a traceback — all to stderr, never to the parsed
+    # stdout. The hook wrappers stop redirecting stderr to /dev/null in this mode,
+    # so a future field issue is debuggable instead of silent.
+    _debug = bool(os.environ.get("CT_ENFORCE_DEBUG"))
+    if not _debug:
+        try:
+            import warnings
+            warnings.filterwarnings("ignore")   # a warning must never reach the parsed stream
+        except Exception:
+            pass
     argv = argv if argv is not None else sys.argv[1:]
     cmd = argv[0] if argv else ""
     handler = HANDLERS.get(cmd)
@@ -380,7 +386,11 @@ def main(argv=None):
         else:
             handler(_read_stdin())
     except Exception:
-        pass  # FAIL-OPEN: a hook must never break the session
+        # FAIL-OPEN: never break the session. Surface the cause only when the
+        # operator opts in, and only on stderr — never the parsed stdout.
+        if _debug:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
     finally:
         sys.stdout = real_out
     if _STDOUT:

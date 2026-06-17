@@ -1166,6 +1166,27 @@ def main():
                 _repeat_pure = False
             check("phase12 enforce: repeated in-process Stop checks do not concatenate JSON",
                   _repeat_pure)
+
+            # CT_ENFORCE_DEBUG surfaces a handler exception on stderr while keeping
+            # stdout clean — so a future field issue is debuggable, not silent.
+            _enf.cmd_mark({})
+            _orig_h = _enf._head_index
+            def _boom(root):
+                raise RuntimeError("boom-for-debug-hatch")
+            _enf._head_index = _boom
+            _real_out, _real_err = sys.stdout, sys.stderr
+            dcap, decap = io.StringIO(), io.StringIO()
+            os.environ["CT_ENFORCE_DEBUG"] = "1"
+            try:
+                sys.stdout, sys.stderr = dcap, decap
+                _enf.main(["stop-check"])
+            finally:
+                sys.stdout, sys.stderr = _real_out, _real_err
+                _enf._head_index = _orig_h
+                os.environ.pop("CT_ENFORCE_DEBUG", None)
+            check("phase12 enforce: CT_ENFORCE_DEBUG surfaces errors on stderr, stdout stays clean",
+                  dcap.getvalue() == "" and "Traceback" in decap.getvalue())
+
             with contextlib.redirect_stdout(io.StringIO()):
                 recall.cmd_turn(_ns("Tentatively this might be the cause; I'm not certain."))
             check("phase12 enforce: Stop allows once a ring is sealed", not _stop_blocks())

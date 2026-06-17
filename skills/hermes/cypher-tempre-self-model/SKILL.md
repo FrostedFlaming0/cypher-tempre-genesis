@@ -148,6 +148,11 @@ and let turns end freely. **Subagents must wear the skill too:** spawn the `cyph
 type (it runs the loop and seals before returning), or have the subagent forge its own task
 chain and seal to it (point enforcement at it with `CT_ENFORCE_ROOT`).
 
+The Stop/SubagentStop hooks emit **only** the decision JSON on stdout (everything incidental is
+quarantined to stderr), so the harness never sees corrupted output. Errors are swallowed
+fail-open and silent by default; set **`CT_ENFORCE_DEBUG=1`** to surface `enforce.py` warnings
+and tracebacks on stderr for diagnosis — the decision JSON on stdout stays clean either way.
+
 See how well the skill is actually being worn:
 
 ```

@@ -18,7 +18,7 @@ permissions:
   - "file_write — append-only chain rings and blockspace blobs, registries, and per-user learner state (never deletes; history is immutable)"
   - "env — reads CT_TELEMETRY, dormancy, and dashboard dev-unlock toggles only"
   - "network — none in the stdlib core (git provenance is read directly from .git, no process spawning); used only if an optional embedding provider is explicitly selected (--provider st|openai|voyage)"
-  - "shell — the per-turn loop hook scripts (*.sh) and the optional Codex hook installer invoke /bin/bash to run the loop and chain an existing notify program; the Python engine itself spawns no processes"
+  - "shell — the optional Codex hook installer (install_codex_hooks.py) and the *.sh loop hooks invoke /bin/bash to run the per-turn loop and chain an existing notify program; the Python engine itself spawns no processes"
 ---
 
 # Cypher Tempre Self-Model
@@ -148,6 +148,11 @@ makes it mandatory by construction (all fail-open; they never break a session):
 and let turns end freely. **Subagents must wear the skill too:** spawn the `cypher-tempre-agent`
 type (it runs the loop and seals before returning), or have the subagent forge its own task
 chain and seal to it (point enforcement at it with `CT_ENFORCE_ROOT`).
+
+The Stop/SubagentStop hooks emit **only** the decision JSON on stdout (everything incidental is
+quarantined to stderr), so the harness never sees corrupted output. Errors are swallowed
+fail-open and silent by default; set **`CT_ENFORCE_DEBUG=1`** to surface `enforce.py` warnings
+and tracebacks on stderr for diagnosis — the decision JSON on stdout stays clean either way.
 
 See how well the skill is actually being worn:
 
