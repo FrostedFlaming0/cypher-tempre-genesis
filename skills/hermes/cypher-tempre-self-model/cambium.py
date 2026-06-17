@@ -5,8 +5,8 @@ Cambium Engine — endogenous evolution (Lamarckian self-upgrade).
 When the agent meets an input its existing faculties cannot cover, it registers
 **cognitive dissonance** and runs a four-stage growth loop:
 
-    1. DETECT    measure how poorly the 84 modalities + 107 senses cover the
-                 input; the uncovered terms are the gap.
+    1. DETECT    measure how poorly the base modalities + senses (21 + 21 in this
+                 batch; Cambium grows more) cover the input; uncovered terms = the gap.
     2. SIMULATE  propose a new faculty — either by FUSING the best-matching
                  existing faculties, or by SPROUTING a fresh one from the
                  uncovered terms.

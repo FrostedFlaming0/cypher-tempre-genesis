@@ -654,6 +654,16 @@ class Recall:
             lab["provenance"] = fac["provenance"]
         if distilled_version:
             lab["labeler_version"] = distilled_version
+        # Frames -> mechanisms: any FIRED modality that has an executable op actually
+        # RUNS, attaching a computed result to the ring (e.g. Richness Scoring -> a
+        # depth score). Most faculties stay frames; the executable few do real work.
+        try:
+            import modality_ops
+            computed = modality_ops.run_all([m["name"] for m in mods], content, context)
+            if computed:
+                lab["computed"] = computed
+        except Exception:
+            pass            # an executable op must never break labeling
         if self.embedder is not None:          # self-embed at ingest -> instant cosine recall later
             lab["embedding"] = self.embedder.embed(content)
             # Stamp the vector space: a sealed vector is only comparable to vectors

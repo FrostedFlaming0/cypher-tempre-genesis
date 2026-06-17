@@ -164,6 +164,31 @@ def measure_assertiveness(text: str) -> int:
     return clamp(255 * assertive / (assertive + hedge + 1))
 
 
+# The conscience was ASYMMETRIC: FORCE_UNCERTAINTY catches OVER-claiming, but a
+# lazy-but-humble "reviewed, looks fine" with no substance sailed straight through.
+# These close that gap — measure the DEPTH of a claim, and flag a completion/clean
+# claim that has none. (Enforcement of depth is opt-in via the `effort_floor`
+# threshold; by default this is advisory and surfaced in the verdict for audit.py.)
+_COMPLETION = re.compile(
+    r"\b(complete|completed|done|finished|exhaustive(?:ly)?|fully\s+audited|audited\s+(?:all|every|the)|"
+    r"reviewed\s+(?:all|every|the\s+(?:whole|entire))|no\s+(?:issues?|bugs?|vulnerabilit|problems?)|"
+    r"all\s+(?:clear|good)|looks?\s+(?:fine|good|ok)|nothing\s+(?:to|of)\s+note)\b", re.I)
+
+
+def claims_completion(text: str) -> bool:
+    return bool(_COMPLETION.search(text or ""))
+
+
+def measure_effort(text: str):
+    """Depth/specificity of a claim (0–255 + signals), via the shared richness op.
+    Returns None if the op is unavailable — effort signalling is then simply skipped."""
+    try:
+        import modality_ops
+        return modality_ops.richness(text)
+    except Exception:
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # The gate
 # --------------------------------------------------------------------------- #
@@ -257,6 +282,11 @@ class PoQGate:
         brightness = round(sum(s.values()) / len(s), 3)
         grounding = measure_grounding(cand, support)
         assertive = measure_assertiveness(candidate)
+        effort = measure_effort(candidate)               # depth of the claim itself
+        # Under-effort: a completion/clean claim carrying no substance (no cited
+        # lines/symbols, no articulated reasoning). The other half of the conscience.
+        low_effort = bool(effort and claims_completion(candidate)
+                          and effort["score"] < self.t.get("effort_floor_soft", 90))
         ranked = sorted(
             ({"index": r["index"], "ring_hash": r["ring_hash"][:12],
               "overlap": round(jaccard(cand, rt), 3)}
@@ -283,6 +313,14 @@ class PoQGate:
                 f"aggregate_min_terms {self.t['aggregate_min_terms']}: a sum/count is only as "
                 f"true as its terms — gather every term (recall.py gather), declare the table "
                 f"rows via --used-rings, or state the partial coverage honestly.")
+        elif low_effort and self.t.get("effort_floor"):
+            # Opt-in (effort_floor set): refuse a hollow completion/clean claim the
+            # way we refuse a hollow over-claim — cite specifics or state partial work.
+            decision = "REVISE"
+            reasons.append(
+                f"under-effort: a completion/clean claim with depth {effort['score']} < "
+                f"effort_floor {self.t['effort_floor']} and no specifics (cited lines/symbols, "
+                f"articulated reasoning) — go deeper or state the partial coverage honestly.")
         elif brightness < self.t["brightness_target"]:
             decision = "REVISE"
             reasons.append(f"brightness {brightness} < target {self.t['brightness_target']}: not luminous enough — iterate.")
@@ -299,6 +337,13 @@ class PoQGate:
             "reasons": reasons,
             "cited_rings": cited,
         }
+        if effort is not None:
+            verdict["effort"] = effort["score"]
+            verdict["low_effort"] = low_effort      # advisory even when not enforced
+            if low_effort and not self.t.get("effort_floor"):
+                reasons.append(
+                    f"note: completion/clean claim with low depth ({effort['score']}) and no "
+                    f"specifics — consider citing lines/symbols (advisory; not gated).")
         if span_guard:
             # The HallucinationGuard microscope: ground each clause-sized span
             # against the window, so FORCE_UNCERTAINTY can demand hedging on the
