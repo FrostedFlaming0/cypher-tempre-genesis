@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.5.0 — 2026-06-17
+
+All 42 curated faculties are now executable — frames→mechanisms, completed for the batch.
+
+### Added
+- **Every modality and sense has an executable op** (was 1 in v3.4.0). `modality_ops.py`
+  now ships a library of genuine analytic **primitives** — lexical (salience, density,
+  top-terms), structural (connectives, nesting, bullets, symbols), temporal (dates,
+  relative-time, ordering), relational (concept pairs, context overlap, repeats), and
+  integrity (hedge/assert, injection, covenant markers) — and maps all **21 modalities +
+  21 senses** to a real op. When a faculty fires it RUNS and attaches the feature its
+  function names to the ring under `labels.computed`:
+  - *Bad-Idea Alarm* → risk markers; *Dependency-Graph Vision* → extracted symbols/calls;
+    *Temporal Context Holding* / *Timeline-Disorder Sensing* → dates + ordering;
+    *Honesty-Spectrum Sensing* → hedge/assert balance; *Value-Breach & Injection Detection*
+    / *Embedded-Intent Sensing* → injection + covenant flags; *Salience Anchoring* /
+    *Key-Word Salience Sensing* → weighted key terms; *Information-Density Sensing* →
+    density metrics; *Richness Scoring* → the depth score (unchanged).
+- `recall.label` now runs ops for fired **senses and modalities** (was modalities only).
+- A registry↔ops coverage selftest **locks the 21/21 invariant** (every curated faculty has
+  an op; a non-faculty name has none).
+
+### Notes
+- Ops are **deterministic feature-computations**: they perform the mechanical
+  extract/measure/detect so the model reasons over computed signal, not vibes — they do
+  not replace the model's reasoning. Cambium-grown faculties stay frames until given an op.
+- Stdlib only; SkillSpector **SAFE** on all five bundles; full selftest **PASS** (+4 checks).
+
 ## v3.4.0 — 2026-06-17
 
 Frames → mechanisms: make more of the skill *execute* the reasoning it has only

@@ -93,11 +93,13 @@ each sealed block.
    And check **replay**: `python3 replay.py match "<query>"` — if a sealed antecedent
    already answers this, confirm it and ground on it instead of regenerating (see *Replay*).
 4. **Reason** — engage the relevant **modalities** (`registry/modalities.json`), fusing when
-   one is not enough. For hard or high-stakes problems → see *Search*. Most faculties are
-   cognitive *frames* (a named mode you adopt); a few are **executable** — when they fire,
-   `modality_ops.py` runs and attaches a computed result to the ring (e.g. *Richness Scoring*
-   → a depth score). This batch ships a curated **21 modalities + 21 senses** (Cambium grows
-   more); the executable set is the start of moving reasoning from *named* to *performed*.
+   one is not enough. For hard or high-stakes problems → see *Search*. All **21 modalities +
+   21 senses** are **executable**: when a faculty fires, `modality_ops.py` runs its op and
+   attaches the computed feature to the ring under `labels.computed` — e.g. *Bad-Idea Alarm*
+   → risk markers, *Dependency-Graph Vision* → extracted symbols, *Honesty-Spectrum Sensing*
+   → hedge/assert balance, *Richness Scoring* → a depth score. The op performs the mechanical
+   extract/measure/detect; you reason over computed signal, not vibes. (Cambium-grown
+   faculties stay frames until given an op.)
 5. **Form a candidate, then audit through PoQ** — score it yourself, 0–255, on the six
    dimensions, and cite the rings you relied on:
    ```

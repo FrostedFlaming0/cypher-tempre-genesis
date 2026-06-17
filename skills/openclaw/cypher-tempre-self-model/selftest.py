@@ -1327,9 +1327,16 @@ def main():
                            "therefore the fee assertion passes spuriously — compare against MAX_MONEY.")
         check("phase14 richness: hollow claim shallow, cited finding deep",
               _sh["score"] < _mo.RICHNESS_FLOOR <= _dp["score"] and _sh["hollow"])
-        check("phase14 ops: executable op runs for Richness Scoring only",
-              _mo.run_for("Richness Scoring", "any text")["richness"]["score"] >= 0
-              and _mo.run_for("Recursive Abstraction", "x") is None)
+        _facnames = (set(json.loads((SKILL / "registry" / "modalities.json").read_text())["modalities"]
+                         and [m["name"] for m in json.loads((SKILL / "registry" / "modalities.json").read_text())["modalities"]])
+                     | set(s["name"] for s in json.loads((SKILL / "registry" / "senses.json").read_text())["senses"]))
+        check("phase14 ops: every curated faculty (21/21) has an executable op",
+              len(_facnames) == 42 and _facnames == set(_mo.OPS) and not (_facnames - set(_mo.OPS)))
+        check("phase14 ops: a non-faculty name has no op", _mo.run_for("Not A Faculty", "x") is None)
+        check("phase14 ops: Bad-Idea Alarm detects risk markers",
+              "overflow" in _mo.run_for("Bad-Idea Alarm", "integer overflow is dangerous")["hits"])
+        check("phase14 ops: Dependency-Graph Vision extracts symbols",
+              any("CheckTx" in s for s in _mo.run_for("Dependency-Graph Vision", "the CheckTxInputs() path")["symbols"]))
 
         # PoQ surfaces the under-effort signal on a hollow completion claim (advisory)
         _rec14 = recall.Recall(root, registry_root=SKILL)

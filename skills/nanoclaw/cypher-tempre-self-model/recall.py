@@ -654,12 +654,14 @@ class Recall:
             lab["provenance"] = fac["provenance"]
         if distilled_version:
             lab["labeler_version"] = distilled_version
-        # Frames -> mechanisms: any FIRED modality that has an executable op actually
-        # RUNS, attaching a computed result to the ring (e.g. Richness Scoring -> a
-        # depth score). Most faculties stay frames; the executable few do real work.
+        # Frames -> mechanisms: every FIRED faculty (sense or modality) that has an
+        # executable op actually RUNS, attaching a computed result to the ring (e.g.
+        # Richness Scoring -> a depth score, Bad-Idea Alarm -> risk markers). The op
+        # performs the mechanical extract/measure/detect; the model reasons over it.
         try:
             import modality_ops
-            computed = modality_ops.run_all([m["name"] for m in mods], content, context)
+            fired = [f["name"] for f in senses] + [m["name"] for m in mods]
+            computed = modality_ops.run_all(fired, content, context)
             if computed:
                 lab["computed"] = computed
         except Exception:
