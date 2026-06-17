@@ -1082,6 +1082,7 @@ def main():
         _old_env = os.environ.get("CT_ENFORCE_ROOT")
         os.environ["CT_ENFORCE_ROOT"] = str(eroot)
         os.environ["CT_TELEMETRY"] = "on"
+        os.environ["CT_AUTOGROW"] = "0"   # deterministic seal tests + don't grow into SKILL/registry
         try:
             etc = timechain.Timechain(eroot)
             etc.genesis(name="enforce-test")
@@ -1231,6 +1232,7 @@ def main():
                   adh["counts"]["resealed"] >= 1)
             check("phase12: enforce-test chain verifies", etc.verify()[0])
         finally:
+            os.environ.pop("CT_AUTOGROW", None)
             if _old_env is None:
                 os.environ.pop("CT_ENFORCE_ROOT", None)
             else:
@@ -1389,6 +1391,29 @@ def main():
         _glab = _grec.label("waveguide resonator microring photonics lithography")
         check("phase15 cambium ops: recall.label runs the grown faculty's op into labels.computed",
               isinstance(_glab.get("computed"), dict) and _gname in _glab.get("computed", {}))
+
+        # eager growth: the per-turn loop autonomously fills a gap (a sense AND a modality),
+        # into the LOCAL (temp) registry — never SKILL. Default PROMOTE_AT=1.
+        _gj = root / "registry" / "grown.json"
+        _pre = 0
+        if _gj.exists():
+            _pg = json.loads(_gj.read_text()); _pre = len(_pg.get("senses", [])) + len(_pg.get("modalities", []))
+        os.environ["CT_AUTOGROW"] = "1"
+        _tns = types.SimpleNamespace(root=root, registry_root=root,
+                                     input="Spintronics magnonics skyrmion racetrack domain-wall logic.",
+                                     summary="exploring an unfamiliar physics domain", context=None,
+                                     type="turn", recall=3, used_rings=None, at_risk=None,
+                                     coherence=None, relevance=None, novelty=None, consistency=None,
+                                     depth=None, covenant=None)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                recall.cmd_turn(_tns)
+        finally:
+            os.environ.pop("CT_AUTOGROW", None)
+        _pg2 = json.loads(_gj.read_text()) if _gj.exists() else {}
+        _post = len(_pg2.get("senses", [])) + len(_pg2.get("modalities", []))
+        check("phase15 cambium ops: the per-turn loop autonomously grows faculties to fill a gap",
+              _post > _pre)
 
         check("timechain: final verify", tc.verify()[0])
     finally:

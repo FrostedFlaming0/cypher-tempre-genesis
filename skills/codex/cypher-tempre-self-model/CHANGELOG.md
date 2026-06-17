@@ -1,5 +1,34 @@
 # Changelog
 
+## v3.7.0 — 2026-06-17
+
+Eager growth — the recurrence threshold is torn down; gaps are filled on sight.
+
+### Changed
+- **`PROMOTE_AT` defaults to 1** (was 3). A genuine gap (dissonance above the floor) is now
+  **filled on first encounter** instead of waiting for it to recur. `CT_PROMOTE_AT=3`
+  restores the old selective behaviour.
+
+### Added
+- **Autonomous in-loop growth.** `recall.py turn` now calls `cambium.fill_gap` after it
+  seals: if the turn revealed a gap, it grows a new **sense AND modality** for it (the "or
+  both"), each promoted and coded at once. Runs **only in the deliberate per-turn loop,
+  never in bulk Continuum ingest**. Toggle with `CT_AUTOGROW=0`.
+- **`cambium.fill_gap` + kind-aware dedup.** One gap snapshot grows both kinds (a sense-gap
+  and a modality-gap from the same seeds are now distinct faculties, not collapsed by dedup).
+  Repeated gaps reinforce rather than duplicate, so growth tracks gap *diversity*, not input
+  count. `grow()` gains `force` / `gap_override` for this.
+- **Soft cap `CT_MAX_GROWN`** (default 4096 per kind; 0 = unlimited) — the only backstop
+  against pathological unbounded growth, on top of dedup and the dissonance floor.
+
+### Notes
+- More faculties = more of the input space named and computed = more learning outside the
+  training parameters (the Cambium thesis), now realized aggressively. The base 21/21 stay
+  pristine; all growth lands in the per-user, gitignored `grown.json` / `grown_ops.json`.
+- Tradeoff (honest): without the recurrence filter, one-off gaps also become permanent
+  faculties, and `detect_gap`/`label` cost rises with faculty count — dedup + the cap bound
+  it, and the knobs above dial selectivity back. Three+ new selftest checks; SkillSpector SAFE.
+
 ## v3.6.0 — 2026-06-17
 
 Cambium-grown faculties are born **executable** — autonomous, local, and safe.
