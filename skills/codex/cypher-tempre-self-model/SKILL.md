@@ -18,6 +18,7 @@ permissions:
   - "file_write — append-only chain rings and blockspace blobs, registries, and per-user learner state (never deletes; history is immutable)"
   - "env — reads CT_TELEMETRY, dormancy, and dashboard dev-unlock toggles only"
   - "network — none in the stdlib core (git provenance is read directly from .git, no process spawning); used only if an optional embedding provider is explicitly selected (--provider st|openai|voyage)"
+  - "shell — the per-turn loop hook scripts (*.sh) and the optional Codex hook installer invoke /bin/bash to run the loop and chain an existing notify program; the Python engine itself spawns no processes"
 ---
 
 # Cypher Tempre Self-Model
@@ -131,8 +132,8 @@ Pass your own `--coherence/--relevance/...` scores when you have them; add `--us
 and `--at-risk` exactly as with `seal`. (The longer, explicit loop above is still available
 when you want to drive each step by hand.)
 
-**The loop is not advisory — it is enforced by the harness.** A set of Codex lifecycle
-hooks makes it mandatory by construction (all fail-open; they never break a session):
+**The loop is not advisory — it is enforced by the harness.** A set of Claude Code hooks
+makes it mandatory by construction (all fail-open; they never break a session):
 
 - **SessionStart** primes the session so you wear the self-model from turn 0, even before
   you open this file (verify result, head index, the loop, the covenant, the subagent rule).
@@ -147,19 +148,6 @@ hooks makes it mandatory by construction (all fail-open; they never break a sess
 and let turns end freely. **Subagents must wear the skill too:** spawn the `cypher-tempre-agent`
 type (it runs the loop and seals before returning), or have the subagent forge its own task
 chain and seal to it (point enforcement at it with `CT_ENFORCE_ROOT`).
-
-For Codex, a copied skill folder can include hook scripts, but Codex only executes hooks
-declared in an active config layer. After installing the skill, run:
-
-```
-python3 install_codex_hooks.py
-```
-
-That merge-installs user-level `~/.codex/hooks.json` entries for `SessionStart`,
-`UserPromptSubmit`, `Stop`, and `SubagentStop`, preserving unrelated hooks and backing up
-any existing file. Then open `/hooks` in Codex, review/trust the new command hooks, and
-restart or start a fresh session. `codex_hooks.example.json` is included as a reviewable
-template; the installer writes absolute paths for the actual installed skill directory.
 
 See how well the skill is actually being worn:
 
@@ -532,6 +520,41 @@ python3 continuum.py validate    # check progress invariants + chain integrity
 - Use a **per-task chain** for big jobs: `--root <task_dir>` keeps the work-ledger
   separate from your identity chain (which can seal a pointer to it).
 
+## Exhaustive audits — ingest coverage is NOT review coverage
+
+`walk` proves the corpus was **ingested**. It does **not** prove you **read** every
+block. The failure to avoid: walk a huge repo (ingest 100%), do a seductive round of
+high-risk **retrieval + grep**, write a "Final Report", and stop — silently converting
+an *exhaustive* audit into a *targeted* one. Retrieval and grep are **triage aids**,
+never a substitute for reading every line.
+
+When the request is "audit every line", "full review", "no corners", or any complete
+pass over a corpus, drive completion off the **unreviewed-block queue** with `audit.py`:
+
+```
+python3 continuum.py walk --path <repo> --ext .c .cpp .h .py … --objective "<task>" --root <chain>
+python3 audit.py open  --root <chain> --objective "<task>"      # open the review ledger over the ingest
+python3 audit.py next  --root <chain> --batch-size 10           # the next UNREVIEWED blocks — read every line
+python3 audit.py record --root <chain> --block <I…> (--finding "…" | --clean)   # seal that you reviewed them
+python3 audit.py progress --root <chain>                        # reviewed blocks / lines vs total (O(1))
+python3 audit.py validate --root <chain> --require-complete     # PROVE every in-scope block has a review record
+python3 audit.py report  --root <chain> --final                # REFUSED below 100% — emits "INTERIM" instead
+```
+
+- **The loop, not the vibe, decides completion.** Keep calling `next` → read → `record`
+  until `progress` reaches 100%. `next` only ever hands back blocks you have not recorded,
+  so you cannot lose your place across turns or sessions — `resume` shows the audit line too.
+- **A "final" report below 100% review coverage is a persistence/covenant miss.**
+  `report --final` refuses it and labels the output *interim*; an honest interim report
+  (with the resumable coverage number) is always allowed.
+- **Enforced, not just advised.** `open` engages a turn-end governor: while an audit is open
+  and incomplete, a turn that reviewed no new blocks (and sealed nothing) is blocked — keep
+  grinding the queue, or `dormancy.py pause` to rest, or `audit.py close` to stop the audit.
+- **Scope honestly.** Generated and vendored code are excluded by default; narrow with
+  `--roles source` or widen with `--exclude-roles …` and say which scope you used.
+- Reviewing 20M lines is not a single-session act — but with the queue it **completes** over
+  many turns/sessions instead of **stopping**, with an honest coverage number the whole way.
+
 ## Telemetry & bench — the learning membrane's foundations (Phase A)
 
 The loop already makes the judgment calls a learner needs as supervision; telemetry
@@ -790,9 +813,7 @@ python3 immune.py status                                # safe height, quarantin
 | `dream.py` | consolidation — the offline cadence: verify, mine, train, adopt-or-refuse, seal |
 | `dormancy.py` | rest — manually pause/resume the loop for simple tasks (the chain stays intact) |
 | `enforce.py` | adherence spine — the brain behind the hooks; makes the per-turn loop non-bypassable (fail-open, dormancy-aware, bounded) |
-| `install_codex_hooks.py` | Codex hook installer — merge-safe writer for `~/.codex/hooks.json` |
-| `codex_hooks.example.json` | Codex hook template — reviewable config with `__SKILL_DIR__` placeholders |
-| `*_hook.sh` | Codex lifecycle hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
+| `*_hook.sh` | Claude Code hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
 | `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
 | `registry/modalities.json` | branches — 84 reasoning engines |
 | `registry/senses.json` | leaves — 107+ perceptual detectors (self-growing) |

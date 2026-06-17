@@ -555,6 +555,13 @@ def _print_state(st):
     print(f"  findings ({st['findings_total']} total, last {len(st['findings'])}):")
     for fnd in st["findings"]:
         print(f"     - {fnd}")
+    a = st.get("audit")
+    if a:
+        tb = a.get("total_blocks") or 0
+        pct = (100.0 * a.get("review_cursor", 0) / tb) if tb else 0.0
+        print(f"  AUDIT review: {a.get('review_cursor', 0)}/{tb} blocks ({pct:.1f}%), "
+              f"{a.get('findings_total', 0)} findings — "
+              f"{'COMPLETE' if a.get('complete') else 'INCOMPLETE (audit.py next)'}")
     print(f"  NEXT ACTION: {st['next_action']}")
 
 

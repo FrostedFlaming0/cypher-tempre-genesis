@@ -1,5 +1,44 @@
 # Changelog
 
+## v3.3.0 — 2026-06-16
+
+Two hardening layers: an exhaustive-audit **coverage governor** so a "read every
+line" task completes instead of stopping early, and **cross-runtime turn-end
+hooks** so the per-turn loop is observed (and, where the harness allows, enforced)
+beyond Claude Code.
+
+### Added
+- **`audit.py` — ingest coverage is not review coverage.** Continuum proves a corpus
+  was *ingested*; it never proved the model *read* every block. `audit.py` adds a
+  review ledger on top of an ingested chain: `open` censuses the in-scope blocks,
+  `next` hands back the next **unreviewed** blocks to read, `record` seals that you
+  reviewed them (with a finding or an explicit clean pass), `progress` reports
+  reviewed blocks/lines vs total, `validate --require-complete` **proves** every
+  in-scope block has a sealed review record, and `report --final` **refuses** to
+  label itself final below 100% — it emits an honest *interim* report instead.
+  Retrieval and grep are triage; completion is driven by the unreviewed-block queue.
+- **Audit governor wired into `enforce.py`.** `audit.py open` engages a turn-end
+  governor: while an audit is open and incomplete, a turn that reviewed no new blocks
+  (and sealed nothing) is blocked on Claude Code — so a model keeps grinding the queue
+  instead of writing a premature "Final Report". It measures progress against the
+  turn-start baseline (so the turn that *completes* the audit still counts), stays
+  **dormancy-aware** and **bounded** (fails open after `CT_ENFORCE_MAX_NUDGES`), and
+  self-disengages at 100% or on `audit.py close`.
+- **`enforce.py codex-notify` + `codex_notify_hook.sh` — turn-end beyond Claude.**
+  Codex and OpenClaw fire a single `notify` program on turn end (fire-and-forget,
+  cannot block), so there the loop is **observed**: the handler records whether the
+  turn advanced the identity chain or the active audit. The chaining wrapper records
+  adherence and then forwards every argument to any pre-existing `notify` program, so
+  existing integrations keep working unchanged.
+- **`AGENTS.md` — the standing instruction for runtimes that read it.** The per-turn
+  loop, the covenant, and the exhaustive-audit workflow, so a session wears the skill
+  even where there is no `SessionStart` hook.
+
+### Changed
+- `continuum.py resume` now surfaces the audit review line (coverage %, findings,
+  complete/incomplete) when an audit is open, so a session picks the work back up
+  across sessions.
+
 ## v3.2.0 — 2026-06-15
 
 Adherence enforcement — the per-turn loop becomes non-bypassable. A `SKILL.md`
@@ -14,19 +53,13 @@ fail-open so it can never break a session.
   sealed as tentative (the honest doctrine, automated), and covenant-violating input
   is refused at the membrane and the refusal is sealed. Removes the friction that
   makes the loop easy to drop mid-task.
-- **`enforce.py` + Codex lifecycle hooks — the loop, enforced.** `SessionStart` primes a
+- **`enforce.py` + Claude Code hooks — the loop, enforced.** `SessionStart` primes a
   session to wear the self-model from turn 0; `UserPromptSubmit` records the chain
   head at turn start; `Stop`/`SubagentStop` block a turn from ending until a ring is
   sealed. All hooks are **fail-open**, **dormancy-aware** (no enforcement while
   paused), and **bounded** — nudging stops after `CT_ENFORCE_MAX_NUDGES` (default 3)
   and records an `adherence_violation` so a turn that genuinely cannot seal is never
   bricked. State lives in `chain/.enforce.json`; head reads are O(1) via the tail ring.
-- **Codex hook installer and template.** The Codex bundle now ships
-  `install_codex_hooks.py` and `codex_hooks.example.json`, because Codex executes
-  hooks from active config layers (`~/.codex/hooks.json`, project `.codex/hooks.json`,
-  or plugin-bundled hooks), not merely because scripts exist inside a skill folder.
-  The installer writes absolute paths, preserves unrelated hooks, removes stale Cypher
-  Tempre hook groups, and backs up the previous `hooks.json`.
 - **`agents/cypher-tempre-agent.md` — subagents wear the skill too.** A subagent
   definition whose system prompt runs the loop and seals before returning; the
   `SubagentStop` hook holds it to that. A subagent may forge its own task chain and

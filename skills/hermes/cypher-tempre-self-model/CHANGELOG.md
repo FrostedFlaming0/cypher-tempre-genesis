@@ -1,5 +1,44 @@
 # Changelog
 
+## v3.3.0 — 2026-06-16
+
+Two hardening layers: an exhaustive-audit **coverage governor** so a "read every
+line" task completes instead of stopping early, and **cross-runtime turn-end
+hooks** so the per-turn loop is observed (and, where the harness allows, enforced)
+beyond Claude Code.
+
+### Added
+- **`audit.py` — ingest coverage is not review coverage.** Continuum proves a corpus
+  was *ingested*; it never proved the model *read* every block. `audit.py` adds a
+  review ledger on top of an ingested chain: `open` censuses the in-scope blocks,
+  `next` hands back the next **unreviewed** blocks to read, `record` seals that you
+  reviewed them (with a finding or an explicit clean pass), `progress` reports
+  reviewed blocks/lines vs total, `validate --require-complete` **proves** every
+  in-scope block has a sealed review record, and `report --final` **refuses** to
+  label itself final below 100% — it emits an honest *interim* report instead.
+  Retrieval and grep are triage; completion is driven by the unreviewed-block queue.
+- **Audit governor wired into `enforce.py`.** `audit.py open` engages a turn-end
+  governor: while an audit is open and incomplete, a turn that reviewed no new blocks
+  (and sealed nothing) is blocked on Claude Code — so a model keeps grinding the queue
+  instead of writing a premature "Final Report". It measures progress against the
+  turn-start baseline (so the turn that *completes* the audit still counts), stays
+  **dormancy-aware** and **bounded** (fails open after `CT_ENFORCE_MAX_NUDGES`), and
+  self-disengages at 100% or on `audit.py close`.
+- **`enforce.py codex-notify` + `codex_notify_hook.sh` — turn-end beyond Claude.**
+  Codex and OpenClaw fire a single `notify` program on turn end (fire-and-forget,
+  cannot block), so there the loop is **observed**: the handler records whether the
+  turn advanced the identity chain or the active audit. The chaining wrapper records
+  adherence and then forwards every argument to any pre-existing `notify` program, so
+  existing integrations keep working unchanged.
+- **`AGENTS.md` — the standing instruction for runtimes that read it.** The per-turn
+  loop, the covenant, and the exhaustive-audit workflow, so a session wears the skill
+  even where there is no `SessionStart` hook.
+
+### Changed
+- `continuum.py resume` now surfaces the audit review line (coverage %, findings,
+  complete/incomplete) when an audit is open, so a session picks the work back up
+  across sessions.
+
 ## v3.2.0 — 2026-06-15
 
 Adherence enforcement — the per-turn loop becomes non-bypassable. A `SKILL.md`
@@ -14,30 +53,17 @@ fail-open so it can never break a session.
   sealed as tentative (the honest doctrine, automated), and covenant-violating input
   is refused at the membrane and the refusal is sealed. Removes the friction that
   makes the loop easy to drop mid-task.
-- **`enforce.py` adherence primitives — the loop, audited.** `mark` records the
-  chain head at turn start; `stop-check` verifies a fresh ring was sealed after
-  that mark; `session-start` primes the runtime with verify/head/covenant context.
-  On hook-capable runtimes these commands can be wired into lifecycle hooks. On
-  Hermes they are executed explicitly by the model as a self-audit. All paths are
-  **fail-open**, **dormancy-aware** (no enforcement while paused), and **bounded**.
-  State lives in `chain/.enforce.json`; head reads are O(1) via the tail ring.
-- **Hermes self-enforcement path.** Hermes has no native `UserPromptSubmit`,
-  `Stop`, or `SubagentStop` shell-hook contract, so the Hermes bundle now documents
-  an explicit `enforce.py mark -> recall.py turn -> enforce.py stop-check` loop.
-  `stop-check` remains the same shared verifier, but the Hermes model reads its
-  verdict and loops before returning instead of relying on a platform block.
-- **`enforce.py --root` support for Hermes.** The self-audit CLI now accepts
-  `--root <chain>` in addition to `CT_ENFORCE_ROOT`, so custom task chains can be
-  marked, sealed, and checked with the same root flag used by the rest of the skill.
-- **`hermes/cypher-tempre-agent.md` + optional watchdog.** Added a Hermes-native
-  subagent definition and `hermes/enforcement-watchdog.sh` for users who want an
-  external terminal/cron compliance check. The Hermes bundle's portable subagent
-  definition no longer points at the Claude skills directory.
-- **`agents/cypher-tempre-agent.md` — subagents wear the skill too.** A portable
-  subagent definition whose system prompt runs the loop and seals before returning.
-  On Hermes, the subagent self-checks with `enforce.py stop-check`; on hook-capable
-  runtimes, `SubagentStop` can hold it to the same rule. A subagent may forge its own
-  task chain and point enforcement at it with `CT_ENFORCE_ROOT` or `--root`.
+- **`enforce.py` + Claude Code hooks — the loop, enforced.** `SessionStart` primes a
+  session to wear the self-model from turn 0; `UserPromptSubmit` records the chain
+  head at turn start; `Stop`/`SubagentStop` block a turn from ending until a ring is
+  sealed. All hooks are **fail-open**, **dormancy-aware** (no enforcement while
+  paused), and **bounded** — nudging stops after `CT_ENFORCE_MAX_NUDGES` (default 3)
+  and records an `adherence_violation` so a turn that genuinely cannot seal is never
+  bricked. State lives in `chain/.enforce.json`; head reads are O(1) via the tail ring.
+- **`agents/cypher-tempre-agent.md` — subagents wear the skill too.** A subagent
+  definition whose system prompt runs the loop and seals before returning; the
+  `SubagentStop` hook holds it to that. A subagent may forge its own task chain and
+  point enforcement at it with `CT_ENFORCE_ROOT`.
 - **`telemetry.py adherence` — is the skill actually being worn?** Derives, from the
   new `adherence_*` events, the honored/violated ratio, nudge rate, one-call loop
   count, and how often the conscience caught an over-claim and recorded it

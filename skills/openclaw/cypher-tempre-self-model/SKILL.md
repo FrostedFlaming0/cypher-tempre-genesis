@@ -131,41 +131,22 @@ Pass your own `--coherence/--relevance/...` scores when you have them; add `--us
 and `--at-risk` exactly as with `seal`. (The longer, explicit loop above is still available
 when you want to drive each step by hand.)
 
-**The loop is not advisory — it is enforced by the harness or by explicit self-check.**
-For OpenClaw, the strongest path is the bundled native plugin:
-`openclaw-plugin/` registers typed OpenClaw plugin hooks. `session_start` primes
-the session, `before_prompt_build` runs `enforce.py mark` and injects the loop
-reminder, and `before_agent_finalize` runs `enforce.py stop-check`. If no ring was
-sealed, the plugin returns `action: "revise"` so OpenClaw gives you one more
-bounded pass to seal honestly before finalizing.
+**The loop is not advisory — it is enforced by the harness.** A set of Claude Code hooks
+makes it mandatory by construction (all fail-open; they never break a session):
 
-Install it after copying this skill folder:
+- **SessionStart** primes the session so you wear the self-model from turn 0, even before
+  you open this file (verify result, head index, the loop, the covenant, the subagent rule).
+- **UserPromptSubmit** records the chain head at turn start, so the harness can tell whether
+  *this* turn actually sealed anything.
+- **Stop / SubagentStop** *block the turn from ending until a ring is sealed.* If you try to
+  finish without sealing, you are nudged to run `recall.py turn`; nudging is **bounded**
+  (after a few attempts it fails open and records an `adherence_violation`) so a turn that
+  genuinely cannot seal is never bricked.
 
-```
-openclaw plugins install ~/.openclaw/workspace/skills/cypher-tempre-self-model/openclaw-plugin
-openclaw config set 'plugins.entries.cypher-tempre-enforcement.hooks.allowConversationAccess' true --strict-json
-openclaw gateway restart
-```
-
-For non-bundled local plugins, set
-`plugins.entries.cypher-tempre-enforcement.hooks.allowConversationAccess=true`;
-the command above does that and is required for the `before_agent_finalize`
-Stop-equivalent hook.
-If the skill is installed somewhere custom, set
-`plugins.entries.cypher-tempre-enforcement.config.skillRoot` to this folder:
-`openclaw config set 'plugins.entries.cypher-tempre-enforcement.config.skillRoot' /path/to/cypher-tempre-self-model`.
-
-Fallback when native plugins are unavailable: self-enforce the same contract by
-running `python3 enforce.py mark` at turn start, sealing with `recall.py turn`,
-then running `python3 enforce.py stop-check` before returning. If `stop-check`
-prints a JSON object with `"decision":"block"`, seal honestly, then check again.
-No output means the marked turn satisfied the loop.
-
-All enforcement is fail-open, bounded, and dormancy-aware. **While dormant
-(`dormancy.py pause`), enforcement is off** and turns may end freely. **Subagents
-must wear the skill too:** use `openclaw/cypher-tempre-agent.md` or
-`agents/cypher-tempre-agent.md`, or have the subagent forge its own task chain and
-seal to it (point enforcement at it with `CT_ENFORCE_ROOT` or `--root <chain>`).
+**While dormant (`dormancy.py pause`), all enforcement is off** — the hooks detect the pause
+and let turns end freely. **Subagents must wear the skill too:** spawn the `cypher-tempre-agent`
+type (it runs the loop and seals before returning), or have the subagent forge its own task
+chain and seal to it (point enforcement at it with `CT_ENFORCE_ROOT`).
 
 See how well the skill is actually being worn:
 
@@ -538,6 +519,41 @@ python3 continuum.py validate    # check progress invariants + chain integrity
 - Use a **per-task chain** for big jobs: `--root <task_dir>` keeps the work-ledger
   separate from your identity chain (which can seal a pointer to it).
 
+## Exhaustive audits — ingest coverage is NOT review coverage
+
+`walk` proves the corpus was **ingested**. It does **not** prove you **read** every
+block. The failure to avoid: walk a huge repo (ingest 100%), do a seductive round of
+high-risk **retrieval + grep**, write a "Final Report", and stop — silently converting
+an *exhaustive* audit into a *targeted* one. Retrieval and grep are **triage aids**,
+never a substitute for reading every line.
+
+When the request is "audit every line", "full review", "no corners", or any complete
+pass over a corpus, drive completion off the **unreviewed-block queue** with `audit.py`:
+
+```
+python3 continuum.py walk --path <repo> --ext .c .cpp .h .py … --objective "<task>" --root <chain>
+python3 audit.py open  --root <chain> --objective "<task>"      # open the review ledger over the ingest
+python3 audit.py next  --root <chain> --batch-size 10           # the next UNREVIEWED blocks — read every line
+python3 audit.py record --root <chain> --block <I…> (--finding "…" | --clean)   # seal that you reviewed them
+python3 audit.py progress --root <chain>                        # reviewed blocks / lines vs total (O(1))
+python3 audit.py validate --root <chain> --require-complete     # PROVE every in-scope block has a review record
+python3 audit.py report  --root <chain> --final                # REFUSED below 100% — emits "INTERIM" instead
+```
+
+- **The loop, not the vibe, decides completion.** Keep calling `next` → read → `record`
+  until `progress` reaches 100%. `next` only ever hands back blocks you have not recorded,
+  so you cannot lose your place across turns or sessions — `resume` shows the audit line too.
+- **A "final" report below 100% review coverage is a persistence/covenant miss.**
+  `report --final` refuses it and labels the output *interim*; an honest interim report
+  (with the resumable coverage number) is always allowed.
+- **Enforced, not just advised.** `open` engages a turn-end governor: while an audit is open
+  and incomplete, a turn that reviewed no new blocks (and sealed nothing) is blocked — keep
+  grinding the queue, or `dormancy.py pause` to rest, or `audit.py close` to stop the audit.
+- **Scope honestly.** Generated and vendored code are excluded by default; narrow with
+  `--roles source` or widen with `--exclude-roles …` and say which scope you used.
+- Reviewing 20M lines is not a single-session act — but with the queue it **completes** over
+  many turns/sessions instead of **stopping**, with an honest coverage number the whole way.
+
 ## Telemetry & bench — the learning membrane's foundations (Phase A)
 
 The loop already makes the judgment calls a learner needs as supervision; telemetry
@@ -795,9 +811,8 @@ python3 immune.py status                                # safe height, quarantin
 | `extractor.py` | the extractor learner — distilled labeler, confidence routing, teach pairs, falling annotation cost |
 | `dream.py` | consolidation — the offline cadence: verify, mine, train, adopt-or-refuse, seal |
 | `dormancy.py` | rest — manually pause/resume the loop for simple tasks (the chain stays intact) |
-| `enforce.py` | adherence spine — hook brain and self-check verifier; makes the per-turn loop non-bypassable where the harness supports blocking, and explicit/auditable where it does not |
-| `openclaw-plugin/` | native OpenClaw plugin — session_start / before_prompt_build / before_agent_finalize enforcement using the existing `enforce.py` |
-| `*_hook.sh` | portable shell wrappers kept for compatibility with hook-pack or shell-hook runtimes |
+| `enforce.py` | adherence spine — the brain behind the hooks; makes the per-turn loop non-bypassable (fail-open, dormancy-aware, bounded) |
+| `*_hook.sh` | Claude Code hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
 | `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
 | `registry/modalities.json` | branches — 84 reasoning engines |
 | `registry/senses.json` | leaves — 107+ perceptual detectors (self-growing) |

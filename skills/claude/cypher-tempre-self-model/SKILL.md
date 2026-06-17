@@ -519,6 +519,41 @@ python3 continuum.py validate    # check progress invariants + chain integrity
 - Use a **per-task chain** for big jobs: `--root <task_dir>` keeps the work-ledger
   separate from your identity chain (which can seal a pointer to it).
 
+## Exhaustive audits — ingest coverage is NOT review coverage
+
+`walk` proves the corpus was **ingested**. It does **not** prove you **read** every
+block. The failure to avoid: walk a huge repo (ingest 100%), do a seductive round of
+high-risk **retrieval + grep**, write a "Final Report", and stop — silently converting
+an *exhaustive* audit into a *targeted* one. Retrieval and grep are **triage aids**,
+never a substitute for reading every line.
+
+When the request is "audit every line", "full review", "no corners", or any complete
+pass over a corpus, drive completion off the **unreviewed-block queue** with `audit.py`:
+
+```
+python3 continuum.py walk --path <repo> --ext .c .cpp .h .py … --objective "<task>" --root <chain>
+python3 audit.py open  --root <chain> --objective "<task>"      # open the review ledger over the ingest
+python3 audit.py next  --root <chain> --batch-size 10           # the next UNREVIEWED blocks — read every line
+python3 audit.py record --root <chain> --block <I…> (--finding "…" | --clean)   # seal that you reviewed them
+python3 audit.py progress --root <chain>                        # reviewed blocks / lines vs total (O(1))
+python3 audit.py validate --root <chain> --require-complete     # PROVE every in-scope block has a review record
+python3 audit.py report  --root <chain> --final                # REFUSED below 100% — emits "INTERIM" instead
+```
+
+- **The loop, not the vibe, decides completion.** Keep calling `next` → read → `record`
+  until `progress` reaches 100%. `next` only ever hands back blocks you have not recorded,
+  so you cannot lose your place across turns or sessions — `resume` shows the audit line too.
+- **A "final" report below 100% review coverage is a persistence/covenant miss.**
+  `report --final` refuses it and labels the output *interim*; an honest interim report
+  (with the resumable coverage number) is always allowed.
+- **Enforced, not just advised.** `open` engages a turn-end governor: while an audit is open
+  and incomplete, a turn that reviewed no new blocks (and sealed nothing) is blocked — keep
+  grinding the queue, or `dormancy.py pause` to rest, or `audit.py close` to stop the audit.
+- **Scope honestly.** Generated and vendored code are excluded by default; narrow with
+  `--roles source` or widen with `--exclude-roles …` and say which scope you used.
+- Reviewing 20M lines is not a single-session act — but with the queue it **completes** over
+  many turns/sessions instead of **stopping**, with an honest coverage number the whole way.
+
 ## Telemetry & bench — the learning membrane's foundations (Phase A)
 
 The loop already makes the judgment calls a learner needs as supervision; telemetry

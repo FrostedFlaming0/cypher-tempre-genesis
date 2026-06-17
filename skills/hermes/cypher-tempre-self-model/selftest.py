@@ -1148,6 +1148,65 @@ def main():
                 os.environ["CT_ENFORCE_ROOT"] = _old_env
             shutil.rmtree(eroot, ignore_errors=True)
 
+        # -- phase13: audit coverage governor ------------------------------- #
+        import io, contextlib, types, enforce as _enf2, audit as _aud
+        aroot = Path(tempfile.mkdtemp(prefix="ct_audit_"))
+        groot = Path(tempfile.mkdtemp(prefix="ct_auditenf_"))
+        corpus = Path(tempfile.mkdtemp(prefix="ct_corpus_"))
+        _oe = os.environ.get("CT_ENFORCE_ROOT")
+        os.environ["CT_ENFORCE_ROOT"] = str(groot)   # pointer + governor namespace
+        try:
+            timechain.Timechain(groot).genesis(name="audit-enforce-test")
+            (corpus / "a.py").write_text("def a():\n    return 1\n")
+            (corpus / "b.py").write_text("def b():\n    return 2\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                continuum.Continuum(aroot).walk(corpus, [".py"], "audit selftest")
+            a, _ = _aud.Audit(aroot).open(objective="review all")
+            check("phase13 audit: open counts in-scope blocks", a["total_blocks"] == 2)
+
+            blocks, _ = _aud.Audit(aroot).next_batch(batch_size=9)
+            idxs = [b["index"] for b in blocks]
+            check("phase13 audit: next returns the unreviewed blocks", len(idxs) == 2)
+
+            a2, _, newly = _aud.Audit(aroot).record([idxs[0]], clean=True)
+            check("phase13 audit: record advances the review cursor", a2["review_cursor"] == 1 and newly == 1)
+            a3, _, newly2 = _aud.Audit(aroot).record([idxs[0]], clean=True)
+            check("phase13 audit: re-record does NOT double-advance (high-water dedup)",
+                  a3["review_cursor"] == 1 and newly2 == 0)
+
+            ok_inc, _ = _aud.Audit(aroot).validate(require_complete=True)
+            check("phase13 audit: validate --require-complete fails while incomplete", not ok_inc)
+            isfinal_inc, _ = _aud.Audit(aroot).report(final=True)
+            check("phase13 audit: report --final refused below 100%", not isfinal_inc)
+
+            # governor: a turn with NO review progress blocks; with progress allows
+            def _gov_blocks():
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    _enf2.cmd_stop_check({})
+                return "block" in buf.getvalue()
+            _enf2.cmd_mark({})
+            check("phase13 governor: active incomplete audit blocks a no-progress turn", _gov_blocks())
+            _enf2.cmd_mark({})
+            _aud.Audit(aroot).record([idxs[1]], clean=True)   # finishes coverage -> clears pointer
+            check("phase13 governor: review progress this turn is allowed", not _gov_blocks())
+
+            ok_done, _ = _aud.Audit(aroot).validate(require_complete=True)
+            check("phase13 audit: validate passes at 100% review coverage", ok_done)
+            isfinal_done, _ = _aud.Audit(aroot).report(final=True)
+            check("phase13 audit: report --final granted at 100%", isfinal_done)
+            check("phase13 audit: completion clears the governor pointer",
+                  not (Path(groot) / "chain" / ".active_audit").exists())
+            check("phase13 audit: continuum chain stays coherent with audit rings",
+                  continuum.Continuum(aroot).validate()[0])
+        finally:
+            if _oe is None:
+                os.environ.pop("CT_ENFORCE_ROOT", None)
+            else:
+                os.environ["CT_ENFORCE_ROOT"] = _oe
+            for d in (aroot, groot, corpus):
+                shutil.rmtree(d, ignore_errors=True)
+
         check("timechain: final verify", tc.verify()[0])
     finally:
         shutil.rmtree(root, ignore_errors=True)
