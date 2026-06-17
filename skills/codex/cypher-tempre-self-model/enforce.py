@@ -35,6 +35,14 @@ sys.path.insert(0, str(HERE))
 MAX_NUDGES = int(os.environ.get("CT_ENFORCE_MAX_NUDGES", "3"))
 
 
+def _env_enabled(name):
+    """Parse boolean env flags conventionally: unset/empty/0/false/no/off are off."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return False
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
 def _root_from(stdin_data):
     """The identity chain lives in the skill dir by default. A hook may override
     with CT_ENFORCE_ROOT (e.g. to enforce a task chain)."""
@@ -362,7 +370,7 @@ def main(argv=None):
     # handler exception prints a traceback — all to stderr, never to the parsed
     # stdout. The hook wrappers stop redirecting stderr to /dev/null in this mode,
     # so a future field issue is debuggable instead of silent.
-    _debug = bool(os.environ.get("CT_ENFORCE_DEBUG"))
+    _debug = _env_enabled("CT_ENFORCE_DEBUG")
     if not _debug:
         try:
             import warnings
