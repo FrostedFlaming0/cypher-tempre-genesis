@@ -1200,6 +1200,22 @@ def main():
             check("phase12 enforce: CT_ENFORCE_DEBUG surfaces errors on stderr, stdout stays clean",
                   dcap.getvalue() == "" and "Traceback" in decap.getvalue())
 
+            # SessionStart / UserPromptSubmit hook stdout MUST be valid JSON — the Codex CLI
+            # rejects plain text ("invalid ... JSON output"). All three hooks speak JSON now.
+            for _cmd, _ev in [("session-start", "SessionStart"), ("user-prompt", "UserPromptSubmit")]:
+                _jc, _jr = io.StringIO(), sys.stdout
+                try:
+                    sys.stdout = _jc
+                    _enf.main([_cmd])
+                finally:
+                    sys.stdout = _jr
+                try:
+                    _hj = json.loads(_jc.getvalue())["hookSpecificOutput"]
+                    _ok_hj = _hj["hookEventName"] == _ev and bool(_hj["additionalContext"])
+                except Exception:
+                    _ok_hj = False
+                check(f"phase12 hook: {_cmd} emits valid hook-JSON context (Codex-CLI safe)", _ok_hj)
+
             with contextlib.redirect_stdout(io.StringIO()):
                 recall.cmd_turn(_ns("Tentatively this might be the cause; I'm not certain."))
             check("phase12 enforce: Stop allows once a ring is sealed", not _stop_blocks())

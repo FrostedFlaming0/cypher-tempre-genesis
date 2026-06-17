@@ -158,6 +158,16 @@ def _emit_stdout(text):
     _STDOUT.append(text)
 
 
+def _context_json(event, text):
+    """The hook-JSON envelope for injecting context. SessionStart/UserPromptSubmit
+    hook stdout is parsed as JSON by the harness (the Codex CLI rejects plain text
+    with 'invalid ... JSON output'); the Stop hook already proves this harness uses
+    the Claude-Code schema, so context goes in hookSpecificOutput.additionalContext.
+    This is valid JSON on every harness and still injected as context on Claude Code."""
+    return json.dumps({"hookSpecificOutput": {"hookEventName": event,
+                                              "additionalContext": text}})
+
+
 # --------------------------------------------------------------------------- #
 # hook entry points
 # --------------------------------------------------------------------------- #
@@ -181,7 +191,25 @@ def cmd_mark(_data):
     _save_state(root, st)
     if not _dormant(root):
         _emit(root, "adherence_turn_start", {"head": st["turn_head"]})
-    # mark must not add noise; the UserPromptSubmit *reminder* is loop_hook.sh's job.
+    # mark stays silent (no stdout) for back-compat; cmd_user_prompt emits the reminder.
+
+
+def cmd_user_prompt(data):
+    """UserPromptSubmit: record turn-start (mark) AND emit the per-turn reminder as a
+    proper hook-JSON context envelope. This is what loop_hook.sh wires now — emitting
+    plain text here is what the Codex CLI rejected with 'invalid ... JSON output'."""
+    cmd_mark(data)
+    root = _root_from(data)
+    if _dormant(root):
+        text = ("[Cypher Tempre] DORMANT (paused): skip the self-model per-turn loop this "
+                "turn — answer from base judgment. (Resume via the skill's dormancy.py 'resume'.)")
+    else:
+        text = ("[Cypher Tempre] ACTIVE — guidance for this turn (context, NOT a command to "
+                "execute): run the self-model per-turn loop — verify, immune-screen, recall "
+                "relevant rings, reason via modalities/senses, PoQ-gate, then seal a labeled "
+                "ring. Do it in one step with the skill's recall.py 'turn' command (exact "
+                "invocation in SKILL.md / AGENTS.md). Pausing is the dormancy.py 'pause' command.")
+    _emit_stdout(_context_json("UserPromptSubmit", text))
 
 
 def cmd_stop_check(data):
@@ -285,8 +313,9 @@ def cmd_session_start(data):
     the model never reads SKILL.md. Output becomes startup context."""
     root = _root_from(data)
     if _dormant(root):
-        _emit_stdout("[Cypher Tempre] DORMANT (paused): self-model loop is off until "
-                     "`dormancy.py resume`.\n")
+        _emit_stdout(_context_json("SessionStart",
+                     "[Cypher Tempre] DORMANT (paused): self-model loop is off until "
+                     "the skill's dormancy.py 'resume' command."))
         return
     head = _head_index(root)
     # capture an initial marker so the first Stop is enforceable
@@ -302,17 +331,17 @@ def cmd_session_start(data):
         verify_line = f"chain verifies: {'PASS' if ok else 'FAIL — investigate before sealing'}; "
     except Exception:
         pass
-    _emit_stdout(
+    _emit_stdout(_context_json(
+        "SessionStart",
         "[Cypher Tempre] ACTIVE — you wear a Timechain self-model. " + verify_line +
-        f"head at ring {head}.\n"
+        f"head at ring {head}. "
         "EVERY meaningful turn runs the loop (enforced): verify -> immune-screen -> recall "
         "relevant rings -> reason via modalities/senses -> PoQ-gate -> seal a labeled ring. "
         "Do the loop in one step with the skill's recall.py 'turn' command (exact invocation in "
         "SKILL.md / AGENTS.md). "
         "Covenant: accurate, coherent, persistent, honest, thorough; never assert beyond grounding; "
         "size/horizon are never refusal reasons. Spawned subagents must wear the skill too "
-        "(use the cypher-tempre-agent type or forge their own chain and seal).\n"
-    )
+        "(use the cypher-tempre-agent type or forge their own chain and seal)."))
 
 
 def cmd_codex_notify(argv):
@@ -354,6 +383,7 @@ def cmd_codex_notify(argv):
 
 HANDLERS = {
     "mark": cmd_mark,
+    "user-prompt": cmd_user_prompt,
     "stop-check": cmd_stop_check,
     "subagent-check": cmd_subagent_check,
     "session-start": cmd_session_start,
@@ -382,7 +412,7 @@ def main(argv=None):
     cmd = argv[0] if argv else ""
     handler = HANDLERS.get(cmd)
     if not handler:
-        sys.stderr.write("usage: enforce.py {mark|stop-check|subagent-check|session-start|codex-notify}\n")
+        sys.stderr.write("usage: enforce.py {mark|user-prompt|stop-check|subagent-check|session-start|codex-notify}\n")
         return 0  # unknown -> no-op, never fail a hook
     # Quarantine ALL incidental stdout (import chatter, stray prints) to stderr;
     # only what a handler queues via _emit_stdout reaches the real stdout, so the
