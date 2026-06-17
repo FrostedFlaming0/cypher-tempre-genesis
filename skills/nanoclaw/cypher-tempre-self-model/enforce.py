@@ -232,16 +232,17 @@ def cmd_stop_check(data):
     if audit_active:
         if not _bump_or_release(root, st, "adherence_audit_stalled"):
             return
+        # Guidance only — name the commands, never emit a verbatim-runnable line (some
+        # runtimes execute injected `python3 ...` strings; see loop_hook.sh).
         reason = (
             "[Cypher Tempre] An EXHAUSTIVE audit is open and incomplete, and this turn "
             "reviewed no new blocks. Size/horizon are never reasons to stop — do NOT write a "
-            "'Final Report' yet. Continue the unreviewed-block queue before finishing:\n"
-            "  python3 " + str(HERE / "audit.py") + " next --root " + str(audit_root) + " --batch-size 10\n"
-            "  (read every line, then) audit.py record --root " + str(audit_root) +
-            " --block <I...> (--finding \"..\" | --clean)\n"
-            "Check coverage: audit.py progress --root " + str(audit_root) + ". A final report is "
-            "only legitimate at 100% (audit.py report --final refuses otherwise). To pause: "
-            "python3 " + str(HERE / "dormancy.py") + " pause; to stop the audit: audit.py close.")
+            "'Final Report' yet. Continue the unreviewed-block queue: use the skill's audit.py "
+            "'next' to fetch the next unreviewed blocks, read every line, then audit.py 'record' "
+            "your review (with a finding or an explicit clean pass); check audit.py 'progress'. "
+            "The active audit chain root is: " + str(audit_root) + ". A final report is only "
+            "legitimate at 100% (audit.py 'report --final' refuses otherwise). To pause, use "
+            "dormancy.py 'pause'; to stop the audit, audit.py 'close'. Exact syntax is in SKILL.md.")
         _emit_stdout(json.dumps({"decision": "block", "reason": reason}))
         return
 
@@ -251,10 +252,9 @@ def cmd_stop_check(data):
     reason = (
         "[Cypher Tempre] You have not sealed a ring this turn. Run the per-turn loop "
         "before finishing: verify -> immune-screen -> recall relevant rings -> reason via "
-        "modalities/senses -> PoQ-gate -> seal a labeled ring. The one-call path is:\n"
-        "  python3 " + str(HERE / "recall.py") + " turn \"<your thought/answer this turn>\" "
-        "--input \"<the user's request>\"\n"
-        "Seal, then finish. (Paused tasks: python3 " + str(HERE / "dormancy.py") + " pause.)"
+        "modalities/senses -> PoQ-gate -> seal a labeled ring. Do it in one step with the "
+        "skill's recall.py 'turn' command (exact invocation in SKILL.md / AGENTS.md), then "
+        "finish. To pause instead, use the skill's dormancy.py 'pause' command."
     )
     _emit_stdout(json.dumps({"decision": "block", "reason": reason}))
 
@@ -307,7 +307,8 @@ def cmd_session_start(data):
         f"head at ring {head}.\n"
         "EVERY meaningful turn runs the loop (enforced): verify -> immune-screen -> recall "
         "relevant rings -> reason via modalities/senses -> PoQ-gate -> seal a labeled ring. "
-        "One-call path: `python3 " + str(HERE / "recall.py") + " turn \"<thought>\" --input \"<request>\"`. "
+        "Do the loop in one step with the skill's recall.py 'turn' command (exact invocation in "
+        "SKILL.md / AGENTS.md). "
         "Covenant: accurate, coherent, persistent, honest, thorough; never assert beyond grounding; "
         "size/horizon are never refusal reasons. Spawned subagents must wear the skill too "
         "(use the cypher-tempre-agent type or forge their own chain and seal).\n"
