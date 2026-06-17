@@ -1125,20 +1125,47 @@ def main():
                 print("STRAY-NOISE-DURING-HANDLER")   # stdout is quarantined here
                 return _orig_head(root)
             _enf._head_index = _noisy_head
-            _real, cap = sys.stdout, io.StringIO()
+            _real_out, _real_err = sys.stdout, sys.stderr
+            cap, errcap = io.StringIO(), io.StringIO()
             try:
                 sys.stdout = cap
+                sys.stderr = errcap
                 _enf.main(["stop-check"])
             finally:
-                sys.stdout = _real
+                sys.stdout = _real_out
+                sys.stderr = _real_err
                 _enf._head_index = _orig_head
             _txt = cap.getvalue()
+            _err = errcap.getvalue()
             try:
                 _pure = (json.loads(_txt).get("decision") == "block")
             except Exception:
                 _pure = False
             check("phase12 enforce: Stop stdout is pure decision JSON despite handler noise",
-                  _pure and "STRAY-NOISE-DURING-HANDLER" not in _txt)
+                  _pure and "STRAY-NOISE-DURING-HANDLER" not in _txt
+                  and "STRAY-NOISE-DURING-HANDLER" in _err)
+
+            # main() may be called in-process by tests/plugins; every invocation
+            # must start with an empty decision queue.
+            _enf.cmd_mark({})
+            cap1, cap2 = io.StringIO(), io.StringIO()
+            _real_out, _real_err = sys.stdout, sys.stderr
+            try:
+                sys.stderr = io.StringIO()
+                sys.stdout = cap1
+                _enf.main(["stop-check"])
+                sys.stdout = cap2
+                _enf.main(["stop-check"])
+            finally:
+                sys.stdout = _real_out
+                sys.stderr = _real_err
+            try:
+                _repeat_pure = (json.loads(cap1.getvalue()).get("decision") == "block" and
+                                json.loads(cap2.getvalue()).get("decision") == "block")
+            except Exception:
+                _repeat_pure = False
+            check("phase12 enforce: repeated in-process Stop checks do not concatenate JSON",
+                  _repeat_pure)
             with contextlib.redirect_stdout(io.StringIO()):
                 recall.cmd_turn(_ns("Tentatively this might be the cause; I'm not certain."))
             check("phase12 enforce: Stop allows once a ring is sealed", not _stop_blocks())

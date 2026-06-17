@@ -357,6 +357,7 @@ ARGV_HANDLERS = {"codex-notify"}
 
 
 def main(argv=None):
+    _STDOUT.clear()
     try:
         import warnings
         warnings.filterwarnings("ignore")   # a warning must never reach the parsed stream
@@ -388,6 +389,8 @@ def main(argv=None):
             real_out.flush()
         except Exception:
             pass
+        finally:
+            _STDOUT.clear()
     return 0
 
 

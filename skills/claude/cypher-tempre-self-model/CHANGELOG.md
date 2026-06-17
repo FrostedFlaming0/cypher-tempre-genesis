@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.3.3 — 2026-06-17
+
+Distribution and Stop-hook cleanup for v3.3.2.
+
+### Fixed
+- Raw `downloads/` skill zips are rebuilt at v3.3.3 so users following repository
+  download links get the Stop-hook JSON validation fix, not stale v3.3.1 packages.
+- `README.md` and `downloads/README.md` now point at the current raw-main
+  v3.3.3 zips.
+- `enforce.py main()` clears its queued hook stdout on entry and after flushing,
+  so repeated in-process calls cannot concatenate multiple decision JSON objects.
+- The stdout-discipline selftest now captures its intentional handler noise on
+  stderr, keeping selftest output clean while still proving the decision JSON is
+  pure.
+
 ## v3.3.2 — 2026-06-17
 
 Fixes a harness-level "Stop hook error: JSON validation failed" some environments
