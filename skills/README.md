@@ -21,10 +21,11 @@ Each runtime bundle labels its files through the path prefix above and contains:
 - `VERSION`, `LICENSE`, `CHANGELOG.md` - package metadata.
 - `openclaw-plugin/` - native OpenClaw plugin package in the OpenClaw bundle.
 - `timechain.py`, `poq.py`, `cambium.py`, `chronosynaptic.py`, `continuum.py`, `recall.py`, `embed.py`, `consensus.py`, `immune.py`, `selftest.py` - reusable stdlib helpers.
-- `registry/modalities.json`, `registry/senses.json`, `registry/emergent.json` - faculty registries.
+- `registry/modalities.json`, `registry/senses.json` - base faculty registries for fresh installs.
 
-Generated `chain/` and `tasks/` directories are ignored so shared bundles do not
-ship someone else's memory ledger.
+Generated `chain/`, `tasks/`, `registry/emergent.json`, `registry/grown.json`, and
+`registry/grown_ops.json` are ignored so shared bundles do not ship someone else's
+memory ledger or learned faculties.
 
 ## Codebase cartography hardening
 
