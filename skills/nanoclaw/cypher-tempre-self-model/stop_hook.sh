@@ -9,6 +9,12 @@ SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SKILL/enforce.py" ] || exit 0
 # stderr -> /dev/null so a warning or import message can NEVER bleed into the
 # stdout the harness parses as the decision JSON (enforce.py also quarantines its
-# own stdout to guarantee this). exit 0 always: the gate is fail-open by design.
-python3 "$SKILL/enforce.py" stop-check 2>/dev/null
+# own stdout to guarantee this). Set CT_ENFORCE_DEBUG=1 to surface enforce.py
+# stderr (warnings + tracebacks) when diagnosing — the stdout JSON stays clean
+# either way. exit 0 always: the gate is fail-open by design.
+if [ -n "$CT_ENFORCE_DEBUG" ]; then
+  python3 "$SKILL/enforce.py" stop-check
+else
+  python3 "$SKILL/enforce.py" stop-check 2>/dev/null
+fi
 exit 0

@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.3.4 — 2026-06-17
+
+Operational hardening — make the next problem easy to catch.
+
+### Added
+- **`CT_ENFORCE_DEBUG=1`** surfaces `enforce.py` warnings and tracebacks on stderr
+  for diagnosing a hook in the field. By default the Stop/SubagentStop hooks are
+  silent and fail-open; the `2>/dev/null` in `stop_hook.sh` / `subagent_stop_hook.sh`
+  is lifted only when the flag is set. The decision JSON on stdout stays clean in
+  both modes, and a handler exception now prints a traceback (stderr only) under the
+  flag instead of being swallowed silently.
+- **`tools/build_zips.sh` + `RELEASING.md`** — the drag-and-drop `downloads/` zips
+  and the GitHub release assets are now built **once** from the same source and used
+  for both channels, so they can no longer drift (the issue v3.3.3 had to clean up).
+  `build_zips.sh` also drops stale-version zips so old packages never linger.
+
 ## v3.3.3 — 2026-06-17
 
 Distribution and Stop-hook cleanup for v3.3.2.
