@@ -1163,15 +1163,32 @@ def main():
                 continuum.Continuum(aroot).walk(corpus, [".py"], "audit selftest")
             a, _ = _aud.Audit(aroot).open(objective="review all")
             check("phase13 audit: open counts in-scope blocks", a["total_blocks"] == 2)
+            try:
+                _aud.build_parser().format_help()
+                help_ok = True
+            except Exception:
+                help_ok = False
+            check("phase13 audit: CLI help renders", help_ok)
 
             blocks, _ = _aud.Audit(aroot).next_batch(batch_size=9)
             idxs = [b["index"] for b in blocks]
             check("phase13 audit: next returns the unreviewed blocks", len(idxs) == 2)
 
-            a2, _, newly = _aud.Audit(aroot).record([idxs[0]], clean=True)
-            check("phase13 audit: record advances the review cursor", a2["review_cursor"] == 1 and newly == 1)
-            a3, _, newly2 = _aud.Audit(aroot).record([idxs[0]], clean=True)
-            check("phase13 audit: re-record does NOT double-advance (high-water dedup)",
+            try:
+                _aud.Audit(aroot).record([999999], clean=True)
+                invalid_rejected = False
+            except RuntimeError:
+                invalid_rejected = True
+            check("phase13 audit: invalid/out-of-scope block IDs are rejected", invalid_rejected)
+
+            a2, _, newly = _aud.Audit(aroot).record([idxs[1]], clean=True)
+            check("phase13 audit: out-of-order record advances the review cursor",
+                  a2["review_cursor"] == 1 and newly == 1)
+            hole_blocks, _ = _aud.Audit(aroot).next_batch(batch_size=9)
+            check("phase13 audit: next still returns lower-index holes after out-of-order review",
+                  [b["index"] for b in hole_blocks] == [idxs[0]])
+            a3, _, newly2 = _aud.Audit(aroot).record([idxs[1]], clean=True)
+            check("phase13 audit: re-record does NOT double-advance",
                   a3["review_cursor"] == 1 and newly2 == 0)
 
             ok_inc, _ = _aud.Audit(aroot).validate(require_complete=True)
@@ -1188,7 +1205,7 @@ def main():
             _enf2.cmd_mark({})
             check("phase13 governor: active incomplete audit blocks a no-progress turn", _gov_blocks())
             _enf2.cmd_mark({})
-            _aud.Audit(aroot).record([idxs[1]], clean=True)   # finishes coverage -> clears pointer
+            _aud.Audit(aroot).record([idxs[0]], clean=True)   # finishes coverage -> clears pointer
             check("phase13 governor: review progress this turn is allowed", not _gov_blocks())
 
             ok_done, _ = _aud.Audit(aroot).validate(require_complete=True)

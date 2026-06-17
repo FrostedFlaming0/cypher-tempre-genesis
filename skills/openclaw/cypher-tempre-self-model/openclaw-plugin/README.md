@@ -19,6 +19,12 @@ the `enforce.py`, `dormancy.py`, and `recall.py` files from the installed
 about to accept a natural final answer, and can request one more bounded model
 pass so the agent seals before finalizing.
 
+`subagent_ended` is diagnostic in the current OpenClaw plugin surface: it records
+and logs whether the subagent advanced the chain after the turn-start baseline,
+but it does not block or revise the already-finished subagent return. Treat this
+as weaker than Claude Code's `SubagentStop` until OpenClaw exposes a blocking
+subagent-finalize event.
+
 ## Install
 
 After installing the OpenClaw skill bundle:
