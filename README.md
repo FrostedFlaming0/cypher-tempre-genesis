@@ -100,11 +100,13 @@ Every shareable file is labeled by its runtime path:
 | NanoClaw skill version | `skills/nanoclaw/cypher-tempre-self-model/**` |
 | Repository metadata | `README.md`, `LICENSE`, `.gitignore`, and `skills/README.md` |
 
-Generated memory state — your `chain/`, task ledgers, and grown faculties
-(`registry/emergent.json`) — is intentionally not committed and never shipped in a
-bundle; it is created per user as the agent runs (`python3 timechain.py init --name
-<AgentName>` seals your genesis). Because none of it ships, unzipping an upgrade over an
-existing install cannot overwrite your memory or your faculties.
+Generated memory state — your `chain/`, task ledgers, Dream Cache
+(`registry/emergent.json`), promoted faculties (`registry/grown.json`), and local
+executable grown-faculty ops (`registry/grown_ops.json`) — is intentionally not
+committed and never shipped in a bundle; it is created per user as the agent runs
+(`python3 timechain.py init --name <AgentName>` seals your genesis). Because none of it
+ships, unzipping an upgrade over an existing install cannot overwrite your memory or your
+faculties.
 
 ## Install
 
@@ -119,19 +121,20 @@ Run `python3 selftest.py` inside any bundle to validate the local copy.
 ## Upgrading an existing install (preserve your chain and faculties)
 
 Your `chain/` (memory and identity) and your **faculties** are per-user state that an
-upgrade must preserve. Grown faculties come in two kinds, and **both live in `registry/`**:
-*emergent* ones in `registry/emergent.json`, and *promoted* ones appended into
-`registry/modalities.json` / `senses.json` once a gap recurs. **The rule is simple: never
-overwrite `registry/` (or `chain/`) on an upgrade** — both methods below leave them alone.
+upgrade must preserve. The bundle ships only the base faculty registries
+(`registry/modalities.json` and `registry/senses.json`) needed for a fresh install.
+Everything learned at runtime is local, gitignored, and never shipped:
+`registry/emergent.json` for Dream Cache candidates, `registry/grown.json` for promoted
+faculties, and `registry/grown_ops.json` for their executable op specs. **The rule is
+simple: never overwrite `registry/` or `chain/` on an upgrade** — the safe methods below
+leave them alone.
 
-- The bundle ships **no `chain/`** and **no `emergent.json`**, so unzipping it *over* an
-  existing folder leaves your chain and your emergent faculties untouched.
-- It *does* ship the base `registry/modalities.json` and `senses.json` (a fresh install
-  needs them). As of **v2.1**, *new* promotions are written to a per-user
-  `registry/grown.json` (gitignored, never shipped), so once you are on v2.1 your grown
-  faculties survive any unzip-over. But promotions made by an **older** version still live
-  in the base files, so a naive unzip-over during this upgrade could overwrite them — don't
-  extract the registry over an existing install; the steps below leave it alone.
+- The bundle ships **no `chain/`**, **no task ledgers**, and **no generated registry
+  state** (`emergent.json`, `grown.json`, or `grown_ops.json`), so unzipping it *over* an
+  existing folder leaves your memory and learned faculties untouched.
+- It *does* ship the base `registry/modalities.json` and `registry/senses.json` for fresh
+  installs. Existing installs should preserve their whole `registry/` directory so older
+  home-grown faculties, current per-user growth files, and local op specs survive cleanly.
 
 **Never** delete-then-reinstall, or `rsync --delete` over an existing bundle — that
 destroys your `chain/`.

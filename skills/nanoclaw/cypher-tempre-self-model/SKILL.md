@@ -857,8 +857,8 @@ python3 immune.py status                                # safe height, quarantin
 | `enforce.py` | adherence spine — the brain behind the hooks; makes the per-turn loop non-bypassable (fail-open, dormancy-aware, bounded) |
 | `*_hook.sh` | Claude Code hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
 | `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
-| `registry/modalities.json` | branches — 84 reasoning engines |
-| `registry/senses.json` | leaves — 107+ perceptual detectors (self-growing) |
+| `registry/modalities.json` | branches — 21 executable reasoning modalities |
+| `registry/senses.json` | leaves — 21 executable perceptual senses (plus per-user growth) |
 | `registry/emergent.json` | Dream Cache — emergent faculties awaiting promotion |
 | `chain/rings.jsonl` | the Timechain itself |
 | `chain/blockspace/` | content-addressed store for any file type |
