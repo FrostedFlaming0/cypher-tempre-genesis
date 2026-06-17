@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.7.2 — 2026-06-17
+
+Cross-harness hook fix — SessionStart + UserPromptSubmit emit valid JSON (Codex CLI).
+
+### Fixed
+- **The `SessionStart` and `UserPromptSubmit` hooks emitted plain text** where the harness
+  parses hook stdout as JSON, so on the **Codex CLI** every prompt failed with
+  `error: hook returned invalid user prompt submit JSON output`. Field-reported on Linux —
+  but it was **never a platform issue**: the `Stop` hook, which already emits
+  `{"decision":...}` JSON, worked fine on the very same machine. The two text-emitting hooks
+  were written for Claude Code (which accepts plain-text context) and shipped unchanged to a
+  stricter harness.
+- Both now emit the Claude-Code-compatible
+  `{"hookSpecificOutput":{"hookEventName":...,"additionalContext":...}}` envelope — valid JSON
+  on every harness, still injected as context on Claude Code. `enforce.py` gains a
+  `user-prompt` handler (records turn-start **and** emits the reminder as JSON); `loop_hook.sh`
+  calls it instead of echoing plain text; `session_start_hook.sh` and both wrappers gain the
+  `CT_ENFORCE_DEBUG` stderr guard so a stray warning can never corrupt the JSON.
+- New selftest locks it: SessionStart and UserPromptSubmit hook stdout parses as valid
+  hook-JSON with `additionalContext`.
+
 ## v3.7.1 — 2026-06-17
 
 Real-time learning, unbounded — alignment is the guardrail, not a count.
