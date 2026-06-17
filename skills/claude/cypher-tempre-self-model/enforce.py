@@ -135,6 +135,22 @@ def _read_stdin():
 
 
 # --------------------------------------------------------------------------- #
+# stdout discipline — a Stop hook's stdout MUST be EXACTLY the decision JSON (or
+# empty), or the harness reports "Stop hook error: JSON validation failed". So we
+# QUARANTINE all incidental output: while a handler runs, sys.stdout is redirected
+# to stderr, and the ONLY thing written to the real stdout is what a handler
+# explicitly queues via _emit_stdout. Belt-and-suspenders with `2>/dev/null` in the
+# hook wrappers, so neither an import side-effect nor a warning can ever corrupt
+# the decision the harness parses.
+# --------------------------------------------------------------------------- #
+_STDOUT = []
+
+
+def _emit_stdout(text):
+    _STDOUT.append(text)
+
+
+# --------------------------------------------------------------------------- #
 # hook entry points
 # --------------------------------------------------------------------------- #
 
@@ -218,7 +234,7 @@ def cmd_stop_check(data):
             "Check coverage: audit.py progress --root " + str(audit_root) + ". A final report is "
             "only legitimate at 100% (audit.py report --final refuses otherwise). To pause: "
             "python3 " + str(HERE / "dormancy.py") + " pause; to stop the audit: audit.py close.")
-        print(json.dumps({"decision": "block", "reason": reason}))
+        _emit_stdout(json.dumps({"decision": "block", "reason": reason}))
         return
 
     # --- default: every meaningful turn must leave a sealed ring --- #
@@ -232,7 +248,7 @@ def cmd_stop_check(data):
         "--input \"<the user's request>\"\n"
         "Seal, then finish. (Paused tasks: python3 " + str(HERE / "dormancy.py") + " pause.)"
     )
-    print(json.dumps({"decision": "block", "reason": reason}))
+    _emit_stdout(json.dumps({"decision": "block", "reason": reason}))
 
 
 def _bump_or_release(root, st, violation_event):
@@ -261,8 +277,8 @@ def cmd_session_start(data):
     the model never reads SKILL.md. Output becomes startup context."""
     root = _root_from(data)
     if _dormant(root):
-        print("[Cypher Tempre] DORMANT (paused): self-model loop is off until "
-              "`dormancy.py resume`.")
+        _emit_stdout("[Cypher Tempre] DORMANT (paused): self-model loop is off until "
+                     "`dormancy.py resume`.\n")
         return
     head = _head_index(root)
     # capture an initial marker so the first Stop is enforceable
@@ -278,7 +294,7 @@ def cmd_session_start(data):
         verify_line = f"chain verifies: {'PASS' if ok else 'FAIL — investigate before sealing'}; "
     except Exception:
         pass
-    print(
+    _emit_stdout(
         "[Cypher Tempre] ACTIVE — you wear a Timechain self-model. " + verify_line +
         f"head at ring {head}.\n"
         "EVERY meaningful turn runs the loop (enforced): verify -> immune-screen -> recall "
@@ -286,7 +302,7 @@ def cmd_session_start(data):
         "One-call path: `python3 " + str(HERE / "recall.py") + " turn \"<thought>\" --input \"<request>\"`. "
         "Covenant: accurate, coherent, persistent, honest, thorough; never assert beyond grounding; "
         "size/horizon are never refusal reasons. Spawned subagents must wear the skill too "
-        "(use the cypher-tempre-agent type or forge their own chain and seal)."
+        "(use the cypher-tempre-agent type or forge their own chain and seal).\n"
     )
 
 
@@ -341,19 +357,37 @@ ARGV_HANDLERS = {"codex-notify"}
 
 
 def main(argv=None):
+    try:
+        import warnings
+        warnings.filterwarnings("ignore")   # a warning must never reach the parsed stream
+    except Exception:
+        pass
     argv = argv if argv is not None else sys.argv[1:]
     cmd = argv[0] if argv else ""
     handler = HANDLERS.get(cmd)
     if not handler:
         sys.stderr.write("usage: enforce.py {mark|stop-check|subagent-check|session-start|codex-notify}\n")
         return 0  # unknown -> no-op, never fail a hook
+    # Quarantine ALL incidental stdout (import chatter, stray prints) to stderr;
+    # only what a handler queues via _emit_stdout reaches the real stdout, so the
+    # decision the harness parses is never corrupted.
+    real_out = sys.stdout
     try:
+        sys.stdout = sys.stderr
         if cmd in ARGV_HANDLERS:
             handler(argv[1:])
         else:
             handler(_read_stdin())
     except Exception:
         pass  # FAIL-OPEN: a hook must never break the session
+    finally:
+        sys.stdout = real_out
+    if _STDOUT:
+        try:
+            real_out.write("".join(_STDOUT))   # the ONLY thing on the real stdout
+            real_out.flush()
+        except Exception:
+            pass
     return 0
 
 

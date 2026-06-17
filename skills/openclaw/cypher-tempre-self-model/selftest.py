@@ -1095,10 +1095,13 @@ def main():
                 return types.SimpleNamespace(**d)
 
             def _stop_blocks():
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    _enf.cmd_stop_check({})
-                return "block" in buf.getvalue()
+                # enforce queues hook output via _emit_stdout (stdout-discipline),
+                # so read the queue, not captured stdout.
+                _enf._STDOUT.clear()
+                _enf.cmd_stop_check({})
+                out = "".join(_enf._STDOUT)
+                _enf._STDOUT.clear()
+                return "block" in out
 
             h0 = _enf._head_index(eroot)
             # the `turn` one-shot ALWAYS leaves a ring, even for over-confident text
@@ -1110,6 +1113,32 @@ def main():
             # enforce: mark a fresh turn, then Stop must BLOCK until a ring is sealed
             _enf.cmd_mark({})
             check("phase12 enforce: Stop blocks a turn that sealed nothing", _stop_blocks())
+
+            # stdout discipline: incidental output DURING the handler (here a stray
+            # print injected into a helper) must be quarantined to stderr; the real
+            # stdout carries EXACTLY the decision JSON, so the harness never reports
+            # "JSON validation failed".
+            _enf._STDOUT.clear()
+            _enf.cmd_mark({})
+            _orig_head = _enf._head_index
+            def _noisy_head(root):
+                print("STRAY-NOISE-DURING-HANDLER")   # stdout is quarantined here
+                return _orig_head(root)
+            _enf._head_index = _noisy_head
+            _real, cap = sys.stdout, io.StringIO()
+            try:
+                sys.stdout = cap
+                _enf.main(["stop-check"])
+            finally:
+                sys.stdout = _real
+                _enf._head_index = _orig_head
+            _txt = cap.getvalue()
+            try:
+                _pure = (json.loads(_txt).get("decision") == "block")
+            except Exception:
+                _pure = False
+            check("phase12 enforce: Stop stdout is pure decision JSON despite handler noise",
+                  _pure and "STRAY-NOISE-DURING-HANDLER" not in _txt)
             with contextlib.redirect_stdout(io.StringIO()):
                 recall.cmd_turn(_ns("Tentatively this might be the cause; I'm not certain."))
             check("phase12 enforce: Stop allows once a ring is sealed", not _stop_blocks())
@@ -1198,10 +1227,11 @@ def main():
 
             # governor: a turn with NO review progress blocks; with progress allows
             def _gov_blocks():
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    _enf2.cmd_stop_check({})
-                return "block" in buf.getvalue()
+                _enf2._STDOUT.clear()
+                _enf2.cmd_stop_check({})
+                out = "".join(_enf2._STDOUT)
+                _enf2._STDOUT.clear()
+                return "block" in out
             _enf2.cmd_mark({})
             check("phase13 governor: active incomplete audit blocks a no-progress turn", _gov_blocks())
             _enf2.cmd_mark({})
