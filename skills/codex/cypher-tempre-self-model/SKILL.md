@@ -152,7 +152,8 @@ chain and seal to it (point enforcement at it with `CT_ENFORCE_ROOT`).
 The Stop/SubagentStop hooks emit **only** the decision JSON on stdout (everything incidental is
 quarantined to stderr), so the harness never sees corrupted output. Errors are swallowed
 fail-open and silent by default; set **`CT_ENFORCE_DEBUG=1`** to surface `enforce.py` warnings
-and tracebacks on stderr for diagnosis — the decision JSON on stdout stays clean either way.
+and tracebacks on stderr for diagnosis (`0`/`false`/`no`/`off` stay quiet) — the decision
+JSON on stdout stays clean either way.
 
 See how well the skill is actually being worn:
 

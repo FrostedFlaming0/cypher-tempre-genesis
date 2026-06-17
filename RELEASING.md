@@ -43,4 +43,5 @@ several patch releases. The zips are built **once** and used for **both**.
 11. **Seal a ring** recording the release and update memory if the version note changed.
 
 Debugging a hook in the field: set `CT_ENFORCE_DEBUG=1` to surface `enforce.py`
-warnings/tracebacks on stderr (the decision JSON on stdout stays clean regardless).
+warnings/tracebacks on stderr (`0`/`false`/`no`/`off` stay quiet; the decision JSON
+on stdout stays clean regardless).

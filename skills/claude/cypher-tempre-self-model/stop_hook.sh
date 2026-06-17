@@ -10,11 +10,14 @@ SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # stderr -> /dev/null so a warning or import message can NEVER bleed into the
 # stdout the harness parses as the decision JSON (enforce.py also quarantines its
 # own stdout to guarantee this). Set CT_ENFORCE_DEBUG=1 to surface enforce.py
-# stderr (warnings + tracebacks) when diagnosing — the stdout JSON stays clean
-# either way. exit 0 always: the gate is fail-open by design.
-if [ -n "$CT_ENFORCE_DEBUG" ]; then
+# stderr (warnings + tracebacks) when diagnosing; 0/false/no/off stay quiet.
+# The stdout JSON stays clean either way. exit 0 always: the gate is fail-open.
+case "${CT_ENFORCE_DEBUG:-}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On|debug|DEBUG|Debug)
   python3 "$SKILL/enforce.py" stop-check
-else
+  ;;
+  *)
   python3 "$SKILL/enforce.py" stop-check 2>/dev/null
-fi
+  ;;
+esac
 exit 0

@@ -28,11 +28,11 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.3.4.zip) |
-| Codex | [cypher-tempre-codex-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.3.4.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.3.4.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.3.4.zip) |
-| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.3.4.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.3.5.zip) |
+| Codex | [cypher-tempre-codex-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.3.5.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.3.5.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.3.5.zip) |
+| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.3.5.zip) |
 
 ## Timechain Dashboard
 
@@ -46,11 +46,11 @@ Downloads:
 |---|---|
 | [cyphertempre-static-site.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-static-site.zip) | Static files for Hostinger `public_html` |
 | [cyphertempre-dashboard-local-bridge.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cyphertempre-dashboard-local-bridge.zip) | Local bridge users run to pair their own Timechain files |
-| [cypher-tempre-claude-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.3.4.zip) | Claude Code skill bundle with lifecycle hooks |
-| [cypher-tempre-codex-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.3.4.zip) | Codex skill bundle with lifecycle hook installer |
-| [cypher-tempre-openclaw-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.3.4.zip) | OpenClaw skill bundle with native plugin enforcement and self-enforcement fallback |
-| [cypher-tempre-hermes-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.3.4.zip) | Hermes skill bundle with self-enforcement instructions |
-| [cypher-tempre-nanoclaw-skill-v3.3.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.3.4.zip) | NanoClaw skill bundle |
+| [cypher-tempre-claude-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.3.5.zip) | Claude Code skill bundle with lifecycle hooks |
+| [cypher-tempre-codex-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.3.5.zip) | Codex skill bundle with lifecycle hook installer |
+| [cypher-tempre-openclaw-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.3.5.zip) | OpenClaw skill bundle with native plugin enforcement and self-enforcement fallback |
+| [cypher-tempre-hermes-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.3.5.zip) | Hermes skill bundle with self-enforcement instructions |
+| [cypher-tempre-nanoclaw-skill-v3.3.5.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.3.5.zip) | NanoClaw skill bundle |
 
 User bridge commands:
 
@@ -83,7 +83,7 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 The current Codex bundle is also mirrored in `downloads/` as
-`cypher-tempre-codex-skill-v3.3.4.zip`. After installing hooks, open `/hooks`
+`cypher-tempre-codex-skill-v3.3.5.zip`. After installing hooks, open `/hooks`
 in Codex to review and trust the new command hooks, then restart or start a
 new session.
 

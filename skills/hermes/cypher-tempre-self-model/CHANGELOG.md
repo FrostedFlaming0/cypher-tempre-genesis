@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.3.5 — 2026-06-17
+
+Debug flag polish.
+
+### Fixed
+- `CT_ENFORCE_DEBUG` now parses like a conventional boolean flag: unset, empty,
+  `0`, `false`, `no`, and `off` stay quiet/fail-open, while truthy values such as
+  `1`, `true`, `yes`, `on`, and `debug` surface diagnostics on stderr. The Python
+  enforcement layer and the Stop/SubagentStop shell wrappers now agree, so
+  `CT_ENFORCE_DEBUG=0` no longer accidentally lifts stderr redirection.
+- Selftests cover both sides of the debug hatch: `CT_ENFORCE_DEBUG=0` remains quiet
+  with clean stdout, while `CT_ENFORCE_DEBUG=1` surfaces tracebacks on stderr.
+
 ## v3.3.4 — 2026-06-17
 
 Operational hardening — make the next problem easy to catch.
