@@ -28,9 +28,24 @@ def check(name, cond):
     _ok = _ok and bool(cond)
 
 
+def copy_base_registry(dst_root: Path):
+    """Copy only shipped base registries into a scratch selftest root.
+
+    Installed skills are supposed to keep user-local learning files beside the
+    base registry (`grown.json`, `grown_ops.json`, `emergent.json`, `policy.json`).
+    Selftest must be hermetic even in a lived-in install, so those generated
+    files never ride along into deterministic test fixtures.
+    """
+    reg = dst_root / "registry"
+    reg.mkdir(parents=True, exist_ok=True)
+    for name in ("modalities.json", "senses.json"):
+        shutil.copy2(SKILL / "registry" / name, reg / name)
+    return reg
+
+
 def main():
     root = Path(tempfile.mkdtemp(prefix="ct_selftest_"))
-    shutil.copytree(SKILL / "registry", root / "registry")   # faculties for cambium/chronosynaptic
+    copy_base_registry(root)   # base faculties for cambium/chronosynaptic
     try:
         # 1. Timechain — genesis + verify
         tc = timechain.Timechain(root)
@@ -66,8 +81,8 @@ def main():
         check("cambium: detects dissonance on foreign input", gap["dissonance"] > 100)
 
         # 3b. Promotion lands in the per-user grown.json (never the shipped base) — v2.1 faculty safety
-        # base_n includes whatever grown.json the live registry already carries
-        # (imports/promotions ride along in the copytree); count the DELTA.
+        # The scratch registry starts from shipped base faculties only; generated
+        # user-local registry files are intentionally not copied into selftest.
         base_n = len(cambium.load_corpus(root))
         pre = cambium.load_grown(root)
         pre_n = len(pre.get("modalities", [])) + len(pre.get("senses", []))
@@ -417,7 +432,7 @@ def main():
               len(pack["faculties"]) >= 1 and faculties.pack_hash(pack) == pack["pack_sha256"])
         root2 = Path(tempfile.mkdtemp(prefix="ct_selftest_recipient_"))
         try:
-            shutil.copytree(SKILL / "registry", root2 / "registry")
+            copy_base_registry(root2)
             tc2 = timechain.Timechain(root2)
             tc2.genesis(name="recipient")
             before = len(cambium.load_corpus(root2))
@@ -977,7 +992,7 @@ def main():
         # ------------------------------------------------------------------ #
         vroot = Path(tempfile.mkdtemp(prefix="ct_v5_"))
         try:
-            shutil.copytree(SKILL / "registry", vroot / "registry")
+            copy_base_registry(vroot)
             vtc = timechain.Timechain(vroot)
             vtc.genesis(name="v5test")
             vrec = recall.Recall(vroot, registry_root=SKILL)
@@ -1079,7 +1094,7 @@ def main():
         # ---------------------------------------------------------------- #
         import io, contextlib, types, enforce as _enf
         eroot = Path(tempfile.mkdtemp(prefix="ct_enforce_"))
-        shutil.copytree(SKILL / "registry", eroot / "registry")
+        copy_base_registry(eroot)
         _old_env = os.environ.get("CT_ENFORCE_ROOT")
         os.environ["CT_ENFORCE_ROOT"] = str(eroot)
         os.environ["CT_TELEMETRY"] = "on"

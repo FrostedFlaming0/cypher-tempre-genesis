@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.7.5 — 2026-06-18
+
+Hermetic selftests for lived-in installs.
+
+### Fixed
+- `selftest.py` now copies only the shipped base registries (`modalities.json`
+  and `senses.json`) into scratch test roots. User-local learning state such as
+  `registry/grown.json`, `registry/grown_ops.json`, `registry/emergent.json`,
+  and `registry/policy.json` no longer leaks into deterministic Dream/Cambium
+  checks.
+- This fixes false failures in the Dream label-space growth tests on upgraded
+  installs whose local grown faculties already covered the synthetic Kubernetes
+  cluster, or whose local policy had tightened growth thresholds.
+
 ## v3.7.4 — 2026-06-18
 
 Task-chain identity links and root-mismatch diagnostics.
