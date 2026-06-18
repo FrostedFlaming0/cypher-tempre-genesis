@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-import timechain, poq, cambium, chronosynaptic, continuum, recall, consensus, immune, embed, hippocampus, dormancy, telemetry, bench, policy, learner, faculties, guard, replay, lens, dream, extractor
+import timechain, poq, cambium, chronosynaptic, continuum, recall, consensus, immune, embed, hippocampus, dormancy, telemetry, bench, policy, learner, faculties, guard, replay, lens, dream, extractor, task
 
 SKILL = Path(__file__).resolve().parent
 _ok = True
@@ -1116,6 +1116,32 @@ def main():
             _enf.cmd_mark({})
             check("phase12 enforce: Stop blocks a turn that sealed nothing", _stop_blocks())
 
+            # A seal to a separate task root is still blocked, but now the nudge
+            # diagnoses the root mismatch explicitly instead of pretending no work
+            # happened anywhere.
+            _task_root = Path(tempfile.mkdtemp(prefix="ct_enforce_task_"))
+            _old_task_root = os.environ.get("CT_TASK_ROOT")
+            try:
+                timechain.Timechain(_task_root).genesis(name="task-only")
+                os.environ["CT_TASK_ROOT"] = str(_task_root)
+                _enf.cmd_mark({})
+                timechain.Timechain(_task_root).seal("experience", {"summary": "task-only seal"})
+                _enf._STDOUT.clear()
+                _enf.cmd_stop_check({})
+                _root_out = "".join(_enf._STDOUT)
+                _enf._STDOUT.clear()
+                check("phase12 enforce: root-mismatch Stop names task root and identity root",
+                      "Root mismatch detected" in _root_out
+                      and str(_task_root.resolve()) in _root_out
+                      and str(eroot.resolve()) in _root_out
+                      and "task.py complete" in _root_out)
+            finally:
+                if _old_task_root is None:
+                    os.environ.pop("CT_TASK_ROOT", None)
+                else:
+                    os.environ["CT_TASK_ROOT"] = _old_task_root
+                shutil.rmtree(_task_root, ignore_errors=True)
+
             # stdout discipline: incidental output DURING the handler (here a stray
             # print injected into a helper) must be quarantined to stderr; the real
             # stdout carries EXACTLY the decision JSON, so the harness never reports
@@ -1367,6 +1393,37 @@ def main():
                 os.environ["CT_ENFORCE_ROOT"] = _oe
             for d in (aroot, groot, corpus):
                 shutil.rmtree(d, ignore_errors=True)
+
+        # -- phase13b: task-chain identity pointers ------------------------- #
+        idroot = Path(tempfile.mkdtemp(prefix="ct_identity_"))
+        troot = Path(tempfile.mkdtemp(prefix="ct_task_"))
+        try:
+            timechain.Timechain(idroot).genesis(name="identity")
+            timechain.Timechain(troot).genesis(name="task")
+            timechain.Timechain(troot).seal("experience", {"summary": "task work"})
+            report = troot / "report.md"
+            report.write_text("# Task report\n\nReviewed one synthetic task.\n")
+            ring_a, payload_a, warnings_a = task.link_task(
+                idroot, troot, status="attached", objective="task linkage selftest")
+            check("phase13b task: attach seals task pointer into identity",
+                  ring_a["ring_type"] == "task_link"
+                  and payload_a["task_root"] == str(troot.resolve())
+                  and payload_a["task_head_hash"]
+                  and not warnings_a)
+            ring_c, payload_c, warnings_c = task.link_task(
+                idroot, troot / "chain", status="complete", report=report,
+                coverage="1/1 synthetic task blocks")
+            check("phase13b task: complete normalizes chain/ to project root",
+                  ring_c["index"] == ring_a["index"] + 1
+                  and payload_c["task_root"] == str(troot.resolve())
+                  and any("chain/ directory" in w for w in warnings_c))
+            check("phase13b task: complete can attach a report file",
+                  payload_c["report_attached"] and bool(ring_c["blockspace_refs"]))
+            check("phase13b task: identity chain verifies after task links",
+                  timechain.Timechain(idroot).verify()[0])
+        finally:
+            shutil.rmtree(idroot, ignore_errors=True)
+            shutil.rmtree(troot, ignore_errors=True)
 
         # -- phase14: frames->mechanisms (21/21 cap, executable modality, depth, effort) -- #
         import modality_ops as _mo

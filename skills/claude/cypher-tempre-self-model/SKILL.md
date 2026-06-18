@@ -553,8 +553,17 @@ python3 continuum.py validate    # check progress invariants + chain integrity
   to do next. You never lose track regardless of horizon.
 - Ingest piece by piece, seal as you go, and let the raw past fall away from context;
   the chain is the durable memory. The state stays bounded, so re-hydration never rots.
-- Use a **per-task chain** for big jobs: `--root <task_dir>` keeps the work-ledger
-  separate from your identity chain (which can seal a pointer to it).
+- Use a **per-task chain** for big jobs: `--root <task-root>` keeps the work-ledger
+  separate from your identity chain. Pass the **project root that contains `chain/`**,
+  not the `chain/` folder itself, or you will create a mistaken `chain/chain` ledger.
+  Link the task back into identity with a small pointer ring instead of merging histories:
+  ```
+  python3 task.py attach   --identity-root <identity-root> --task-root <task-root>
+  python3 task.py complete --identity-root <identity-root> --task-root <task-root> --report <report.md>
+  ```
+  Task chains remain directly readable later with `recall.py ... --root <task-root>` or
+  `continuum.py resume --root <task-root>`; the identity pointer records where they live
+  and what head hash was verified.
 
 ## Exhaustive audits — ingest coverage is NOT review coverage
 
@@ -568,13 +577,14 @@ When the request is "audit every line", "full review", "no corners", or any comp
 pass over a corpus, drive completion off the **unreviewed-block queue** with `audit.py`:
 
 ```
-python3 continuum.py walk --path <repo> --ext .c .cpp .h .py … --objective "<task>" --root <chain>
-python3 audit.py open  --root <chain> --objective "<task>"      # open the review ledger over the ingest
-python3 audit.py next  --root <chain> --batch-size 10           # the next UNREVIEWED blocks — read every line
-python3 audit.py record --root <chain> --block <I…> (--finding "…" | --clean)   # seal that you reviewed them
-python3 audit.py progress --root <chain>                        # reviewed blocks / lines vs total (O(1))
-python3 audit.py validate --root <chain> --require-complete [--require-depth]   # PROVE coverage (and depth)
-python3 audit.py report  --root <chain> --final [--require-depth]               # REFUSED below 100% — emits "INTERIM" instead
+python3 continuum.py walk --path <repo> --ext .c .cpp .h .py … --objective "<task>" --root <task-root>
+python3 audit.py open  --root <task-root> --objective "<task>"      # open the review ledger over the ingest
+python3 audit.py next  --root <task-root> --batch-size 10           # the next UNREVIEWED blocks — read every line
+python3 audit.py record --root <task-root> --block <I…> (--finding "…" | --clean)   # seal that you reviewed them
+python3 audit.py progress --root <task-root>                        # reviewed blocks / lines vs total (O(1))
+python3 audit.py validate --root <task-root> --require-complete [--require-depth]   # PROVE coverage (and depth)
+python3 audit.py report  --root <task-root> --final [--require-depth]               # REFUSED below 100% — emits "INTERIM" instead
+python3 task.py complete --identity-root <identity-root> --task-root <task-root> --report <report.md>
 ```
 
 - **The loop, not the vibe, decides completion.** Keep calling `next` → read → `record`
@@ -590,6 +600,11 @@ python3 audit.py report  --root <chain> --final [--require-depth]               
 - **Enforced, not just advised.** `open` engages a turn-end governor: while an audit is open
   and incomplete, a turn that reviewed no new blocks (and sealed nothing) is blocked — keep
   grinding the queue, or `dormancy.py pause` to rest, or `audit.py close` to stop the audit.
+- **Do not use a random `recall.py turn --root audit` as the only audit seal.** The Stop
+  hook enforces the identity root unless `audit.py open` has registered an active task
+  audit (or `CT_ENFORCE_ROOT` deliberately points elsewhere). If you seal to a task root
+  that enforcement is not watching, Stop now names the mismatch and tells you to either
+  use the audit queue or link the task with `task.py complete`.
 - **Scope honestly.** Generated and vendored code are excluded by default; narrow with
   `--roles source` or widen with `--exclude-roles …` and say which scope you used.
 - Reviewing 20M lines is not a single-session act — but with the queue it **completes** over
@@ -837,6 +852,7 @@ python3 immune.py status                                # safe height, quarantin
 | `audit.py` | exhaustive-review governor — review-coverage + depth ledger over an ingested Continuum chain (open/next/record/progress/validate/report) |
 | `chronosynaptic.py` | foresight — single-pass parallel-self MCTS |
 | `continuum.py` | endurance — long-horizon tasking via data-height blocks with full state refresh |
+| `task.py` | task links — attach/complete separate task chains by sealing verified head pointers into identity |
 | `recall.py` | relevance — self-labeling + adaptive retrieval of related past blocks |
 | `almanac.py` | the calendar — relative time expressions resolved into date windows (time-indexed recall) |
 | `embed.py` | semantics — pluggable embeddings (stdlib hashing default; st/openai/voyage adapters) |
@@ -869,6 +885,7 @@ poq.py         audit "<thought>" | seal "<thought>"   (+ --coherence/--relevance
 cambium.py     sense "<input>" | grow "<input>" | emergent
 chronosynaptic.py  think "<query>" [--seal] | collapse-notes notes.json [--seal]
 continuum.py       open | ingest | walk | resume | validate   (long-horizon tasks; --changed-only; redaction)
+task.py            attach | complete | inspect                 (link separate task chains into identity; pass project root, not chain/)
 recall.py          turn | index | fetch | seal | label | grep | retrieve | gather | track | endpoints | evidence | answer | verify-source
                    (turn = the whole loop in one call: verify -> screen -> recall -> seal, always leaves a ring)
 almanac.py         resolve "<text>" --asked-on "<stamp>" | between <a> <b>   (deixis -> date windows)

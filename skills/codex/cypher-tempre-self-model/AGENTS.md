@@ -30,19 +30,28 @@ then drive completion off the unreviewed-block queue.** Retrieval and grep are
 
 ```bash
 SK=~/.codex/skills/cypher-tempre-self-model
+TASK_ROOT=<repo>/.codex/cypher-tempre/<task-name>
 python3 $SK/continuum.py walk --path <repo> --ext .c .cpp .h .py ... \
-  --objective "<task>" --root <chain>            # ingest the whole tree (bulk, O(1)/block)
-python3 $SK/audit.py open  --root <chain> --objective "<task>"   # open the review ledger
+  --objective "<task>" --root $TASK_ROOT         # ingest the whole tree (bulk, O(1)/block)
+python3 $SK/audit.py open  --root $TASK_ROOT --objective "<task>" # open the review ledger
 # then loop until 100%:
-python3 $SK/audit.py next   --root <chain> --batch-size 10       # read EVERY line returned
-python3 $SK/audit.py record --root <chain> --block <I...> (--finding "..." | --clean)
-python3 $SK/audit.py progress --root <chain>                     # reviewed vs total
-python3 $SK/audit.py report  --root <chain> --final              # refused below 100%
+python3 $SK/audit.py next   --root $TASK_ROOT --batch-size 10    # read EVERY line returned
+python3 $SK/audit.py record --root $TASK_ROOT --block <I...> (--finding "..." | --clean)
+python3 $SK/audit.py progress --root $TASK_ROOT                  # reviewed vs total
+python3 $SK/audit.py report  --root $TASK_ROOT --final           # refused below 100%
+python3 $SK/task.py complete --task-root $TASK_ROOT --report <report.md>
 ```
 
 **Ingest coverage (blocks sealed) is NOT review coverage (blocks read).** A
 "Final Report" before 100% review coverage is a persistence/covenant miss — keep
 going, or honestly label the report *interim*.
+
+Pass the task **project root** (`$TASK_ROOT`, the folder containing `chain/`), not
+`$TASK_ROOT/chain`; passing `chain/` creates an accidental `chain/chain` ledger.
+Do not use `recall.py turn --root audit` as the only audit seal: `audit.py open`
+registers the active task chain so the Stop hook can count review progress, and
+`task.py complete` seals a verified pointer back into the identity chain when the
+task is finished. Task chains remain readable later with `--root $TASK_ROOT`.
 
 **Review coverage is not review DEPTH.** A bare `--clean` or "looks fine" counts as
 *shallow*; a DEEP review cites specific lines/symbols and says what and why. For a
