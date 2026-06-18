@@ -9,9 +9,12 @@
 # Set CT_ENFORCE_DEBUG=1 to surface enforce.py stderr for diagnosis. Fail-open: exit 0.
 SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SKILL/enforce.py" ] || exit 0
-if [ -n "$CT_ENFORCE_DEBUG" ]; then
+case "${CT_ENFORCE_DEBUG:-}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On|debug|DEBUG|Debug)
   python3 "$SKILL/enforce.py" user-prompt
-else
+  ;;
+  *)
   python3 "$SKILL/enforce.py" user-prompt 2>/dev/null
-fi
+  ;;
+esac
 exit 0

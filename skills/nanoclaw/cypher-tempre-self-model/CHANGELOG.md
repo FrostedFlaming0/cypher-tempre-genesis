@@ -1,5 +1,22 @@
 # Changelog
 
+## v3.7.3 — 2026-06-18
+
+Codex CLI hook hardening and wrapper parity.
+
+### Fixed
+- **`CT_ENFORCE_DEBUG=0` now stays quiet in every shell wrapper**, not just
+  `enforce.py` and the Stop/SubagentStop wrappers. `loop_hook.sh` and
+  `session_start_hook.sh` now use the same conventional boolean parser as the
+  Stop hooks, so `0` / `false` / `no` / `off` do not accidentally lift stderr
+  redirection on strict CLI harnesses.
+- Added wrapper-level selftests that execute the real shell hooks with
+  `CT_ENFORCE_DEBUG=0`: SessionStart/UserPromptSubmit must emit clean
+  hook-JSON context, and Stop/SubagentStop must emit clean decision JSON when
+  blocking.
+- Synced OpenClaw plugin metadata to the skill version so release artifacts do
+  not advertise stale hook/runtime versions.
+
 ## v3.7.2 — 2026-06-17
 
 Cross-harness hook fix — SessionStart + UserPromptSubmit emit valid JSON (Codex CLI).

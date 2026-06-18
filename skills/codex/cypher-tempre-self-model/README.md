@@ -35,6 +35,35 @@ this skill folder. It preserves unrelated hooks and writes a backup before
 replacing an existing file. Open `/hooks` in Codex to review and trust the new
 command hooks, then restart or start a new session.
 
+### Codex CLI hook checklist
+
+The app and CLI use the same hook scripts, but they can differ in **activation
+state**: the app may already have the hooks installed and trusted, while a fresh
+CLI install only has the skill folder. For the CLI, the lifecycle hooks must be
+present in `~/.codex/hooks.json` and trusted by Codex before Stop/SubagentStop can
+block reliably.
+
+If the CLI reports a Stop hook or invalid JSON issue:
+
+```bash
+cd ~/.codex/skills/cypher-tempre-self-model
+python3 selftest.py
+python3 install_codex_hooks.py
+```
+
+Then run `codex`, open `/hooks`, trust the four Cypher Tempre hooks, and restart
+the CLI session. For one-off automation only, Codex also exposes
+`--dangerously-bypass-hook-trust`, but normal users should trust the hooks through
+`/hooks` instead.
+
+The hook stdout contract is strict:
+
+- `SessionStart` and `UserPromptSubmit` emit hook-JSON context envelopes.
+- `Stop` and `SubagentStop` emit either exactly `{"decision":"block",...}` or
+  nothing.
+- Incidental warnings stay off stdout. To debug field issues, set
+  `CT_ENFORCE_DEBUG=1`; `0`, `false`, `no`, and `off` keep the hooks quiet.
+
 Or ask Codex to install it from the repository source ZIP:
 
 ```text

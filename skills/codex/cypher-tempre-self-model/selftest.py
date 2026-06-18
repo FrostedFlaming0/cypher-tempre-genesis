@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -1201,7 +1202,7 @@ def main():
                   dcap.getvalue() == "" and "Traceback" in decap.getvalue())
 
             # SessionStart / UserPromptSubmit hook stdout MUST be valid JSON — the Codex CLI
-            # rejects plain text ("invalid ... JSON output"). All three hooks speak JSON now.
+            # rejects plain text ("invalid ... JSON output"). The context hooks speak JSON now.
             for _cmd, _ev in [("session-start", "SessionStart"), ("user-prompt", "UserPromptSubmit")]:
                 _jc, _jr = io.StringIO(), sys.stdout
                 try:
@@ -1215,6 +1216,41 @@ def main():
                 except Exception:
                     _ok_hj = False
                 check(f"phase12 hook: {_cmd} emits valid hook-JSON context (Codex-CLI safe)", _ok_hj)
+
+            # Execute the real shell wrappers too. A prior regression was only in
+            # wrapper boolean logic: CT_ENFORCE_DEBUG=0 re-enabled stderr for
+            # SessionStart/UserPromptSubmit even though enforce.py itself parsed
+            # the flag correctly.
+            _hook_env = os.environ.copy()
+            _hook_env["CT_ENFORCE_ROOT"] = str(eroot)
+            _hook_env["CT_ENFORCE_DEBUG"] = "0"
+            _hook_env["PYTHONDONTWRITEBYTECODE"] = "1"
+            for _script, _ev in [("session_start_hook.sh", "SessionStart"),
+                                 ("loop_hook.sh", "UserPromptSubmit")]:
+                _proc = subprocess.run(["/bin/bash", str(SKILL / _script)], input="{}",
+                                       text=True, capture_output=True, env=_hook_env,
+                                       timeout=10)
+                try:
+                    _hj = json.loads(_proc.stdout)["hookSpecificOutput"]
+                    _ok_hj = (_proc.returncode == 0 and _proc.stderr == "" and
+                              _hj["hookEventName"] == _ev and bool(_hj["additionalContext"]))
+                except Exception:
+                    _ok_hj = False
+                check(f"phase12 wrapper: {_script} CT_ENFORCE_DEBUG=0 emits clean hook JSON",
+                      _ok_hj)
+
+            for _script in ["stop_hook.sh", "subagent_stop_hook.sh"]:
+                _enf.cmd_mark({})
+                _proc = subprocess.run(["/bin/bash", str(SKILL / _script)], input="{}",
+                                       text=True, capture_output=True, env=_hook_env,
+                                       timeout=10)
+                try:
+                    _decision = json.loads(_proc.stdout).get("decision")
+                    _ok_decision = _proc.returncode == 0 and _proc.stderr == "" and _decision == "block"
+                except Exception:
+                    _ok_decision = False
+                check(f"phase12 wrapper: {_script} CT_ENFORCE_DEBUG=0 emits clean Stop JSON",
+                      _ok_decision)
 
             with contextlib.redirect_stdout(io.StringIO()):
                 recall.cmd_turn(_ns("Tentatively this might be the cause; I'm not certain."))
