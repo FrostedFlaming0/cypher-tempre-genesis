@@ -1,5 +1,25 @@
 # Changelog
 
+## v3.7.4 — 2026-06-18
+
+Task-chain identity links and root-mismatch diagnostics.
+
+### Added
+- Added `task.py attach`, `task.py complete`, and `task.py inspect`. Separate
+  task chains can now be sealed back into the identity chain as compact,
+  verified head pointers instead of splicing histories or bloating identity.
+- `task.py` normalizes the common mistake of passing `<task-root>/chain`; it
+  seals against the project root that contains `chain/` and warns clearly so
+  users do not create accidental `chain/chain` ledgers.
+
+### Fixed
+- Stop/SubagentStop now detect when a nearby task root advanced during the turn
+  while the identity root did not, and the block reason explicitly names both:
+  "you sealed to <task-root>, but I am enforcing <identity-root>".
+- Docs now route exhaustive audits through `continuum.py walk --root
+  <task-root>` followed by `audit.py open/next/record`, and call out that a
+  loose `recall.py turn --root audit` is not a substitute for the audit queue.
+
 ## v3.7.3 — 2026-06-18
 
 Codex CLI hook hardening and wrapper parity.

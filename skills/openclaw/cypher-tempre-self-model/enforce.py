@@ -142,6 +142,137 @@ def _read_stdin():
         return {}
 
 
+def _normalize_chain_root(path):
+    """Return the project root that contains chain/, correcting chain/ itself."""
+    p = Path(path).expanduser()
+    try:
+        p = p.resolve()
+    except Exception:
+        p = p.absolute()
+    if (p / "rings.jsonl").is_file():
+        return p.parent
+    return p
+
+
+def _split_roots(raw):
+    out = []
+    if not raw:
+        return out
+    for chunk in str(raw).replace(",", os.pathsep).split(os.pathsep):
+        chunk = chunk.strip()
+        if chunk:
+            out.append(chunk)
+    return out
+
+
+def _event_paths(data):
+    paths = []
+    for key in ("cwd", "currentWorkingDirectory", "current_working_directory",
+                "workspace", "workspaceRoot", "workspace_root", "projectRoot",
+                "project_root"):
+        val = data.get(key) if isinstance(data, dict) else None
+        if isinstance(val, str) and val:
+            paths.append(val)
+    for key in ("PWD", "CT_WORKSPACE_ROOT"):
+        val = os.environ.get(key)
+        if val:
+            paths.append(val)
+    try:
+        paths.append(str(Path.cwd()))
+    except Exception:
+        pass
+    return paths
+
+
+def _looks_like_chain_root(path):
+    p = _normalize_chain_root(path)
+    return (p / "chain" / "rings.jsonl").is_file()
+
+
+def _add_candidate(candidates, path, identity_root):
+    try:
+        p = _normalize_chain_root(path)
+        if p.resolve() == Path(identity_root).resolve():
+            return
+        if _looks_like_chain_root(p):
+            candidates[str(p.resolve())] = p.resolve()
+    except Exception:
+        pass
+
+
+def _candidate_task_roots(root, data):
+    """Nearby task roots used only for root-mismatch diagnostics.
+
+    This deliberately does not make arbitrary task chains satisfy Stop. It only
+    lets the nudge explain the likely mistake: the model sealed a task ledger
+    while the hook is enforcing the identity ledger.
+    """
+    candidates = {}
+    identity = Path(root)
+    for raw in _split_roots(os.environ.get("CT_TASK_ROOTS")):
+        _add_candidate(candidates, raw, identity)
+    for raw in _split_roots(os.environ.get("CT_TASK_ROOT")):
+        _add_candidate(candidates, raw, identity)
+
+    bases = [identity, identity.parent]
+    bases += [Path(p).expanduser() for p in _event_paths(data)]
+    for base in bases:
+        try:
+            base = base.resolve()
+        except Exception:
+            base = base.absolute()
+        for p in (
+            base,
+            base / ".codex" / "cypher-tempre",
+            base / ".codex" / "cypher-tempre" / "audit",
+            base / "audit",
+        ):
+            _add_candidate(candidates, p, identity)
+        for pattern in (
+            ".codex/cypher-tempre/audit*",
+            ".codex/cypher-tempre/tasks/*",
+            "audit*",
+            "tasks/*",
+        ):
+            try:
+                for p in base.glob(pattern):
+                    _add_candidate(candidates, p, identity)
+            except Exception:
+                pass
+    return list(candidates.values())[:64]
+
+
+def _candidate_heads(root, data):
+    heads = {}
+    for cand in _candidate_task_roots(root, data):
+        head = _head_index(cand)
+        if head >= 0:
+            heads[str(cand)] = head
+    return heads
+
+
+def _task_root_progress(root, data, st):
+    before = st.get("turn_task_heads") or {}
+    for cand in _candidate_task_roots(root, data):
+        key = str(cand)
+        old = before.get(key)
+        if old is None:
+            continue
+        head = _head_index(cand)
+        if head > int(old):
+            try:
+                ring = __import__("timechain").Timechain(cand)._tail_ring()
+                return {
+                    "root": key,
+                    "head": head,
+                    "hash": (ring or {}).get("ring_hash"),
+                    "type": (ring or {}).get("ring_type"),
+                }
+            except Exception:
+                return {"root": key, "head": head, "hash": None, "type": None}
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # stdout discipline — a Stop hook's stdout MUST be EXACTLY the decision JSON (or
 # empty), or the harness reports "Stop hook error: JSON validation failed". So we
@@ -184,6 +315,7 @@ def cmd_mark(_data):
     # mid-turn (which clears the pointer).
     st["turn_audit_root"] = _active_audit_root(root)
     st["turn_audit_cursor"] = None
+    st["turn_task_heads"] = _candidate_heads(root, _data)
     if st["turn_audit_root"]:
         s = _audit_status(st["turn_audit_root"])
         if s is not None:
@@ -275,9 +407,31 @@ def cmd_stop_check(data):
         return
 
     # --- default: every meaningful turn must leave a sealed ring --- #
+    task_progress = _task_root_progress(root, data, st)
     if not _bump_or_release(root, st, "adherence_violation"):
         return
+    prefix = ""
+    if task_progress:
+        task_hash = task_progress.get("hash") or ""
+        hash_text = f" ({task_hash[:16]}..)" if task_hash else ""
+        _emit(root, "adherence_root_mismatch",
+              {"identity_root": str(Path(root).resolve()),
+               "task_root": task_progress["root"],
+               "task_head": task_progress["head"],
+               "task_hash": task_progress.get("hash")})
+        prefix = (
+            "[Cypher Tempre] Root mismatch detected: you sealed to "
+            f"{task_progress['root']} at ring #{task_progress['head']}{hash_text}, "
+            f"but I am enforcing {Path(root).resolve()}. "
+            "Task chains remain readable by passing --root <task-root>, but they do not "
+            "automatically satisfy identity-chain enforcement. If this was an audit, use "
+            "continuum.py walk --root <task-root> and audit.py open/record --root "
+            "<task-root>; if the task is complete or should be remembered by identity, run "
+            "task.py complete --identity-root <identity-root> --task-root <task-root>. "
+            "Pass the project root that CONTAINS chain/, not the chain/ folder itself.\n\n"
+        )
     reason = (
+        prefix +
         "[Cypher Tempre] You have not sealed a ring this turn. Run the per-turn loop "
         "before finishing: verify -> immune-screen -> recall relevant rings -> reason via "
         "modalities/senses -> PoQ-gate -> seal a labeled ring. Do it in one step with the "

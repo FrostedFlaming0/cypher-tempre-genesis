@@ -28,11 +28,11 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v3.7.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.7.3.zip) |
-| Codex | [cypher-tempre-codex-skill-v3.7.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.7.3.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v3.7.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.7.3.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v3.7.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.7.3.zip) |
-| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.7.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.7.3.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v3.7.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.7.4.zip) |
+| Codex | [cypher-tempre-codex-skill-v3.7.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.7.4.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v3.7.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.7.4.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v3.7.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.7.4.zip) |
+| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.7.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.7.4.zip) |
 
 ## Timechain Dashboard
 
@@ -80,9 +80,35 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 The current Codex bundle is also mirrored in `downloads/` as
-`cypher-tempre-codex-skill-v3.7.3.zip`. After installing hooks, open `/hooks`
+`cypher-tempre-codex-skill-v3.7.4.zip`. After installing hooks, open `/hooks`
 in Codex to review and trust the new command hooks, then restart or start a
 new session.
+
+## Task Chains And Identity Links
+
+Large audits should use a separate task root, for example
+`/path/to/repo/.codex/cypher-tempre/<task-name>`. Pass that project root to
+`--root`; do **not** pass its `chain/` directory, or the tools will create a
+mistaken `chain/chain` ledger.
+
+For exhaustive audits, use the queue-aware path:
+
+```bash
+SK=~/.codex/skills/cypher-tempre-self-model
+TASK_ROOT=/path/to/repo/.codex/cypher-tempre/<task-name>
+python3 $SK/continuum.py walk --path /path/to/repo --ext .py .ts --objective "<task>" --root $TASK_ROOT
+python3 $SK/audit.py open --root $TASK_ROOT --objective "<task>"
+python3 $SK/audit.py next --root $TASK_ROOT --batch-size 10
+python3 $SK/audit.py record --root $TASK_ROOT --block <ids> --finding "<specific review>"
+python3 $SK/task.py complete --task-root $TASK_ROOT --report /path/to/report.md
+```
+
+Task chains stay readable later with `recall.py ... --root $TASK_ROOT` or
+`continuum.py resume --root $TASK_ROOT`. `task.py attach` / `task.py complete`
+seal a verified task-head pointer into the identity chain, so users get durable
+continuity without splicing or bloating the identity chain. A loose
+`recall.py turn --root audit` is not a substitute for `audit.py open` +
+`audit.py record`; the Codex Stop hook now names that root mismatch explicitly.
 
 ## File labels
 

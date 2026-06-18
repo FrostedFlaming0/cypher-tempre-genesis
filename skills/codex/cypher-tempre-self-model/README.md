@@ -64,6 +64,27 @@ The hook stdout contract is strict:
 - Incidental warnings stay off stdout. To debug field issues, set
   `CT_ENFORCE_DEBUG=1`; `0`, `false`, `no`, and `off` keep the hooks quiet.
 
+If `Stop` says you sealed to one root but it is enforcing another, the hook is
+working: the turn wrote a task chain while identity enforcement watched the
+identity chain. For audits, use the official task/audit protocol:
+
+```bash
+SK=~/.codex/skills/cypher-tempre-self-model
+TASK_ROOT=/path/to/repo/.codex/cypher-tempre/<task-name>
+python3 $SK/continuum.py walk --path /path/to/repo --ext .py .ts --objective "<task>" --root $TASK_ROOT
+python3 $SK/audit.py open --root $TASK_ROOT --objective "<task>"
+python3 $SK/audit.py next --root $TASK_ROOT --batch-size 10
+python3 $SK/audit.py record --root $TASK_ROOT --block <ids> --finding "<specific review>"
+python3 $SK/task.py complete --task-root $TASK_ROOT --report /path/to/report.md
+```
+
+Pass the task **project root** (`$TASK_ROOT`, the folder containing `chain/`), not
+`$TASK_ROOT/chain`; passing the `chain/` folder creates an accidental
+`chain/chain` ledger. Do not use a loose `recall.py turn --root audit` as the
+only audit seal. Task chains remain readable after the task with
+`recall.py ... --root $TASK_ROOT` or `continuum.py resume --root $TASK_ROOT`, and
+`task.py complete` seals a verified pointer to that task head into identity.
+
 Or ask Codex to install it from the repository source ZIP:
 
 ```text

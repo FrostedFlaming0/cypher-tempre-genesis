@@ -20,7 +20,7 @@ Each runtime bundle labels its files through the path prefix above and contains:
 - `README.md` - runtime-specific human overview and install note.
 - `VERSION`, `LICENSE`, `CHANGELOG.md` - package metadata.
 - `openclaw-plugin/` - native OpenClaw plugin package in the OpenClaw bundle.
-- `timechain.py`, `poq.py`, `cambium.py`, `chronosynaptic.py`, `continuum.py`, `recall.py`, `embed.py`, `consensus.py`, `immune.py`, `selftest.py` - reusable stdlib helpers.
+- `timechain.py`, `task.py`, `poq.py`, `cambium.py`, `chronosynaptic.py`, `continuum.py`, `audit.py`, `recall.py`, `embed.py`, `consensus.py`, `immune.py`, `dormancy.py`, `telemetry.py`, `selftest.py` - reusable stdlib helpers.
 - `registry/modalities.json`, `registry/senses.json` - base faculty registries for fresh installs.
 
 Generated `chain/`, `tasks/`, `registry/emergent.json`, `registry/grown.json`, and
