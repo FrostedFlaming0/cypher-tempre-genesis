@@ -19,6 +19,7 @@ These ops do NOT replace the model's reasoning; they perform the mechanical part
 
 Stdlib only. Python 3.8+.
 """
+import ast
 import json
 import re
 from collections import Counter
@@ -124,6 +125,62 @@ def hits(rx, text, k=_MAX):
     found = [m.group(0).lower() for m in rx.finditer(text or "")]
     uniq = list(dict.fromkeys(found))
     return {"hits": uniq[:k], "count": len(found)}
+
+
+def count_terms(text, terms):
+    toks = _toks(text)
+    out = {}
+    for term in (terms or [])[:12]:
+        t = str(term).lower().strip()
+        if t:
+            out[t] = sum(1 for tok in toks if tok == t)
+    return out
+
+
+def sum_counts(counts):
+    return int(sum(int(v) for v in (counts or {}).values()))
+
+
+def contains_any(text, terms):
+    return sum_counts(count_terms(text, terms)) > 0
+
+
+def missing_terms(text, terms):
+    counts = count_terms(text, terms)
+    return [term for term, n in counts.items() if not n][:_MAX]
+
+
+def relation_pairs_for_terms(text, terms, k=_MAX):
+    wanted = {str(t).lower().strip() for t in (terms or []) if str(t).strip()}
+    toks = _content(text)
+    pairs = []
+    for i, tok in enumerate(toks):
+        if tok in wanted:
+            left = toks[i - 1] if i else ""
+            right = toks[i + 1] if i + 1 < len(toks) else ""
+            pairs.append(" ".join(x for x in (left, tok, right) if x))
+    return list(dict.fromkeys(pairs))[:k]
+
+
+def action_affordances(text, terms):
+    markers = {
+        "code": r"\b(code|implement|debug|refactor|compile|test|benchmark|script|function|api)\b",
+        "audit": r"\b(audit|review|inspect|verify|validate|finding|coverage|risk)\b",
+        "solve": r"\b(solve|plan|derive|prove|optimize|reason|strategy|puzzle|challenge|arc)\b",
+        "external": r"\b(file|repo|server|browser|terminal|dataset|chain|environment|tool)\b",
+    }
+    out = [name for name, rx in markers.items() if re.search(rx, text or "", re.I)]
+    if contains_any(text, terms):
+        out.append("gap_terms_present")
+    return list(dict.fromkeys(out))[:_MAX]
+
+
+def novelty_score(text, context, terms):
+    term_hits = sum_counts(count_terms(text, terms))
+    ctx_hits = sum_counts(count_terms(context, terms))
+    cross = 1.0 - overlap(text, context)
+    return {"term_hits": term_hits, "context_hits": ctx_hits,
+            "cross_context_novelty": round(max(0.0, min(1.0, cross)), 3)}
 
 
 def temporal(text):
@@ -295,13 +352,16 @@ def _timeline(text):
 # Grown-faculty ops — autonomous, LOCAL, and SAFE.
 #
 # When Cambium grows a new faculty (sprout/fuse) and promotes it, it should get a
-# real executable op too — not stay a frame. The hard safety rule: NO model- or
-# Cambium-authored CODE is ever executed. An op is ASSEMBLED from this fixed menu
-# of already-audited primitives via a declarative spec stored in the per-user,
-# gitignored registry/grown_ops.json. The default autonomous op is a literal-term
-# detector built from the faculty's birth seed terms (re.escape'd, so no regex
-# injection and no catastrophic backtracking). SkillSpector stays SAFE: the only
-# new operation is re.compile of escaped literals + reading/writing one JSON file.
+# real executable op too — not stay a frame. There are two safe routes:
+#
+# 1. declarative primitive specs from the fixed menu below;
+# 2. authored CT-Py specs: a tiny pure-function subset of Python validated by AST
+#    before execution. CT-Py has no imports, no file/network/subprocess access, no
+#    dunder names, no attribute access, no loops/classes/lambdas, no eval/exec/open,
+#    and only whitelisted helper calls. It is code, but not ambient local Python.
+#
+# Specs live in the per-user, gitignored registry/grown_ops.json and are sealed in
+# the promotion ring. Unknown primitives and unsafe authored code are refused.
 # --------------------------------------------------------------------------- #
 _PRIMITIVE_OPS = {
     "salience": lambda t, c="": {"anchors": top_terms(t)},
@@ -316,6 +376,242 @@ _PRIMITIVE_OPS = {
     "numbers": lambda t, c="": {"numbers": numbers(t)},
 }
 
+_AUTHORED_LANGUAGE = "ct-py-v1"
+_AUTHORED_MAX_SOURCE = 4096
+_AUTHORED_MAX_AST_NODES = 220
+_AUTHORED_MAX_CONST = 700
+_AUTHORED_HELPERS = {
+    "top_terms": top_terms,
+    "density": density,
+    "entities": entities,
+    "numbers": numbers,
+    "count_terms": count_terms,
+    "sum_counts": sum_counts,
+    "contains_any": contains_any,
+    "missing_terms": missing_terms,
+    "relation_pairs": relation_pairs_for_terms,
+    "action_affordances": action_affordances,
+    "novelty_score": novelty_score,
+    "domains": domains,
+    "richness": richness,
+}
+_AUTHORED_ALLOWED_NAMES = {"text", "context", "True", "False", "None"} | set(_AUTHORED_HELPERS)
+_AUTHORED_ALLOWED_NODES = (
+    ast.Module, ast.FunctionDef, ast.arguments, ast.arg, ast.Return, ast.Assign,
+    ast.Expr, ast.Name, ast.Load, ast.Store, ast.Constant, ast.Dict, ast.List,
+    ast.Tuple, ast.Set, ast.BoolOp, ast.BinOp, ast.UnaryOp, ast.Compare,
+    ast.If, ast.IfExp, ast.keyword,
+    ast.And, ast.Or, ast.Not, ast.UAdd, ast.USub,
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod,
+    ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn,
+    ast.Call,
+)
+_AUTHORED_BANNED_CALLS = {
+    "eval", "exec", "compile", "open", "input", "__import__", "globals", "locals",
+    "vars", "dir", "getattr", "setattr", "delattr", "type", "object",
+}
+
+
+def _sanitize_result(value, depth=0):
+    if depth > 4:
+        return "<depth-limit>"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:500]
+    if isinstance(value, dict):
+        out = {}
+        for i, (k, v) in enumerate(value.items()):
+            if i >= 24:
+                break
+            out[str(k)[:80]] = _sanitize_result(v, depth + 1)
+        return out
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_result(v, depth + 1) for v in list(value)[:24]]
+    return str(value)[:200]
+
+
+def _authored_error(message):
+    raise ValueError(f"unsafe authored op: {message}")
+
+
+def _validate_authored_tree(tree):
+    nodes = list(ast.walk(tree))
+    if len(nodes) > _AUTHORED_MAX_AST_NODES:
+        _authored_error("too many AST nodes")
+    for node in nodes:
+        if not isinstance(node, _AUTHORED_ALLOWED_NODES):
+            _authored_error(f"{type(node).__name__} is not allowed")
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and len(node.value) > _AUTHORED_MAX_CONST:
+            _authored_error("string constant too long")
+        if isinstance(node, ast.Name):
+            if node.id.startswith("__") or node.id in _AUTHORED_BANNED_CALLS:
+                _authored_error(f"name {node.id!r} is not allowed")
+        if isinstance(node, ast.Call):
+            if not isinstance(node.func, ast.Name):
+                _authored_error("only direct helper calls are allowed")
+            if node.func.id not in _AUTHORED_HELPERS:
+                _authored_error(f"call {node.func.id!r} is not allowed")
+
+    funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+    if len(funcs) != 1 or funcs[0].name != "op":
+        _authored_error("spec must define exactly def op(text, context='')")
+    extra = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) or
+                                          (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
+                                           and isinstance(n.value.value, str)))]
+    if extra:
+        _authored_error("module may contain only a docstring and op()")
+    fn = funcs[0]
+    if fn.decorator_list or fn.returns:
+        _authored_error("decorators and annotations are not allowed")
+    args = [a.arg for a in fn.args.args]
+    if args[:2] != ["text", "context"] or len(args) > 2:
+        _authored_error("op args must be text, context")
+
+    assigned = {"text", "context"}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if not isinstance(target, ast.Name) or target.id.startswith("__"):
+                    _authored_error("only simple local assignments are allowed")
+                assigned.add(target.id)
+    allowed = _AUTHORED_ALLOWED_NAMES | assigned
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id not in allowed:
+            _authored_error(f"name {node.id!r} is not defined in CT-Py")
+    if not any(isinstance(n, ast.Return) for n in ast.walk(fn)):
+        _authored_error("op must return a value")
+
+
+def _json_contains(value, needle):
+    try:
+        blob = json.dumps(value, ensure_ascii=False, sort_keys=True).lower()
+    except Exception:
+        blob = str(value).lower()
+    return str(needle).lower() in blob
+
+
+def _run_authored_tests(op, tests):
+    for test in (tests or [])[:6]:
+        if not isinstance(test, dict):
+            return False
+        text = str(test.get("text", ""))
+        context = str(test.get("context", ""))
+        try:
+            out = op(text, context)
+        except Exception:
+            return False
+        for key in ("expect_json_contains", "expect_contains"):
+            want = test.get(key)
+            if want and not _json_contains(out, want):
+                return False
+        if "expect_key" in test and isinstance(out, dict) and test["expect_key"] not in out:
+            return False
+        if "expect_min_count" in test:
+            try:
+                if int((out or {}).get("count", 0)) < int(test["expect_min_count"]):
+                    return False
+            except Exception:
+                return False
+    return True
+
+
+def _build_authored_op(spec):
+    code = spec.get("code")
+    if not isinstance(code, str) or not code.strip() or len(code) > _AUTHORED_MAX_SOURCE:
+        return None
+    if spec.get("language", _AUTHORED_LANGUAGE) != _AUTHORED_LANGUAGE:
+        return None
+    try:
+        tree = ast.parse(code, mode="exec")
+        _validate_authored_tree(tree)
+        compiled = compile(tree, "<ct-grown-op>", "exec")
+        env = {"__builtins__": {}}
+        env.update(_AUTHORED_HELPERS)
+        loc = {}
+        exec(compiled, env, loc)
+        fn = loc.get("op")
+        if not callable(fn):
+            return None
+
+        def wrapped(text, context="", _fn=fn):
+            return _sanitize_result(_fn(str(text or ""), str(context or "")))
+
+        if not _run_authored_tests(wrapped, spec.get("tests") or []):
+            return None
+        return wrapped
+    except Exception:
+        return None
+
+
+def _clean_terms(terms, fallback="gap"):
+    out = []
+    for term in terms or []:
+        t = str(term).lower().strip()
+        if t and re.match(r"^[a-z0-9_][a-z0-9_-]{1,48}$", t) and t not in out:
+            out.append(t)
+        if len(out) >= 8:
+            break
+    return out or [fallback]
+
+
+def autonomous_op_spec(faculty):
+    """Generate the executable op spec Cambium should give a promoted faculty.
+
+    Senses get data-facing perceptual algorithms: detect seed terms, measure
+    relational texture, and expose what is missing. Modalities get environment-
+    facing action/reasoning algorithms: detect action affordances, novelty, and
+    the challenge surface for using tools or solving novel tasks.
+    """
+    kind = "modality" if faculty.get("kind") == "modality" else "sense"
+    seeds = _clean_terms(faculty.get("seed_terms") or _content(faculty.get("function", ""))[:8],
+                         fallback=kind)
+    literal = json.dumps(seeds, ensure_ascii=True)
+    if kind == "sense":
+        code = (
+            "def op(text, context=''):\n"
+            f"    terms = {literal}\n"
+            "    hits = count_terms(text, terms)\n"
+            "    context_hits = count_terms(context, terms)\n"
+            "    return {\n"
+            "        'kind': 'sense',\n"
+            "        'orientation': 'data-facing perceptual relation algorithm',\n"
+            "        'terms': terms,\n"
+            "        'hits': hits,\n"
+            "        'context_hits': context_hits,\n"
+            "        'count': sum_counts(hits),\n"
+            "        'relations': relation_pairs(text, terms),\n"
+            "        'missing': missing_terms(text, terms),\n"
+            "        'density': density(text),\n"
+            "    }\n"
+        )
+    else:
+        code = (
+            "def op(text, context=''):\n"
+            f"    terms = {literal}\n"
+            "    hits = count_terms(text, terms)\n"
+            "    return {\n"
+            "        'kind': 'modality',\n"
+            "        'orientation': 'environment-facing cognitive action faculty',\n"
+            "        'terms': terms,\n"
+            "        'hits': hits,\n"
+            "        'count': sum_counts(hits),\n"
+            "        'action_affordances': action_affordances(text, terms),\n"
+            "        'novelty': novelty_score(text, context, terms),\n"
+            "        'challenge_markers': top_terms(text),\n"
+            "        'missing': missing_terms(text, terms),\n"
+            "    }\n"
+        )
+    return {
+        "primitive": "authored",
+        "language": _AUTHORED_LANGUAGE,
+        "kind": kind,
+        "description": f"Autonomously generated {kind} op for {faculty.get('name', 'grown faculty')}",
+        "code": code,
+        "tests": [{"text": " ".join(seeds[:3]), "expect_min_count": 1,
+                   "expect_json_contains": seeds[0]}],
+    }
+
 
 def _markers_op(terms):
     clean = [re.escape(str(w)) for w in (terms or []) if str(w).strip()][:12]
@@ -326,13 +622,18 @@ def _markers_op(terms):
 
 
 def build_op(spec):
-    """Assemble an executable op from a declarative spec using ONLY audited
-    primitives. Returns a callable or None. NEVER executes spec-supplied code."""
+    """Build an executable op from a safe spec. Returns a callable or None.
+
+    Primitive specs assemble from the fixed audited menu. Authored specs execute
+    only after passing the CT-Py AST sandbox above.
+    """
     if not isinstance(spec, dict):
         return None
     prim = spec.get("primitive")
     if prim == "markers":
         return _markers_op(spec.get("terms"))
+    if prim == "authored":
+        return _build_authored_op(spec)
     if prim in _PRIMITIVE_OPS:
         return _PRIMITIVE_OPS[prim]
     if prim == "compose":
@@ -372,7 +673,7 @@ def load_grown_ops(registry_root):
 
 def register_grown_op(registry_root, name, spec):
     """Persist a grown faculty's op spec to the local grown_ops.json — but only if
-    it assembles into a usable op from the audited primitives. Returns True/False.
+    it builds into a usable safe op. Returns True/False.
     This is the autonomous 'add the coded faculty to the user's local setup' step."""
     if not name or build_op(spec) is None:
         return False

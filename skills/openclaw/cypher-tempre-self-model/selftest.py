@@ -1492,12 +1492,26 @@ def main():
         _aud3._clear_active(droot)
 
         # -- phase15: autonomous coded faculties — Cambium grows AND codes a faculty -- #
-        # Safety: build_op never executes spec-supplied code; an unknown primitive yields no op.
-        # Only the audited primitive menu builds an op; anything else (incl. a spec that
-        # tries to smuggle code in a field) yields no op — build_op never executes specs.
+        # Safety: authored growth is CT-Py, not ambient local Python. Imports, files,
+        # subprocess-style powers, dunders, attributes, loops/classes, and unknown calls
+        # are rejected before execution; primitive specs still use the audited menu.
         check("phase15 cambium ops: a non-whitelisted op spec is refused (no code execution)",
               _mo.build_op({"primitive": "arbitrary_unlisted_primitive", "payload": "ignored"}) is None
               and _mo.build_op({"primitive": "markers", "terms": []}) is None)
+        check("phase15 cambium ops: unsafe authored code is refused by the CT-Py sandbox",
+              _mo.build_op({"primitive": "authored",
+                            "code": "import os\ndef op(text, context=''):\n    return os.listdir('.')\n"}) is None
+              and _mo.build_op({"primitive": "authored",
+                                "code": "def op(text, context=''):\n    return open('/etc/passwd').read()\n"}) is None)
+        _sense_spec = _mo.autonomous_op_spec({"kind": "sense", "name": "Waveguide Sensing",
+                                              "seed_terms": ["waveguide", "resonator"]})
+        _mod_spec = _mo.autonomous_op_spec({"kind": "modality", "name": "Waveguide Reasoning",
+                                            "seed_terms": ["waveguide", "resonator"]})
+        _sense_out = _mo.build_op(_sense_spec)("waveguide resonator coupling data", "")
+        _mod_out = _mo.build_op(_mod_spec)("implement a waveguide resonator benchmark tool", "")
+        check("phase15 cambium ops: authored sense and modality ops have distinct orientations",
+              _sense_out.get("kind") == "sense" and "relations" in _sense_out
+              and _mod_out.get("kind") == "modality" and "action_affordances" in _mod_out)
         _novel = "Photonics waveguide resonator microring lithography metamaterial plasmonics nanofabrication."
         _gact, _gname = None, None
         for _ in range(cambium.PROMOTE_AT):
@@ -1508,7 +1522,7 @@ def main():
         _gops = _mo.load_grown_ops(root)
         check("phase15 cambium ops: promotion registers a LOCAL executable op for the grown faculty",
               _gact == "promoted" and _gname in _gops)
-        check("phase15 cambium ops: the grown faculty's coded op runs and detects its seed terms",
+        check("phase15 cambium ops: the grown faculty's authored coded op runs and detects its seed terms",
               bool(_gname) and _gops[_gname]("a microring resonator waveguide on the photonics die").get("count", 0) >= 1)
         # end-to-end: recall.label fires the grown faculty AND runs its coded op
         _grec = recall.Recall(root, registry_root=root)
