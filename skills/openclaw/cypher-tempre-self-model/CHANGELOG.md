@@ -1,5 +1,31 @@
 # Changelog
 
+## v3.8.0 — 2026-06-18
+
+Sandboxed self-authored growth.
+
+### Added
+- **CT-Py authored grown ops.** Cambium-promoted faculties can now be born with an
+  autonomously generated executable op (`{"primitive": "authored", "language": "ct-py-v1"}`)
+  instead of only a primitive marker detector. This is real code execution, but only inside
+  a tiny pure-function sandbox: imports, filesystem/network/subprocess access,
+  `eval`/`exec`/`open`, dunder names, attributes, loops, classes, lambdas, and unknown calls
+  are rejected by AST validation before execution. Outputs are bounded JSON-like data.
+- **Kind-aware algorithm generation.** Sense growth now produces data-facing perceptual /
+  relation algorithms (hits, context hits, relation pairs, missing terms, density), while
+  modality growth produces environment-facing cognitive/action algorithms (action
+  affordances, novelty, challenge markers, missing terms). Promotion rings and grown
+  registry entries carry this orientation explicitly.
+- **Fallback and operator control.** `CT_AUTHORED_GROWN_OPS=0` disables authored CT-Py growth
+  and falls back to the v3.6 primitive-spec path. Unsafe or invalid authored specs are
+  refused and also fall back to safe primitives where possible.
+
+### Fixed
+- The public Growth docs now distinguish **modalities** from **senses** in the way the
+  runtime actually uses them, instead of describing all growth as generic markers.
+- Selftest now proves unsafe authored code is refused and that generated sense/modality ops
+  have distinct executable behavior.
+
 ## v3.7.5 — 2026-06-18
 
 Hermetic selftests for lived-in installs.

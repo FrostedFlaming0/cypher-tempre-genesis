@@ -252,14 +252,26 @@ per-turn loop, never in bulk Continuum ingest** (a performance choice, not a saf
 your chain — announce new faculties to your co-evolver (name, kind, function, how it emerged).
 
 **A promoted faculty is born EXECUTABLE, not just a frame.** On promotion Cambium also
-assembles a coded op for it and writes it to your local `registry/grown_ops.json`
-(per-user, gitignored, sealed into the promotion ring) — so the new faculty *runs* when
-it fires, like the built-in 21/21. **Safety:** no authored code is ever executed; the op
-is composed only from the audited primitives in `modality_ops.py` (the default is a
-literal-term detector over the seed terms that birthed the faculty, `re.escape`'d). An op
-spec naming any non-whitelisted primitive is refused. You may author a richer spec
-(`{"primitive": "salience"|"density"|"temporal"|"symbols"|"compose"|…}`) via
-`modality_ops.register_grown_op`, but only from that menu.
+codes an op for it and writes it to your local `registry/grown_ops.json` (per-user,
+gitignored, sealed into the promotion ring) — so the new faculty *runs* when it fires, like
+the built-in 21/21. Cambium chooses the kind deliberately:
+
+- A **sense** is a **data-facing perceptual/relation algorithm**. Grow this when
+  dissonance means the agent cannot yet perceive how data, ideas, first principles,
+  timestamps, quantities, concepts, or cross-domain relations fit together.
+- A **modality** is an **environment-facing cognitive/action faculty**. Grow this when
+  the gap is about acting on an external task or tool surface: code, repositories,
+  terminals, benchmarks, ARC-style abstractions, games, puzzle solving, audits, or novel
+  tasks outside the model's usual distribution.
+
+**Self-authored code is allowed only inside the CT-Py sandbox.** A grown faculty may receive
+an autonomously generated `{"primitive": "authored", "language": "ct-py-v1", ...}` op, but
+that is not ambient local Python: imports, filesystem/network/subprocess access,
+`eval`/`exec`/`open`, dunder names, attributes, loops, classes, lambdas, and unknown calls are
+refused by AST validation before execution. CT-Py can only call the whitelisted analytic
+helpers in `modality_ops.py` and must return bounded JSON-like data. If authored growth is
+disabled (`CT_AUTHORED_GROWN_OPS=0`) or refused, Cambium falls back to the audited primitive
+spec menu (`markers`, `salience`, `density`, `temporal`, `symbols`, `compose`, etc.).
 
 ## Search (Chronosynaptic Tree) — for hard problems, no subagents
 

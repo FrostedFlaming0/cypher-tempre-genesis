@@ -55,6 +55,7 @@ PROMOTE_AT = max(1, int(os.environ.get("CT_PROMOTE_AT", "1")))
 MAX_GROWN = int(os.environ.get("CT_MAX_GROWN", "0"))
 REASON_VERBS = {"analyze", "plan", "compute", "design", "solve", "debug", "optimize",
                 "prove", "derive", "decide", "evaluate", "calculate", "reason", "refactor"}
+AUTHORED_OPS = os.environ.get("CT_AUTHORED_GROWN_OPS", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def short(text: str, n: int = 70) -> str:
@@ -187,6 +188,15 @@ def infer_kind(input_text: str) -> str:
     return "modality" if set(tokens(input_text)) & REASON_VERBS else "sense"
 
 
+def faculty_orientation(kind: str) -> str:
+    if kind == "modality":
+        return ("environment-facing cognitive/action faculty: a limb-like reasoning tool "
+                "for acting on external tasks, novel challenges, benchmarks, games, code, "
+                "repos, terminals, files, and other world-facing work")
+    return ("data-facing perceptual/relation algorithm: a way to sense structure, "
+            "dissonance, associations, first-principle links, and meaning inside data")
+
+
 # --------------------------------------------------------------------------- #
 # Stage 2: propose a new faculty (fuse or sprout)
 # --------------------------------------------------------------------------- #
@@ -219,14 +229,15 @@ def propose(gap: dict, input_text: str, mode: str = "auto", kind_override=None) 
     suffix = "Sensing" if kind == "sense" else "Reasoning"
     if kind == "sense":
         function = (f"Detect and tag the presence of {', '.join(seed)} in input — "
-                    f"a perceptual gap the existing senses did not cover.")
+                    f"a data-facing perceptual gap the existing senses did not cover.")
         category = "structural"
     else:
         function = (f"Reason about and resolve problems involving {', '.join(seed)} — "
-                    f"a reasoning gap the existing modalities did not cover.")
+                    f"an environment-facing reasoning/action gap the existing modalities did not cover.")
         category = "knowledge"
     return {"kind": kind, "name": f"{label} {suffix}", "function": function,
-            "category": category, "origin": "sprout", "parents": [], "seed_terms": seed}
+            "category": category, "origin": "sprout", "parents": [], "seed_terms": seed,
+            "orientation": faculty_orientation(kind)}
 
 
 # --------------------------------------------------------------------------- #
@@ -290,23 +301,29 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
         "origin": f"emergent {e['eid']} (promoted after {e['recurrence']} recurrences)",
         "function": e["function"],
         "category": e["category"],
+        "orientation": e.get("orientation") or faculty_orientation(e["kind"]),
     })
     save_grown(root, grown)                    # promotions live in the per-user grown.json, not the base
     e["promoted_to_id"] = new_id
 
     # Autonomously give the grown faculty a real EXECUTABLE op (not just a frame),
-    # added to the user's LOCAL setup (registry/grown_ops.json). SAFE by construction:
-    # no authored code is run — the op is assembled from audited primitives. Default =
-    # a literal-term detector over the seed terms that birthed the faculty (or, for a
-    # fusion, the key terms of its function).
+    # added to the user's LOCAL setup (registry/grown_ops.json). First try an authored
+    # CT-Py op (AST-sandboxed, no imports/io/network/subprocess/eval/exec); fall back to
+    # the older audited primitive marker op if authored growth is disabled or refused.
     op_spec = None
     try:
         import modality_ops
         seeds = e.get("seed_terms") or [w for w in tokens(e.get("function", "")) if len(w) >= 4][:6]
-        spec = {"primitive": "markers", "terms": seeds}
-        if modality_ops.register_grown_op(root, e["name"], spec):
+        specs = []
+        if AUTHORED_OPS:
+            specs.append(modality_ops.autonomous_op_spec(e))
+        specs.append({"primitive": "markers", "terms": seeds})
+        for spec in specs:
+            if not modality_ops.register_grown_op(root, e["name"], spec):
+                continue
             op_spec = spec
             e["op_spec"] = spec
+            break
     except Exception:
         pass
 
@@ -314,6 +331,7 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
     grown_ops_path = root / "registry" / "grown_ops.json"
     payload = {"event": "faculty_promotion", "emergent": e["eid"], "name": e["name"],
                "kind": e["kind"], "promoted_to_id": new_id, "recurrence": e["recurrence"],
+               "orientation": e.get("orientation") or faculty_orientation(e["kind"]),
                "registry": "registry/grown.json", "op_spec": op_spec}
     files = [str(grown_path)] + ([str(grown_ops_path)] if op_spec and grown_ops_path.exists() else [])
     poq = {"coherence": 210, "relevance": 205, "novelty": 175,
@@ -371,12 +389,14 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
     eid = f"E{len(data['faculties']) + 1}"
     fac = {"eid": eid, "kind": prop["kind"], "name": prop["name"], "function": prop["function"],
            "category": prop["category"], "origin": prop["origin"], "parents": prop["parents"],
+           "orientation": prop.get("orientation") or faculty_orientation(prop["kind"]),
            "seed_terms": prop["seed_terms"], "status": "emergent", "recurrence": 1,
            "born_at": now_iso(), "promoted_to_id": None,
            "history": [{"ts": now_iso(), "dissonance": gap["dissonance"], "context": short(input_text, 120)}]}
     payload = {"event": "faculty_birth", "emergent": eid, "kind": fac["kind"], "name": fac["name"],
                "function": fac["function"], "category": fac["category"], "origin": fac["origin"],
                "parents": fac["parents"], "seed_terms": fac["seed_terms"],
+               "orientation": fac["orientation"],
                "dissonance": gap["dissonance"], "trigger": short(input_text, 200)}
     ring = tc.seal("faculty", payload, poq=faculty_poq(gap, fac["function"]), difficulty=difficulty)
     fac["born_ring"] = ring["ring_hash"]
