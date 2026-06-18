@@ -6,9 +6,12 @@
 # writes ONLY that JSON to stdout. Set CT_ENFORCE_DEBUG=1 to surface stderr. Fail-open.
 SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SKILL/enforce.py" ] || exit 0
-if [ -n "$CT_ENFORCE_DEBUG" ]; then
+case "${CT_ENFORCE_DEBUG:-}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On|debug|DEBUG|Debug)
   python3 "$SKILL/enforce.py" session-start
-else
+  ;;
+  *)
   python3 "$SKILL/enforce.py" session-start 2>/dev/null
-fi
+  ;;
+esac
 exit 0
