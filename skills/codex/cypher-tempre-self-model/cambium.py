@@ -282,11 +282,104 @@ def faculty_poq(gap: dict, function: str) -> dict:
     }
 
 
+def _model_op_spec(kind: str, name: str, author):
+    """Build a model-authored CT-Py spec from the agent-provided author packet.
+
+    This is the missing seam: Cambium detects and names the gap; the attached
+    model can now write the mechanism. The mechanism is still only accepted if
+    modality_ops.build_op() validates and test-runs it.
+    """
+    if not author or not str(author.get("code", "")).strip():
+        return None
+    import modality_ops
+    return modality_ops.authored_op_spec(
+        kind, name, author.get("code", ""),
+        description=author.get("description", ""),
+        tests=author.get("tests") or [],
+    )
+
+
+def _op_activation(spec, text: str, context: str = ""):
+    """Execute a just-registered op once against its triggering input.
+
+    The op has already passed CT-Py validation/tests to get this far. This
+    immediate activation proves the new faculty is a working mechanism now, not
+    merely something that might run on a future turn.
+    """
+    if not spec:
+        return {"executed": False, "reason": "no op spec"}
+    try:
+        import modality_ops
+        op = modality_ops.build_op(spec)
+        if op is None:
+            return {"executed": False, "reason": "spec refused by CT-Py validator"}
+        return {"executed": True, "result": op(text or "", context or "")}
+    except Exception as exc:
+        return {"executed": False, "reason": short(str(exc), 180)}
+
+
+def _find_grown_faculty(home: Path, selector: str, kind=None):
+    grown = load_grown(home)
+    wanted = str(selector or "").strip().lower()
+    for key, k in (("senses", "sense"), ("modalities", "modality")):
+        if kind and kind != k:
+            continue
+        for fac in grown.get(key, []):
+            if str(fac.get("id")) == wanted or str(fac.get("name", "")).lower() == wanted:
+                return k, fac
+    return None, None
+
+
+def author_op(root: Path, selector: str, code: str, kind=None, description: str = "",
+              tests=None, registry_root=None, activation_text: str = "",
+              activation_context: str = "", difficulty: int = 0):
+    """Register model-authored CT-Py for an already-grown faculty and seal it.
+
+    Used by agents that want to respond to a Cambium gap by writing a bespoke
+    mechanism themselves. The op is validated, test-run, stored in grown_ops.json,
+    immediately activated, and sealed as a faculty-op ring.
+    """
+    home = registry_home(root, registry_root)
+    fkind, fac = _find_grown_faculty(home, selector, kind=kind)
+    if not fac:
+        return {"ok": False, "reason": f"no promoted grown faculty matched {selector!r}"}, None
+    spec = _model_op_spec(fkind, fac.get("name"),
+                          {"code": code, "description": description, "tests": tests or []})
+    try:
+        import modality_ops
+        if not modality_ops.register_grown_op(home, fac["name"], spec):
+            return {"ok": False, "reason": "CT-Py validator refused the model-authored op"}, None
+    except Exception as exc:
+        return {"ok": False, "reason": short(str(exc), 180)}, None
+    activation = _op_activation(spec, activation_text or fac.get("function", ""),
+                                activation_context or "")
+    grown_ops_path = home / "registry" / "grown_ops.json"
+    payload = {
+        "event": "faculty_op_authored",
+        "name": fac["name"],
+        "kind": fkind,
+        "selector": selector,
+        "op_source": "model-authored",
+        "op_spec": spec,
+        "op_activation": activation,
+        "registry": "registry/grown_ops.json",
+    }
+    ring = Timechain(root).seal(
+        "faculty-op", payload, files=[str(grown_ops_path)] if grown_ops_path.exists() else [],
+        poq={"coherence": 220, "relevance": 220, "novelty": 210,
+             "consistency": 220, "depth": 225, "covenant": 245},
+        difficulty=difficulty,
+    )
+    return {"ok": True, "faculty": fac, "kind": fkind, "activation": activation}, ring
+
+
 # --------------------------------------------------------------------------- #
 # Promotion: emergent -> canonical registry
 # --------------------------------------------------------------------------- #
 
-def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
+def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
+            op_spec_override=None, activation_text: str = "",
+            activation_context: str = "") -> dict:
     key = "modalities" if e["kind"] == "modality" else "senses"
     base = json.loads((root / "registry" / f"{key}.json").read_text()).get(key, [])
     grown = load_grown(root)
@@ -311,18 +404,26 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
     # CT-Py op (AST-sandboxed, no imports/io/network/subprocess/eval/exec); fall back to
     # the older audited primitive marker op if authored growth is disabled or refused.
     op_spec = None
+    op_source = None
+    op_activation = None
     try:
         import modality_ops
         seeds = e.get("seed_terms") or [w for w in tokens(e.get("function", "")) if len(w) >= 4][:6]
         specs = []
+        if op_spec_override:
+            specs.append(("model-authored", op_spec_override))
         if AUTHORED_OPS:
-            specs.append(modality_ops.autonomous_op_spec(e))
-        specs.append({"primitive": "markers", "terms": seeds})
-        for spec in specs:
+            specs.append(("autonomous-template", modality_ops.autonomous_op_spec(e)))
+        specs.append(("primitive-fallback", {"primitive": "markers", "terms": seeds}))
+        for source, spec in specs:
             if not modality_ops.register_grown_op(root, e["name"], spec):
                 continue
             op_spec = spec
+            op_source = source
             e["op_spec"] = spec
+            e["op_source"] = source
+            op_activation = _op_activation(
+                spec, activation_text or " ".join(seeds), activation_context or "")
             break
     except Exception:
         pass
@@ -332,7 +433,8 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
     payload = {"event": "faculty_promotion", "emergent": e["eid"], "name": e["name"],
                "kind": e["kind"], "promoted_to_id": new_id, "recurrence": e["recurrence"],
                "orientation": e.get("orientation") or faculty_orientation(e["kind"]),
-               "registry": "registry/grown.json", "op_spec": op_spec}
+               "registry": "registry/grown.json", "op_source": op_source,
+               "op_spec": op_spec, "op_activation": op_activation}
     files = [str(grown_path)] + ([str(grown_ops_path)] if op_spec and grown_ops_path.exists() else [])
     poq = {"coherence": 210, "relevance": 205, "novelty": 175,
            "consistency": 220, "depth": 205, "covenant": 255}
@@ -345,7 +447,7 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0) -> dict:
 
 def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
          kind_override=None, difficulty: int = 0, registry_root=None, force=False,
-         gap_override=None):
+         gap_override=None, op_author=None):
     tc = Timechain(root)
     home = registry_home(root, registry_root)   # faculties live here; rings seal to root
     corpus = load_corpus(home)
@@ -371,7 +473,9 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
         existing.setdefault("history", []).append(
             {"ts": now_iso(), "dissonance": gap["dissonance"], "context": short(input_text, 120)})
         if existing["recurrence"] >= PROMOTE_AT and existing["status"] == "emergent":
-            ring = promote(home, tc, existing, difficulty=difficulty)
+            ring = promote(home, tc, existing, difficulty=difficulty,
+                           op_spec_override=_model_op_spec(existing["kind"], existing["name"], op_author),
+                           activation_text=input_text, activation_context=context or "")
             if ring is not None:               # None == soft cap reached; stay emergent
                 existing["status"] = "promoted"
                 save_emergent(home, data)
@@ -404,7 +508,9 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
     # Eager growth (PROMOTE_AT <= 1): fill the gap on FIRST encounter — promote the
     # just-born faculty into the canonical registry immediately and code it.
     if fac["recurrence"] >= PROMOTE_AT and fac["status"] == "emergent":
-        promo = promote(home, tc, fac, difficulty=difficulty)
+        promo = promote(home, tc, fac, difficulty=difficulty,
+                        op_spec_override=_model_op_spec(fac["kind"], fac["name"], op_author),
+                        activation_text=input_text, activation_context=context or "")
         if promo is not None:
             fac["status"] = "promoted"
             save_emergent(home, data)
@@ -475,15 +581,76 @@ def cmd_sense(args):
     print(f"  verdict: {'GAP — growth would fire' if gap['dissonance'] > DISSONANCE_FLOOR else 'covered — no growth needed'}")
 
 
+def _tests_from_args(args):
+    tests = []
+    texts = list(getattr(args, "op_test_text", None) or getattr(args, "test_text", None) or [])
+    if not texts and (getattr(args, "op_expect_key", None) or getattr(args, "op_expect_contains", None) or
+                      getattr(args, "op_expect_min_count", None) is not None):
+        texts = [getattr(args, "input", "") or "test"]
+    for text in texts[:6]:
+        item = {"text": text}
+        context = getattr(args, "context", None)
+        if context:
+            item["context"] = context
+        key = getattr(args, "op_expect_key", None)
+        contains = getattr(args, "op_expect_contains", None)
+        min_count = getattr(args, "op_expect_min_count", None)
+        if key:
+            item["expect_key"] = key
+        if contains:
+            item["expect_json_contains"] = contains
+        if min_count is not None:
+            item["expect_min_count"] = min_count
+        tests.append(item)
+    return tests
+
+
+def _op_author_from_args(args):
+    code_file = getattr(args, "op_code_file", None) or getattr(args, "code_file", None)
+    if not code_file:
+        return None
+    return {
+        "code": Path(code_file).read_text(),
+        "description": getattr(args, "op_description", None) or getattr(args, "description", "") or "",
+        "tests": _tests_from_args(args),
+    }
+
+
 def cmd_grow(args):
     result, ring = grow(args.root, args.input, args.context or "", mode=args.mode,
                         kind_override=args.kind, difficulty=args.difficulty,
-                        registry_root=args.registry_root)
+                        registry_root=args.registry_root, op_author=_op_author_from_args(args))
     _print_gap(result["gap"])
     if not result["grew"]:
         print(f"  -> {result['reason']}")
         return
     _announce(result["faculty"], result["action"])
+    print(f"\n  sealed {ring['ring_type']} Ring {ring['index']}  {ring['ring_hash'][:16]}..")
+    payload = ring.get("payload", {}) if ring else {}
+    if payload.get("op_source"):
+        act = payload.get("op_activation") or {}
+        print(f"  op source: {payload['op_source']}  executed: {bool(act.get('executed'))}")
+
+
+def cmd_author_op(args):
+    author = _op_author_from_args(args)
+    if not author:
+        print("  -> --code-file is required")
+        return
+    result, ring = author_op(args.root, args.faculty, author["code"], kind=args.kind,
+                             description=author.get("description", ""),
+                             tests=author.get("tests") or [], registry_root=args.registry_root,
+                             activation_text=args.input or "",
+                             activation_context=args.context or "",
+                             difficulty=args.difficulty)
+    if not result.get("ok"):
+        print(f"  -> refused: {result.get('reason')}")
+        return
+    fac = result["faculty"]
+    print("\n  -- co-evolver report: MODEL-AUTHORED OP ACTIVATED --")
+    print(f"    name:      {fac['name']}")
+    print(f"    kind:      {result['kind']}")
+    print(f"    executed:  {bool((result.get('activation') or {}).get('executed'))}")
     print(f"\n  sealed {ring['ring_type']} Ring {ring['index']}  {ring['ring_hash'][:16]}..")
 
 
@@ -516,8 +683,31 @@ def build_parser():
     pg.add_argument("input")
     pg.add_argument("--mode", choices=["auto", "fuse", "sprout"], default="auto")
     pg.add_argument("--kind", choices=["sense", "modality"], default=None)
+    pg.add_argument("--op-code-file", type=Path, default=None,
+                    help="model-authored CT-Py op to attach if this growth promotes")
+    pg.add_argument("--op-description", default="")
+    pg.add_argument("--op-test-text", action="append", default=[],
+                    help="test input the CT-Py op must pass before registration")
+    pg.add_argument("--op-expect-key", default=None)
+    pg.add_argument("--op-expect-contains", default=None)
+    pg.add_argument("--op-expect-min-count", type=int, default=None)
     pg.add_argument("--difficulty", type=int, default=0)
     pg.set_defaults(func=cmd_grow)
+
+    pa = sub.add_parser("author-op", parents=[common],
+                        help="register and immediately activate model-authored CT-Py for a promoted faculty")
+    pa.add_argument("faculty", help="grown faculty name or id")
+    pa.add_argument("--kind", choices=["sense", "modality"], default=None)
+    pa.add_argument("--code-file", type=Path, required=True)
+    pa.add_argument("--description", default="")
+    pa.add_argument("--input", default="", help="activation text to run the op against immediately")
+    pa.add_argument("--op-test-text", dest="test_text", action="append", default=[],
+                    help="test input the CT-Py op must pass before registration")
+    pa.add_argument("--op-expect-key", default=None)
+    pa.add_argument("--op-expect-contains", default=None)
+    pa.add_argument("--op-expect-min-count", type=int, default=None)
+    pa.add_argument("--difficulty", type=int, default=0)
+    pa.set_defaults(func=cmd_author_op)
 
     pe = sub.add_parser("emergent", parents=[common], help="list the Dream Cache of emergent faculties")
     pe.set_defaults(func=cmd_emergent)

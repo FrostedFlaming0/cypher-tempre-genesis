@@ -1532,6 +1532,17 @@ def main():
                             "code": "import os\ndef op(text, context=''):\n    return os.listdir('.')\n"}) is None
               and _mo.build_op({"primitive": "authored",
                                 "code": "def op(text, context=''):\n    return open('/etc/passwd').read()\n"}) is None)
+        _model_spec = _mo.authored_op_spec(
+            "sense", "Model Authored Probe Sensing",
+            "def op(text, context=''):\n"
+            "    terms = ['probe', 'signal']\n"
+            "    hits = count_terms(text, terms)\n"
+            "    return {'kind': 'sense', 'count': sum_counts(hits), 'hits': hits}\n",
+            tests=[{"text": "probe signal", "expect_min_count": 1, "expect_json_contains": "probe"}],
+        )
+        _model_op = _mo.build_op(_model_spec)
+        check("phase15 cambium ops: model-authored CT-Py specs build and run",
+              _model_op is not None and _model_op("probe signal", "").get("count", 0) >= 1)
         _sense_spec = _mo.autonomous_op_spec({"kind": "sense", "name": "Waveguide Sensing",
                                               "seed_terms": ["waveguide", "resonator"]})
         _mod_spec = _mo.autonomous_op_spec({"kind": "modality", "name": "Waveguide Reasoning",
@@ -1558,6 +1569,30 @@ def main():
         _glab = _grec.label("waveguide resonator microring photonics lithography")
         check("phase15 cambium ops: recall.label runs the grown faculty's op into labels.computed",
               isinstance(_glab.get("computed"), dict) and _gname in _glab.get("computed", {}))
+
+        _model_code = (
+            "def op(text, context=''):\n"
+            "    terms = ['cryovolcanic', 'clathrate']\n"
+            "    hits = count_terms(text, terms)\n"
+            "    return {'kind': 'sense', 'count': sum_counts(hits), "
+            "'signals': hits, 'relations': relation_pairs(text, terms)}\n"
+        )
+        _ma = {"code": _model_code, "description": "Model-authored cryovolcanic relation detector",
+               "tests": [{"text": "cryovolcanic clathrate plume",
+                           "expect_min_count": 1, "expect_json_contains": "cryovolcanic"}]}
+        _gr2, _ring2 = cambium.grow(
+            root, "Cryovolcanic clathrate plume spectrograph brinestream",
+            mode="sprout", kind_override="sense", registry_root=root, op_author=_ma)
+        _payload2 = (_ring2 or {}).get("payload", {})
+        _gname2 = (_gr2.get("faculty") or {}).get("name")
+        check("phase15 cambium ops: Cambium accepts model-authored code at growth time",
+              _gr2.get("action") == "promoted" and _payload2.get("op_source") == "model-authored")
+        check("phase15 cambium ops: model-authored growth op executes immediately",
+              ((_payload2.get("op_activation") or {}).get("executed") is True)
+              and ((_payload2.get("op_activation") or {}).get("result") or {}).get("count", 0) >= 1)
+        _glab2 = recall.Recall(root, registry_root=root).label("cryovolcanic clathrate plume")
+        check("phase15 cambium ops: model-authored growth op activates on later labels",
+              isinstance(_glab2.get("computed"), dict) and _gname2 in _glab2.get("computed", {}))
 
         # eager growth: the per-turn loop autonomously fills a gap (a sense AND a modality),
         # into the LOCAL (temp) registry — never SKILL. Default PROMOTE_AT=1.

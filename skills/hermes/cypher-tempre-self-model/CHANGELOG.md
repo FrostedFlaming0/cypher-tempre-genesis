@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.8.2 — 2026-06-19
+
+Model-authored Cambium mechanisms.
+
+### Added
+- Added a first-class model-authored CT-Py seam for Cambium growth. Agents can now pass
+  bespoke CT-Py via `cambium.py grow --op-code-file ...` when a gap promotes, or attach
+  code to an already-promoted faculty with `cambium.py author-op`.
+- Promotion/op rings now seal the op source and an immediate activation result, proving the
+  new faculty is executable at growth time rather than only available on a later turn.
+- Selftest now proves model-authored CT-Py builds, executes immediately during Cambium
+  promotion, and activates automatically on later `recall.label` passes.
+
 ## v3.8.1 — 2026-06-19
 
 Interactive selftest stdin hang fix.
