@@ -272,6 +272,22 @@ helpers in `modality_ops.py` and must return bounded JSON-like data. If authored
 disabled (`CT_AUTHORED_GROWN_OPS=0`) or refused, Cambium falls back to the audited primitive
 spec menu (`markers`, `salience`, `density`, `temporal`, `symbols`, `compose`, etc.).
 
+**Model-authored mechanisms are first-class.** When Cambium surfaces a real gap, the agent
+may write the CT-Py mechanism itself and hand it to Cambium instead of accepting the default
+template. The op is validated, test-run, stored in local `registry/grown_ops.json`, executed
+immediately against the triggering input, sealed into the promotion/op ring, and then runs
+automatically on later labels whenever that faculty fires:
+```
+python3 cambium.py grow "<gap input>" --kind sense \
+  --op-code-file op.py --op-test-text "<example>" --op-expect-min-count 1
+python3 cambium.py author-op "<Promoted Faculty Name>" \
+  --code-file op.py --input "<activation text>" --op-test-text "<example>"
+```
+This is the learn-on-the-fly loop: dissonance names the missing faculty, the model writes a
+mechanism, CT-Py proves it is safe and runnable, the chain seals it, and future turns execute
+it. If it degrades behavior, pause, inspect the sealed op ring, and roll back or supersede it
+with a correction ring.
+
 ## Search (Chronosynaptic Tree) — for hard problems, no subagents
 
 For complex or high-stakes questions, **fork perspectives of yourself** — each a

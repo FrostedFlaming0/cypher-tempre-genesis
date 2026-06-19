@@ -555,6 +555,25 @@ def _clean_terms(terms, fallback="gap"):
     return out or [fallback]
 
 
+def authored_op_spec(kind, name, code, description="", tests=None):
+    """Wrap model-authored CT-Py as a safe grown-op spec.
+
+    The model writes the mechanism, but execution still goes through build_op():
+    AST validation, whitelisted helpers only, bounded output, and tests before
+    the op can be registered or executed.
+    """
+    k = "modality" if kind == "modality" else "sense"
+    return {
+        "primitive": "authored",
+        "language": _AUTHORED_LANGUAGE,
+        "kind": k,
+        "source": "model-authored",
+        "description": description or f"Model-authored {k} op for {name or 'grown faculty'}",
+        "code": str(code or ""),
+        "tests": list(tests or []),
+    }
+
+
 def autonomous_op_spec(faculty):
     """Generate the executable op spec Cambium should give a promoted faculty.
 
