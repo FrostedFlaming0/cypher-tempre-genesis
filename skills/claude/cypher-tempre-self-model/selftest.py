@@ -1210,6 +1210,35 @@ def main():
             check("phase12 enforce: repeated in-process Stop checks do not concatenate JSON",
                   _repeat_pure)
 
+            # Regression: in-process enforce.main() must not call sys.stdin.read()
+            # when stdin is an interactive terminal. In a real TTY that blocks until
+            # EOF and made selftest appear to hang at phase12.
+            _enf.cmd_mark({})
+            _read_called = []
+            class _InteractiveStdin:
+                def isatty(self):
+                    return True
+                def read(self):
+                    _read_called.append(True)
+                    return "{}"
+            tcap = io.StringIO()
+            _real_in, _real_out, _real_err = sys.stdin, sys.stdout, sys.stderr
+            try:
+                sys.stdin = _InteractiveStdin()
+                sys.stdout = tcap
+                sys.stderr = io.StringIO()
+                _enf.main(["stop-check"])
+            finally:
+                sys.stdin = _real_in
+                sys.stdout = _real_out
+                sys.stderr = _real_err
+            try:
+                _tty_pure = json.loads(tcap.getvalue()).get("decision") == "block"
+            except Exception:
+                _tty_pure = False
+            check("phase12 enforce: in-process Stop never reads interactive stdin",
+                  _tty_pure and not _read_called)
+
             # CT_ENFORCE_DEBUG=0 remains quiet/fail-open; truthy values surface a
             # handler exception on stderr while keeping stdout clean — so a future
             # field issue is debuggable, not silent.
