@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.8.1 — 2026-06-19
+
+Interactive selftest stdin hang fix.
+
+### Fixed
+- `enforce.py` no longer blocks on `sys.stdin.read()` when stdin is an interactive
+  terminal. Hook subprocesses still read piped JSON normally, but in-process calls such as
+  `enforce.main(["stop-check"])` now treat TTY stdin as `{}` instead of waiting forever for
+  EOF.
+- `selftest.py` now includes a regression check proving in-process Stop enforcement does
+  **not** call `read()` on interactive stdin. This covers the phase12 hang reported by users
+  running `python3 selftest.py` directly from a terminal.
+
 ## v3.8.0 — 2026-06-18
 
 Sandboxed self-authored growth.

@@ -136,6 +136,13 @@ def _emit(root, event_type, data):
 
 def _read_stdin():
     try:
+        if sys.stdin is None:
+            return {}
+        try:
+            if sys.stdin.isatty():
+                return {}
+        except Exception:
+            pass
         raw = sys.stdin.read()
         return json.loads(raw) if raw.strip() else {}
     except Exception:
