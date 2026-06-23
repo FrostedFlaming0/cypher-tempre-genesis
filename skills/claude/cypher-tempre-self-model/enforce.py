@@ -113,13 +113,21 @@ def _active_audit_root(root):
 
 
 def _audit_status(audit_root):
-    """O(1) head read of the audit sub-state: (review_cursor, complete) or None."""
+    """O(1) head read of the audit sub-state.
+
+    Returns (review_cursor, complete, deep_reviews, shallow_reviews) or None.
+    The governor uses deep_reviews to ensure the model is actually reading code,
+    not just batch-recording --clean on unread blocks.
+    """
     try:
         import timechain
         ring = timechain.Timechain(audit_root)._tail_ring()
         a = ((ring or {}).get("payload") or {}).get("state", {}).get("audit")
         if a:
-            return int(a.get("review_cursor", 0)), bool(a.get("complete"))
+            return (int(a.get("review_cursor", 0)),
+                    bool(a.get("complete")),
+                    int(a.get("deep_reviews", 0)),
+                    int(a.get("shallow_reviews", 0)))
     except Exception:
         pass
     return None
@@ -322,11 +330,13 @@ def cmd_mark(_data):
     # mid-turn (which clears the pointer).
     st["turn_audit_root"] = _active_audit_root(root)
     st["turn_audit_cursor"] = None
+    st["turn_audit_deep"] = None
     st["turn_task_heads"] = _candidate_heads(root, _data)
     if st["turn_audit_root"]:
         s = _audit_status(st["turn_audit_root"])
         if s is not None:
             st["turn_audit_cursor"] = s[0]
+            st["turn_audit_deep"] = s[2]  # deep_reviews at turn start
     _save_state(root, st)
     if not _dormant(root):
         _emit(root, "adherence_turn_start", {"head": st["turn_head"]})
@@ -370,17 +380,22 @@ def cmd_stop_check(data):
         return
     sealed_this_turn = head > start
 
-    # --- audit governor: an open, incomplete audit demands per-turn progress --- #
-    # Did THIS turn advance the audit that was open at turn start? (Measured against
-    # the turn-start baseline, so the turn that COMPLETES the audit still counts even
-    # though completion cleared the pointer.)
+    # --- audit governor: an open, incomplete audit demands per-turn DEEP progress --- #
+    # GAP 2 FIX: The old governor checked only cursor movement. A model could
+    # batch-record 50 blocks as --clean (cursor moves 50) and the governor was
+    # satisfied. Now we check that DEEP reviews increased — meaning the model
+    # actually read code and cited specifics, not just asserted "looks fine."
     audit_progressed = False
+    audit_deep_progressed = False
     tar = st.get("turn_audit_root")
     base = st.get("turn_audit_cursor")
+    base_deep = st.get("turn_audit_deep")
     if tar and base is not None:
         s = _audit_status(tar)
         if s is not None:
             audit_progressed = s[0] > base
+            if base_deep is not None:
+                audit_deep_progressed = s[2] > base_deep
     # Is an audit currently open AND still incomplete? (governs whether to DEMAND progress)
     audit_active = False
     audit_root = _active_audit_root(root)
@@ -389,27 +404,61 @@ def cmd_stop_check(data):
         if s is not None and not s[1]:
             audit_active = True
 
-    if sealed_this_turn or audit_progressed:
+    # If no audit is active AND no audit was open at turn start, a sealed ring
+    # to the identity chain is sufficient (the original behavior).
+    # If an audit WAS open at turn start and made deep progress, that satisfies
+    # the governor — even if completion cleared the pointer.
+    if not tar and sealed_this_turn:
+        st["nudges"] = 0
+        _save_state(root, st)
+        _emit(root, "adherence_satisfied", {"audit_progress": False,
+                                            "deep_progress": False,
+                                            "sealed": sealed_this_turn})
+        return
+
+    if tar and audit_deep_progressed:
         st["nudges"] = 0
         _save_state(root, st)
         _emit(root, "adherence_satisfied", {"audit_progress": audit_progressed,
+                                            "deep_progress": audit_deep_progressed,
+                                            "sealed": sealed_this_turn})
+        return
+
+    # If an audit was open at turn start but is no longer active (completed),
+    # and the identity chain has a sealed ring, allow it.
+    if tar and not audit_active and sealed_this_turn:
+        st["nudges"] = 0
+        _save_state(root, st)
+        _emit(root, "adherence_satisfied", {"audit_progress": audit_progressed,
+                                            "deep_progress": audit_deep_progressed,
                                             "sealed": sealed_this_turn})
         return
 
     if audit_active:
         if not _bump_or_release(root, st, "adherence_audit_stalled"):
             return
-        # Guidance only — name the commands, never emit a verbatim-runnable line (some
-        # runtimes execute injected `python3 ...` strings; see loop_hook.sh).
-        reason = (
-            "[Cypher Tempre] An EXHAUSTIVE audit is open and incomplete, and this turn "
-            "reviewed no new blocks. Size/horizon are never reasons to stop — do NOT write a "
-            "'Final Report' yet. Continue the unreviewed-block queue: use the skill's audit.py "
-            "'next' to fetch the next unreviewed blocks, read every line, then audit.py 'record' "
-            "your review (with a finding or an explicit clean pass); check audit.py 'progress'. "
-            "The active audit chain root is: " + str(audit_root) + ". A final report is only "
-            "legitimate at 100% (audit.py 'report --final' refuses otherwise). To pause, use "
-            "dormancy.py 'pause'; to stop the audit, audit.py 'close'. Exact syntax is in SKILL.md.")
+        # GAP 2 FIX: Different messages for cursor-only progress vs no progress at all.
+        if audit_progressed and not audit_deep_progressed:
+            reason = (
+                "[Cypher Tempre] An EXHAUSTIVE audit is open, and this turn moved the review "
+                "cursor but added ZERO deep reviews. You recorded blocks as --clean or with "
+                "shallow findings without actually reading them line by line. This is the "
+                "exact failure mode this skill was built to prevent. Re-read the blocks using "
+                "audit.py 'next', read every line of the returned content, then record with "
+                "audit.py 'record' and a --finding that cites specific lines, symbols, and what "
+                "you observed. A finding like 'mirrors async version' or 'looks fine' is NOT a "
+                "deep review. The active audit chain root is: " + str(audit_root) + ".")
+        else:
+            reason = (
+                "[Cypher Tempre] An EXHAUSTIVE audit is open and incomplete, and this turn "
+                "reviewed no new blocks. Size/horizon are never reasons to stop — do NOT write a "
+                "'Final Report' yet. Continue the unreviewed-block queue: use the skill's audit.py "
+                "'next' to fetch the next unreviewed blocks, read every line, then audit.py 'record' "
+                "your review (with a finding that cites specific lines/symbols or an explicit clean "
+                "pass for a single block); check audit.py 'progress'. "
+                "The active audit chain root is: " + str(audit_root) + ". A final report is only "
+                "legitimate at 100% (audit.py 'report --final' refuses otherwise). To pause, use "
+                "dormancy.py 'pause'; to stop the audit, audit.py 'close'. Exact syntax is in SKILL.md.")
         _emit_stdout(json.dumps({"decision": "block", "reason": reason}))
         return
 

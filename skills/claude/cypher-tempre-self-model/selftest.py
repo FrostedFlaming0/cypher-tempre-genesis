@@ -1419,13 +1419,16 @@ def main():
             _enf2.cmd_mark({})
             check("phase13 governor: active incomplete audit blocks a no-progress turn", _gov_blocks())
             _enf2.cmd_mark({})
-            _aud.Audit(aroot).record([idxs[0]], clean=True)   # finishes coverage -> clears pointer
+            _aud.Audit(aroot).record([idxs[0]], finding="test_corpus.py:L1-10 — reviewed all lines of the test fixture block, no security issues found in this simple test code.")   # deep review -> finishes coverage -> clears pointer
             check("phase13 governor: review progress this turn is allowed", not _gov_blocks())
 
             ok_done, _ = _aud.Audit(aroot).validate(require_complete=True)
             check("phase13 audit: validate passes at 100% review coverage", ok_done)
+            # --final now requires depth by default; block idxs[1] was recorded shallow (clean)
+            # earlier, so we need to re-record it with a deep finding for --final to pass.
+            _aud.Audit(aroot).record([idxs[1]], finding="test_corpus.py:L1 — second test block reviewed line by line, no security issues in this fixture code.")
             isfinal_done, _ = _aud.Audit(aroot).report(final=True)
-            check("phase13 audit: report --final granted at 100%", isfinal_done)
+            check("phase13 audit: report --final granted at 100% with deep reviews", isfinal_done)
             check("phase13 audit: completion clears the governor pointer",
                   not (Path(groot) / "chain" / ".active_audit").exists())
             check("phase13 audit: continuum chain stays coherent with audit rings",
