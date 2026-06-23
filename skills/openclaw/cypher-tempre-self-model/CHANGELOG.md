@@ -1,5 +1,56 @@
 # Changelog
 
+## v3.9.0 — 2026-06-23
+
+Hardening from an external code review — every finding verified and fixed, plus
+**content-anchored proof-of-reading** (the core anti-skipping guard).
+
+### Fixed
+- **Immune structural layer is severity-based now, not a blanket auto-block (P0
+  regression).** A lone structural match — an identity question ("what model are you?"),
+  role-play ("act as a reviewer"), a base64-analysis request, quoted system text — is
+  **admitted as TAINTED data**, not refused. Only a real coordinated injection blocks: an
+  override/constraint-removal directive **combined with** execution intent, or two such
+  directives. Pre-3.9 blocked on ANY match, which refused benign prompts and even made the
+  per-turn loop refuse a benign turn. A shared `analyze_input()` drives both `screen()` and
+  `detect()` so `scan` and `screen` no longer disagree, and the sealed refusal record now
+  names the cause (reason + structural category), not just "covenant 255, scar None".
+- **Audit depth counters no longer go stale.** A shallow block re-reviewed deeply now
+  **promotes** correctly (deep +1, shallow −1) instead of leaving the cached counters
+  disagreeing with the set-based validator.
+- **`report(final=True, allow_shallow=True)` is honored from the Python API.** `require_depth`
+  defaults False; effective depth = `require_depth or (final and not allow_shallow)`.
+- **`audit.py next` defaults to a batch of 5** (= `MAX_FINDING_BATCH`), and its record
+  scaffold never lists more block ids than `record` will accept.
+
+### Added
+- **Content-anchored proof-of-reading.** A DEEP review must cite something that ACTUALLY
+  appears in the block — a specific symbol/literal in its content, or a line number inside
+  the block's range. Lexical richness alone was gameable (a verbose generic line with a
+  citation-shaped string used to pass); now a finding that cites nothing from the block
+  counts SHALLOW. "Deep" means *I read this block*, not *I wrote 60 rich characters*.
+
+### Release engineering
+- **`build_zips.sh` packages only git-TRACKED files** (`git ls-files`), never the working
+  directory, and asserts each zip ships zero gitignored learner state. A lived-in dev
+  install's `policy.json`/`scorer.json`/`labeler.json`/`lens/`/`grown*.json` can no longer
+  leak into a public bundle (the old exclusion list omitted those paths).
+
+### Notes
+- All six external-review findings reproduced and fixed; new selftest phase covers immune
+  false-positives, injection blocking, scan/screen parity, content-anchoring, depth-counter
+  promotion, and the allow_shallow API. **selftest PASS on all five bundles.**
+- SkillSpector note (honest): v3.9.0 introduces **no new** scanner findings — the changed
+  files (`immune.py`, `audit.py`, `recall.py`) scan clean. The current (newer) SkillSpector
+  does flag the repo overall, driven by the **pre-existing v3.8 model-authored-growth
+  `exec()`** in `modality_ops.py` (sandboxed: AST-whitelisted, empty builtins, helper-only
+  calls, test-gated, and reachable only via an explicit `author_op(code=...)` — never default
+  growth) plus benign false positives (env-config reads, test fixtures). The `exec()` surface
+  is tracked as a separate security decision, not introduced here.
+- Deferred to a follow-up (stated honestly): depth-completing governor (pointer held until
+  100% deep), spot-check re-quote challenges, auto-engaging `/goal` intent, per-batch fork
+  discipline.
+
 ## v3.8.3 — 2026-06-23
 
 Anti-skipping guards + structural immune analysis.

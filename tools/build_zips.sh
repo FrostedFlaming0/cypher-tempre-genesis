@@ -19,12 +19,24 @@ mkdir -p "$DEST"
 # dashboard/static-site zips, which use the 'cyphertempre-' prefix, untouched.)
 rm -f "$DEST"/cypher-tempre-*-skill-v*.zip
 
+# Package ONLY git-TRACKED files (git ls-files), never the working directory. This makes
+# a per-user state leak structurally impossible: a lived-in dev install can have learner
+# state (registry/policy.json, scorer.json, labeler.json, lens/, grown*.json, emergent.json,
+# chain/, tasks/) on disk, all gitignored — and since none of it is tracked, none of it can
+# ever ship. (Pre-3.9 zipped the working dir with an exclusion list that omitted the
+# learner-state paths .gitignore says must never ship.) An assert below double-checks.
+MUSTNOT='registry/(policy|scorer|labeler|grown|grown_ops|emergent)\.json|registry/lens/|/chain/|/tasks/|\.pyc$|__pycache__|\.active_audit|\.DS_Store'
 for r in claude codex hermes nanoclaw openclaw; do
-  ( cd "$ROOT/skills/$r" && zip -rq \
-      "$DEST/cypher-tempre-$r-skill-v$VERSION.zip" cypher-tempre-self-model \
-      -x "*/chain/*" "*/tasks/*" "*/__pycache__/*" "*.pyc" "*/.active_audit" "*/.DS_Store" \
-         "*/registry/grown.json" "*/registry/grown_ops.json" "*/registry/emergent.json" )
-  echo "built downloads/cypher-tempre-$r-skill-v$VERSION.zip"
+  zipf="$DEST/cypher-tempre-$r-skill-v$VERSION.zip"
+  ( cd "$ROOT/skills/$r" \
+      && git -C "$ROOT" ls-files "skills/$r/cypher-tempre-self-model" \
+         | sed "s#^skills/$r/##" \
+         | zip -q "$zipf" -@ )
+  leak="$(unzip -Z1 "$zipf" | grep -E "$MUSTNOT" || true)"
+  if [ -n "$leak" ]; then
+    echo "FATAL: $zipf would ship gitignored state:" >&2; echo "$leak" >&2; exit 1
+  fi
+  echo "built downloads/cypher-tempre-$r-skill-v$VERSION.zip (tracked files only; leak-checked)"
 done
 
 echo

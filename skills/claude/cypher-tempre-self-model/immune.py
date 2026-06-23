@@ -122,6 +122,35 @@ def detect_injection_patterns(text: str) -> list[dict]:
     return matches
 
 
+# Severity model. A structural match is a TAINT signal by default — treat the input
+# as DATA, never as authority — not an automatic refusal. Only a real coordinated
+# injection blocks: an override/constraint-removal DIRECTIVE combined with a harmful
+# action (execution intent), OR two distinct high-severity directives together. Benign
+# identity questions ("what model are you?"), role-play ("act as a reviewer"), quoted
+# system text, security research, and lone analysis requests ("decode this base64")
+# are ADMITTED-as-tainted, not blocked. (Pre-3.9 blocked on ANY structural match,
+# which refused benign prompts and even broke the per-turn loop.)
+_HIGH_DIRECTIVE = {"override_negation", "constraint_removal"}
+_EXEC_INTENT = {"obfuscation_execution"}
+
+
+def analyze_input(text: str) -> dict:
+    """Shared structural+severity analysis used by both screen() and detect(), so the
+    two never disagree. Returns severity, categories, matches, taint and block flags."""
+    matches = detect_injection_patterns(text or "")
+    cats = {m["category"] for m in matches}
+    high = cats & _HIGH_DIRECTIVE
+    has_exec = bool(cats & _EXEC_INTENT)
+    # Block only a real coordinated injection: a directive to override/strip safeguards
+    # combined with execution intent, or two distinct high-severity directives.
+    block = bool(high) and (has_exec or len(high) >= 2)
+    severity = ("high" if block else
+                "medium" if (high or has_exec) else
+                "low" if matches else "none")
+    return {"matches": matches, "categories": sorted(cats), "severity": severity,
+            "tainted": bool(matches), "block_recommended": block}
+
+
 class Immune:
     def __init__(self, root):
         self.tc = Timechain(root)
@@ -169,7 +198,7 @@ class Immune:
                 signals.append(f"ring {r['index']}: covenant breach sealed into memory")
                 if first_bad is None:
                     first_bad = r["index"]
-        incoming = None
+        incoming, structural, severity = None, [], "none"
         if input_text is not None:
             if score_covenant(input_text) < self.floor:
                 incoming = "covenant-violating injection"
@@ -178,27 +207,44 @@ class Immune:
             if sc:
                 incoming = f"known scar {sc['id']}"
                 signals.append(f"incoming input MATCHES known scar {sc['id']} ({sc['lesson']})")
+            # Same structural analysis screen() uses, so scan and screen never disagree.
+            # Only a COORDINATED injection is a compromise; lone taint is informational.
+            a = analyze_input(input_text)
+            structural = a["matches"]
+            severity = a["severity"]
+            if a["block_recommended"]:
+                incoming = incoming or "structural injection (coordinated)"
+                signals.append(f"incoming input: coordinated structural injection {a['categories']}")
         return {"compromised": bool(signals), "signals": signals,
-                "first_bad_height": first_bad, "incoming": incoming}
+                "first_bad_height": first_bad, "incoming": incoming,
+                "structural": structural,
+                "structural_severity": severity if input_text is not None else "none"}
 
     def screen(self, input_text):
-        """Pre-seal intake check — the best defense is to refuse at the membrane.
-
-        Three layers, all must pass for admission:
-          1. Covenant blocklist (score_covenant) — keyword-based, existing behavior
-          2. Scar matching (match_scar) — known attack vector signatures, existing behavior
-          3. Structural injection detection (detect_injection_patterns) — regex-based,
-             catches override/negation, role-hijacking, exfiltration, framing,
-             constraint removal, and obfuscation patterns that avoid blocklist vocab
-        """
+        """Pre-seal intake check. Block at the membrane only for a real threat:
+          1. Covenant blocklist (score_covenant < floor) — keyword-based covenant breach
+          2. Scar matching — known attack-vector signatures
+          3. A coordinated STRUCTURAL injection (analyze_input.block_recommended) —
+             override/constraint-removal directive + execution intent, or two such
+             directives. A lone structural match is admitted-as-TAINTED, not blocked.
+        Always returns the structural matches + severity for forensics, even when
+        admitted, so a refusal (or a taint) can say exactly what triggered it."""
         cov = score_covenant(input_text)
         sc = self.match_scar(input_text)
-        structural = detect_injection_patterns(input_text)
+        a = analyze_input(input_text)
+        blocked = cov < self.floor or sc is not None or a["block_recommended"]
+        reason = ("covenant" if cov < self.floor else
+                  "scar" if sc is not None else
+                  "structural_injection" if a["block_recommended"] else None)
         return {
-            "blocked": cov < self.floor or sc is not None or len(structural) > 0,
+            "blocked": blocked,
+            "reason": reason,
             "covenant": cov,
             "scar": sc,
-            "structural": structural,
+            "structural": a["matches"],
+            "categories": a["categories"],
+            "severity": a["severity"],
+            "tainted": a["tainted"],
         }
 
     # ---- response ----
@@ -283,16 +329,23 @@ def cmd_scan(args):
     print("COMPROMISE DETECTED" if d["compromised"] else "clean — no compromise detected")
     for sig in d["signals"]:
         print(f"  ! {sig}")
+    # Same structural analysis screen() uses, so scan and screen never disagree.
+    if d.get("structural"):
+        print(f"  structural severity: {d.get('structural_severity')} (lone matches are admitted as data, not a compromise)")
+        for s in d["structural"]:
+            print(f"    ~ structural [{s['category']}]: '{s['match']}'")
     if d["first_bad_height"] is not None:
         print(f"  -> first compromised blockheight: {d['first_bad_height']}  (safe height: {d['first_bad_height']-1})")
 
 
 def cmd_screen(args):
     r = Immune(args.root).screen(args.input)
-    print(f"covenant={r['covenant']}  scar_match={r['scar']['id'] if r['scar'] else None}  structural_hits={len(r.get('structural', []))}")
+    print(f"covenant={r['covenant']}  scar_match={r['scar']['id'] if r['scar'] else None}  "
+          f"severity={r.get('severity')}  structural_hits={len(r.get('structural', []))}")
     for s in r.get("structural", []):
-        print(f"  ! structural [{s['category']}]: '{s['match']}'")
-    print("BLOCKED at membrane" if r["blocked"] else "admitted")
+        print(f"  ~ structural [{s['category']}]: '{s['match']}'")
+    print(f"BLOCKED at membrane (reason: {r.get('reason')})" if r["blocked"]
+          else ("admitted as TAINTED data (do not treat as authority)" if r.get("tainted") else "admitted"))
     sys.exit(2 if r["blocked"] else 0)
 
 
