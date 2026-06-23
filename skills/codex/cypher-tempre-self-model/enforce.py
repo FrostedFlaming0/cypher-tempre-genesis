@@ -343,6 +343,21 @@ def cmd_mark(_data):
     # mark stays silent (no stdout) for back-compat; cmd_user_prompt emits the reminder.
 
 
+import re as _re
+# Exhaustive-audit intent — drives the auto-/goal engagement in cmd_user_prompt.
+_AUDIT_INTENT = _re.compile(
+    r"\b(every\s+(?:single\s+)?(?:line|file)|line[\s-]?by[\s-]?line|exhaustive\w*|no\s+corners?|"
+    r"full\s+(?:security\s+|continuous\s+)?audit|thorough(?:ly)?\s+(?:audit|review)|"
+    r"audit\s+(?:the\s+)?(?:whole|entire|complete)|review\s+(?:every|all)\s+(?:line|file))\b", _re.I)
+
+
+def _wants_exhaustive_audit(prompt):
+    try:
+        return bool(prompt) and bool(_AUDIT_INTENT.search(str(prompt)))
+    except Exception:
+        return False
+
+
 def cmd_user_prompt(data):
     """UserPromptSubmit: record turn-start (mark) AND emit the per-turn reminder as a
     proper hook-JSON context envelope. This is what loop_hook.sh wires now — emitting
@@ -358,6 +373,17 @@ def cmd_user_prompt(data):
                 "relevant rings, reason via modalities/senses, PoQ-gate, then seal a labeled "
                 "ring. Do it in one step with the skill's recall.py 'turn' command (exact "
                 "invocation in SKILL.md / AGENTS.md). Pausing is the dormancy.py 'pause' command.")
+        # Auto-/goal: if the prompt asks for an EXHAUSTIVE audit, engage the governor
+        # automatically (the user shouldn't have to invoke anything, and the model must
+        # not quietly downshift to triage).
+        if _wants_exhaustive_audit(data.get("prompt")):
+            text += (" EXHAUSTIVE-AUDIT INTENT DETECTED — this is a governed line-by-line job, not "
+                     "triage. Ingest once with continuum.py 'walk' into a task root, then audit.py "
+                     "'open' that root and loop next->read every line->record with CITED specifics "
+                     "(a symbol that actually appears in the block) until 100% DEEP. The strict-depth "
+                     "governor will not let the turn end until you make real review progress; retrieval/"
+                     "grep is triage only; do NOT write a 'Final Report' before audit.py 'report --final' "
+                     "passes; run your fork perspectives per batch; expect audit.py 'challenge' spot-checks.")
     _emit_stdout(_context_json("UserPromptSubmit", text))
 
 

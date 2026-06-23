@@ -54,9 +54,12 @@ output method methods object pattern standard mirrors version async sync logic h
 
 
 def _finding_anchors_in(finding, blocks):
-    """True if `finding` cites something that actually appears in `blocks`: a specific
-    token (>=5 chars, not generic) present in a block's content, or a line number inside
-    a covered block's [line_start, line_end]. Proof the model read the block."""
+    """True if `finding` cites something that ACTUALLY appears in the block's content: a
+    specific identifier/symbol (>=5 chars, not generic), or a multi-digit literal. This is
+    proof the model read the block. (A line NUMBER alone is NOT accepted — `next` prints the
+    line range in its header, so citing an in-range line is gameable without reading; only a
+    token/literal that is genuinely IN the content survives. The `challenge` command then
+    double-verifies by demanding an exact quote.)"""
     if not finding or not blocks:
         return False
     texts = "\n".join((b.get("content") or "").lower() for b in blocks)
@@ -64,10 +67,8 @@ def _finding_anchors_in(finding, blocks):
         t = tok.lower().rstrip("()")
         if len(t) >= 5 and t not in _ANCHOR_STOP and t in texts:
             return True
-    cited = [int(n) for n in re.findall(r"(?:\bL|\bline\s+|:)(\d{1,7})", finding, re.I)]
-    for b in blocks:
-        ls, le = b.get("line_start"), b.get("line_end")
-        if ls and le and any(int(ls) <= n <= int(le) for n in cited):
+    for num in re.findall(r"\b\d{2,}\b", finding):       # a literal (not a line ref) present in the code
+        if num in texts:
             return True
     return False
 
@@ -191,7 +192,7 @@ class Audit:
         return in_scope, reviewed & in_scope, deep & in_scope
 
     # -- open --------------------------------------------------------------- #
-    def open(self, objective=None, roles=None, exclude_roles=None, difficulty=0):
+    def open(self, objective=None, roles=None, exclude_roles=None, difficulty=0, strict_depth=True):
         st = self._head_state()
         if st is None:
             raise RuntimeError("No continuum task on this chain — run `continuum.py walk` first.")
@@ -218,10 +219,15 @@ class Audit:
             "review_high_water": -1,       # legacy/non-authoritative max reviewed ring
             "reviewed_blocks": 0,
             "reviewed_lines": 0,
-            "deep_reviews": 0,             # records whose finding cites specifics (depth >= floor)
+            "deep_reviews": 0,             # in-scope blocks with a DEEP (content-anchored) review
             "shallow_reviews": 0,          # bare "clean"/hollow records — coverage without depth
             "findings_total": 0,
             "recent_findings": [],
+            # strict_depth (default): the governor stays engaged until every block is DEEPLY
+            # reviewed — coverage alone (shallow --clean) cannot make it disengage. This is the
+            # anti-skipping completion criterion. --coverage-only relaxes it to coverage-complete.
+            "strict_depth": bool(strict_depth),
+            "challenge_failures": 0,       # fabricated-review spot-checks that failed (see `challenge`)
             "complete": False,
             "next_action": f"audit.py next  (0/{total_blocks} blocks reviewed)",
         }
@@ -358,11 +364,22 @@ class Audit:
             tag = ", ".join(sorted(set(p for p in paths if p))) or "?"
             a["recent_findings"] = (a["recent_findings"] + [f"{tag}: {finding}"])[-RECENT_FINDINGS_CAP:]
             a["findings_total"] += 1
-        a["complete"] = a["review_cursor"] >= a["total_blocks"]
-        remaining = max(0, a["total_blocks"] - a["review_cursor"])
-        a["next_action"] = ("audit COMPLETE — `audit.py report --final`" if a["complete"]
-                            else f"audit.py next  ({a['review_cursor']}/{a['total_blocks']} reviewed, "
-                                 f"{remaining} to go)")
+        # Depth-completing governor: by default (strict_depth) the audit is only "complete"
+        # — and the turn-end governor only disengages — when every block is DEEPLY reviewed,
+        # not merely covered. Shallow --clean coverage can no longer make the governor stop.
+        coverage_complete = a["review_cursor"] >= a["total_blocks"]
+        depth_complete = a.get("deep_reviews", 0) >= a["total_blocks"]
+        a["complete"] = depth_complete if a.get("strict_depth", True) else coverage_complete
+        if a["complete"]:
+            a["next_action"] = "audit COMPLETE — `audit.py report --final`"
+        elif a.get("strict_depth", True) and coverage_complete:
+            need = a["total_blocks"] - a.get("deep_reviews", 0)
+            a["next_action"] = (f"coverage 100% but {need} block(s) only SHALLOW — re-review them with "
+                                f"cited specifics (audit.py next), or open with --coverage-only.")
+        else:
+            remaining = max(0, a["total_blocks"] - a["review_cursor"])
+            a["next_action"] = (f"audit.py next  ({a['review_cursor']}/{a['total_blocks']} reviewed, "
+                                f"{a.get('deep_reviews', 0)} deep, {remaining} to go)")
         data = {"reviewed_indices": sorted(idxset), "status": status,
                 "clean": bool(clean and not finding),
                 "finding": finding, "paths": [p for p in paths if p],
@@ -378,6 +395,56 @@ class Audit:
     def close(self):
         """Disengage the governor for this chain (pause/abandon an audit)."""
         _clear_active(self.root)
+
+    # -- spot-check challenges (falsifiable proof of reading) ----------------- #
+    def _block_content(self, index):
+        for r in self.tc.iter_rings():
+            if r["index"] == int(index):
+                return ((r.get("payload") or {}).get("data") or {}).get("content")
+        return None
+
+    def challenge(self, n=1, seed=None):
+        """Pick N already-DEEP-reviewed in-scope blocks at random and return their
+        coordinates WITHOUT content. The model must then quote a real line/symbol from
+        each (`audit.py answer`); a wrong quote flags a FABRICATED review. This makes a
+        claimed deep review falsifiable — a model that didn't read block N cannot quote it."""
+        import random
+        a = self.status()
+        if not a:
+            raise RuntimeError("No audit open — run `audit.py open` first.")
+        _, _, deep = self._review_sets(a["scope"])
+        pool = sorted(deep)
+        if not pool:
+            return []
+        want = set(random.Random(seed).sample(pool, min(n, len(pool))))
+        out = []
+        for r in self.tc.iter_rings():
+            if r["index"] in want:
+                d = (r.get("payload") or {}).get("data") or {}
+                out.append({"index": r["index"], "path": d.get("relative_path"),
+                            "line_start": d.get("line_start"), "line_end": d.get("line_end")})
+        return out
+
+    def answer(self, block_index, quote, difficulty=0):
+        """Verify a challenge: does `quote` actually appear in block `block_index`? Seals
+        an `audit_challenge` ring (pass/fail). A FAIL is on-chain evidence that the prior
+        'deep' review was fabricated — it bumps `challenge_failures`, which validate/report
+        surface so a final report on a fabricated audit can't be trusted."""
+        content = self._block_content(block_index)
+        if content is None:
+            raise RuntimeError(f"Block {block_index} not found on this chain.")
+        norm = lambda s: re.sub(r"\s+", " ", (s or "").strip().lower())
+        q = norm(quote)
+        passed = len(q) >= 6 and q in norm(content)
+        st = json.loads(json.dumps(self._head_state()))
+        aa = st.get("audit") or {}
+        if not passed:
+            aa["challenge_failures"] = aa.get("challenge_failures", 0) + 1
+        ring = self.tc.seal("audit_challenge",
+                            {"event": "audit_challenge", "state": st,
+                             "data": {"block": int(block_index), "quote": str(quote)[:200],
+                                      "passed": passed}}, difficulty=difficulty)
+        return passed, ring
 
     # -- validate (rigorous, O(n)) ----------------------------------------- #
     def validate(self, require_complete=False, require_depth=False):
@@ -436,10 +503,20 @@ class Audit:
         effective_depth = require_depth or (final and not allow_shallow)
         ok, lines = self.validate(require_complete=True, require_depth=effective_depth)
         a = self.status() or {}
+        # A failed spot-check (audit.py challenge) is on-chain evidence a 'deep' review was
+        # fabricated — a fabricated audit cannot be finalized under depth.
+        fails = a.get("challenge_failures", 0)
+        if effective_depth and fails:
+            ok = False
         bar = "coverage" + (" + depth" if effective_depth else "")
         head = []
         if final and ok:
             head.append("===== FINAL AUDIT REPORT =====")
+        elif final and not ok and fails and effective_depth:
+            head.append("===== INTERIM AUDIT REPORT (--final REFUSED: fabricated reviews) =====")
+            head.append(f"{fails} spot-check challenge(s) FAILED — a claimed deep review could not")
+            head.append("quote its own block. Those reviews are fabricated; re-read and re-record")
+            head.append("the affected blocks with genuine cited specifics before finalizing.")
         elif final and not ok:
             head.append(f"===== INTERIM AUDIT REPORT (--final REFUSED: {bar} < 100%) =====")
             head.append("A 'final' report on an incomplete exhaustive audit is a persistence/")
@@ -460,6 +537,8 @@ class Audit:
             dpct = 100.0 * a.get('deep_reviews', 0) / max(1, a.get('review_cursor', 1))
             head.append(f"depth ratio: {dpct:.0f}% deep (target: 100% for a line-by-line audit)")
         head.append(f"findings recorded: {a.get('findings_total', 0)}")
+        if fails:
+            head.append(f"spot-check failures: {fails} (fabricated reviews — see audit.py challenge)")
         if a.get("recent_findings"):
             head.append("recent findings:")
             head += [f"  - {f}" for f in a["recent_findings"]]
@@ -472,9 +551,10 @@ class Audit:
 
 def cmd_open(args):
     a, ring = Audit(args.root).open(objective=args.objective, roles=args.roles,
-                                    exclude_roles=args.exclude_roles)
+                                    exclude_roles=args.exclude_roles,
+                                    strict_depth=not args.coverage_only)
     print(f"audit opened (Ring {ring['index']}). in-scope: {a['total_blocks']} blocks, "
-          f"~{a['total_lines']} lines.")
+          f"~{a['total_lines']} lines. mode: {'STRICT-DEPTH (governor holds until 100% deep)' if a['strict_depth'] else 'coverage-only'}.")
     print(f"NEXT: {a['next_action']}")
 
 
@@ -499,6 +579,10 @@ def cmd_next(args):
     print(f"#   (only if genuinely nothing of note: audit.py record --root {args.root} --block <id> --clean)")
     print(f"#   Limits: --clean = 1 block/call; --finding = {cap} blocks/call. A finding that cites nothing")
     print(f"#   found in the block, or is too short ('looks fine'/'mirrors async'), counts SHALLOW.")
+    print(f"# Run your 8 chronosynaptic security-perspective forks against THIS batch (not once at the")
+    print(f"#   start): chronosynaptic.py ... — surface each fork's findings, then record them above.")
+    print(f"# Spot-check yourself: audit.py challenge --root {args.root}  (quote a real line from a block")
+    print(f"#   you claimed to review; a wrong quote flags a fabricated review and blocks the final report).")
 
 
 def cmd_record(args):
@@ -545,6 +629,26 @@ def cmd_close(args):
     print("audit governor disengaged for this chain (pointer cleared).")
 
 
+def cmd_challenge(args):
+    picks = Audit(args.root).challenge(n=args.n, seed=args.seed)
+    if not picks:
+        print("no deep-reviewed blocks to challenge yet.")
+        return
+    print(f"# SPOT-CHECK: prove you actually read these block(s) you recorded as DEEP. For each,")
+    print(f"# quote a real line or symbol FROM THE BLOCK (you are NOT shown the content):")
+    for b in picks:
+        print(f"  ring {b['index']}  {b['path']}  L{b['line_start']}-{b['line_end']}")
+        print(f"    -> audit.py answer --root {args.root} --block {b['index']} --quote \"<exact line/symbol from this block>\"")
+    print("# A wrong quote records a fabricated-review failure and blocks the final report.")
+
+
+def cmd_answer(args):
+    passed, ring = Audit(args.root).answer(args.block, args.quote)
+    print(f"challenge block {args.block}: {'PASS — quote found in the block ✓' if passed else 'FAIL — quote NOT in the block (fabricated review)'} "
+          f"(Ring {ring['index']}).")
+    sys.exit(0 if passed else 3)
+
+
 def cmd_report(args):
     is_final, lines = Audit(args.root).report(
         final=args.final, require_depth=args.require_depth,
@@ -569,6 +673,9 @@ def build_parser():
                     help="only these path roles count as reviewable (e.g. source config)")
     po.add_argument("--exclude-roles", nargs="*", default=None,
                     help=f"roles to exclude (default {sorted(DEFAULT_EXCLUDE_ROLES)})")
+    po.add_argument("--coverage-only", action="store_true",
+                    help="relax the governor to disengage at coverage-complete (default: STRICT-DEPTH "
+                         "— it holds until every block is deeply, content-anchored reviewed)")
     po.set_defaults(func=cmd_open)
 
     pn = sub.add_parser("next", parents=[common], help="hand back the next UNREVIEWED blocks to read")
@@ -605,6 +712,17 @@ def build_parser():
 
     pc = sub.add_parser("close", parents=[common], help="disengage the turn-end governor (pause/abandon)")
     pc.set_defaults(func=cmd_close)
+
+    pch = sub.add_parser("challenge", parents=[common],
+                         help="spot-check: pick deep-reviewed blocks at random and demand a real quote")
+    pch.add_argument("--n", type=int, default=1, help="how many blocks to challenge")
+    pch.add_argument("--seed", type=int, default=None, help="RNG seed (reproducible challenges)")
+    pch.set_defaults(func=cmd_challenge)
+
+    pa = sub.add_parser("answer", parents=[common], help="answer a challenge by quoting a real line from the block")
+    pa.add_argument("--block", type=int, required=True)
+    pa.add_argument("--quote", required=True, help="an exact line or symbol from that block")
+    pa.set_defaults(func=cmd_answer)
     return p
 
 
