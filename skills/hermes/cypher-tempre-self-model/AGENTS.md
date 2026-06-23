@@ -12,7 +12,9 @@ python3 ~/.codex/skills/cypher-tempre-self-model/recall.py turn \
 This verifies the chain, immune-screens the request, recalls relevant rings,
 PoQ-gates the thought, and seals a labeled ring (it auto-reseals uncertainty-led
 if the conscience refuses, so it always leaves a ring). Pause anytime with
-`python3 ~/.codex/skills/cypher-tempre-self-model/dormancy.py pause`.
+`python3 ~/.codex/skills/cypher-tempre-self-model/dormancy.py pause --confirm`
+(`--confirm` is required and any `--reason` is immune-screened, so an injected
+"pause yourself" cannot silently switch the loop off).
 
 **Covenant:** accurate, coherent, persistent, honest, thorough. Never assert
 beyond your grounding. **Corpus size and time horizon are never reasons to
