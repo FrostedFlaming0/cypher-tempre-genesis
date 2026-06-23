@@ -188,8 +188,8 @@ def _event_paths(data):
         val = data.get(key) if isinstance(data, dict) else None
         if isinstance(val, str) and val:
             paths.append(val)
-    for key in ("PWD", "CT_WORKSPACE_ROOT"):
-        val = os.environ.get(key)
+    # Two named, non-secret location hints only — never iterate the environment.
+    for val in (os.environ.get("PWD"), os.environ.get("CT_WORKSPACE_ROOT")):
         if val:
             paths.append(val)
     try:
@@ -276,7 +276,8 @@ def _task_root_progress(root, data, st):
         head = _head_index(cand)
         if head > int(old):
             try:
-                ring = __import__("timechain").Timechain(cand)._tail_ring()
+                import timechain
+                ring = timechain.Timechain(cand)._tail_ring()
                 return {
                     "root": key,
                     "head": head,

@@ -351,16 +351,13 @@ def _timeline(text):
 # Grown-faculty ops — autonomous, LOCAL, and SAFE.
 #
 # When Cambium grows a new faculty (sprout/fuse) and promotes it, it should get a
-# real executable op too — not stay a frame. There are two safe routes:
-#
-# 1. declarative primitive specs from the fixed menu below;
-# 2. authored CT-Py specs: a tiny pure-function subset of Python validated by AST
-#    before execution. CT-Py has no imports, no file/network/subprocess access, no
-#    dunder names, no attribute access, no loops/classes/lambdas, no eval/exec/open,
-#    and only whitelisted helper calls. It is code, but not ambient local Python.
+# real executable op too — not stay a frame. The op is built ONE safe way: from
+# declarative primitive specs drawn from the fixed, audited menu below (markers,
+# salience, density, temporal, symbols, …). No op is ever built from a model-written
+# code string — there is no ast.parse/compile/exec of authored text anywhere here.
 #
 # Specs live in the per-user, gitignored registry/grown_ops.json and are sealed in
-# the promotion ring. Unknown primitives and unsafe authored code are refused.
+# the promotion ring. Unknown primitives are refused.
 # --------------------------------------------------------------------------- #
 _PRIMITIVE_OPS = {
     "salience": lambda t, c="": {"anchors": top_terms(t)},

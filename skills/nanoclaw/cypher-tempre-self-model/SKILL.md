@@ -263,11 +263,11 @@ Cambium chooses the kind deliberately:
 - A **modality** is an **environment-facing cognitive/action faculty**. Grow this when the
   gap is about acting on a task or tool surface: code, repos, terminals, audits, novel tasks.
 
-**Model-authored faculties are PROPOSE-then-ACTIVATE — autonomous coding, human gate, never
-auto-executed.** When you hit a gap, you may *write the op yourself* and commit it as a
-proposal — the **full code body is stored as inert text** in `registry/emergent.json` and is
-**never executed by the skill** (it does not fire, does not run, is not in the active
-registry). A human then reviews it and activates it:
+**Model-authored faculties are PROPOSE-then-ACTIVATE — autonomous coding, human gate, the
+skill never runs them on its own.** When you hit a gap, you may *write the op yourself* and
+commit it as a proposal — the **full code body is stored as inert text** in
+`registry/emergent.json` and the **skill never runs it** (it does not fire, does not run, is
+not in the active registry). A human then reviews it and activates it:
 ```
 python3 cambium.py propose-op "<Faculty Name>" --kind sense \
   --code-file op.py --function "<what it detects>" --seed-terms <terms>   # -> emergent (DORMANT)
