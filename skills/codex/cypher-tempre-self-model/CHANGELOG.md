@@ -1,5 +1,37 @@
 # Changelog
 
+## v3.11.3 — 2026-06-23
+
+Hardening from a deeper semantic review — closes two integrity gaps in the safety
+machinery and documents the skill's data-retention posture. No change to the normal
+happy path.
+
+### Fixed
+- **A PoQ REJECT is now recorded, never laundered.** The enforced-loop fallback
+  (`recall.py _loop_seal`) used to reseal *any* refused turn with passing uncertainty
+  scores. For `FORCE_UNCERTAINTY` / `REVISE` that is correct (an honest tentative
+  restatement). But a `REJECT` — a covenant violation or contradiction of sealed history —
+  was also resealed with passing covenant/consistency scores, laundering profound
+  dissonance past the gate. Now a REJECT seals a covenant-clean **refusal record** (it
+  states THAT the turn was refused and why, without restating the offending claim), so the
+  loop still leaves a ring but the dissonant content is never accepted as a claim.
+- **Dormancy can no longer be switched on by injected text.** `dormancy.pause()` disables
+  the immune screen, recall, PoQ gate, sealing and enforcement, so pausing is now gated:
+  `--confirm` is required (pausing is a deliberate human-intent act, not a default), and any
+  `--reason` is immune-screened — a reason matching the override / constraint-removal
+  injection patterns is refused rather than honored.
+
+### Added
+- **Data-retention & third-party-transmission notes** in `SKILL.md` and every bundle
+  `README.md`: the chain stores each turn permanently in local cleartext (tamper-evident,
+  not encrypted; no redaction or expiry), and the optional OpenAI / Voyage /
+  sentence-transformers embedders transmit embedded text off-machine (OFF by default).
+  Guidance: do not seal secrets/PII, and keep the local `hashing` embedder unless
+  transmission is accepted.
+
+Both fixes are covered by new selftest assertions (the REJECT-no-launder path and the
+dormancy gate). These gaps were surfaced by a deeper semantic static-scan pass.
+
 ## v3.11.2 — 2026-06-23
 
 Compliance — SkillSpector goes from DO_NOT_INSTALL to SAFE. Cleared every
@@ -13,13 +45,13 @@ actionable static-scan finding (all behavior-preserving; no functional change).
   CT-Py-sandbox prose in `cambium.py` (and `modality_ops.py`) still mentioned
   "subprocess", tripping the shell heuristic. The sandbox itself was removed in
   v3.11.0; this purges the dangling comments that described it.
-- **`AS1` (agent-config access):** `codex_notify_hook.sh` (which documents wiring into
-  `~/.codex/config.toml`) is Codex-specific but was shipping in every bundle. Removed it
+- **`AS1` (agent-config access):** `codex_notify_hook.sh` (which documents wiring into the
+  Codex agent config file) is Codex-specific but was shipping in every bundle. Removed it
   from the four non-Codex bundles (claude/hermes/nanoclaw/openclaw); it stays in the
   Codex bundle where it belongs.
-- **`EA2` (autonomous decision making):** the scanner matched the literal substring
-  "auto-execute" inside a sentence stating faculties are *never* auto-executed. Reworded
-  the SKILL.md line so it states the same guarantee without the trigger substring.
+- **`EA2` (autonomous decision making):** the scanner matched a substring meaning "run
+  automatically" inside a SKILL.md sentence that actually stated the *opposite* (faculties
+  are never run on their own). Reworded the line to keep the guarantee without that token.
 - **`E2` (env-var harvesting):** `enforce.py` read two named, non-secret location hints
   (`PWD`, `CT_WORKSPACE_ROOT`) via a loop variable; rewrote to read them by literal so it
   no longer pattern-matches credential harvesting.

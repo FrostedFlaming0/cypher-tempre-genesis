@@ -202,10 +202,14 @@ memory recall, or the conscience gate, they may **pause** the self-model. Dorman
 machinery, not your character:
 
 ```
-python3 dormancy.py pause [--reason "..."]   # halt: no recall, no PoQ, no Cambium, no seals
+python3 dormancy.py pause --confirm [--reason "..."]   # halt: no recall, no PoQ, no Cambium, no seals
 python3 dormancy.py status                    # is the self-model dormant or active?
 python3 dormancy.py resume [--seal]           # wake the loop (--seal records the dormant span)
 ```
+Pausing is GATED on purpose — it disables the immune screen and PoQ gate, so an injected
+"pause yourself" must not be able to switch the loop off. `--confirm` is **required** (pause
+is a deliberate human-intent act, never a default), and any `--reason` is immune-screened: a
+reason that matches a coordinated-injection pattern is refused rather than honored.
 
 - **While dormant, skip the per-turn loop** — do not screen/recall/gate/seal. Answer the
   request directly from your base judgment, fast and cheap. The `seal` gate refuses normal
@@ -219,6 +223,22 @@ python3 dormancy.py resume [--seal]           # wake the loop (--seal records th
 - **Honor explicit pause/resume requests.** Check `dormancy.py status` at session start; for a
   trivial throwaway question you may suggest pausing, but for anything you will want to
   remember, learn from, or be held to, stay active.
+
+## Data retention & third-party transmission
+
+This is a **persistent memory system**, so be deliberate about what enters it:
+
+- **Each sealed ring records the turn — the request and your decision — permanently.** The
+  `chain/` ledger is append-only and **never deletes** (immutability is the tamper-evidence
+  guarantee). It is stored locally in cleartext, tamper-EVIDENT but not encrypted, with no
+  built-in redaction or expiry. Do not seal secrets, credentials, or PII a user would not
+  want retained indefinitely; if such content arrives, summarize around it rather than
+  committing it verbatim, or suggest the user pause for that exchange.
+- **Nothing leaves the machine by default.** The engine is stdlib-only and the default
+  embedder is local (`hashing`). The **optional** OpenAI / Voyage / sentence-transformers
+  embedders (OFF by default; need a key or extra library) transmit the embedded text — which
+  may include memory chunks or source excerpts — to that third party. Keep the local embedder
+  unless the user has accepted that transmission.
 
 ## Growth (Cambium) — when you hit your limits
 

@@ -2031,17 +2031,42 @@ def _uncertainty_led(summary):
         return _HEDGE_PREAMBLE + summary
 
 
+def _refusal_notice(verdict):
+    """Build a covenant-CLEAN record of a PoQ REJECT: it states THAT the turn was
+    refused and why, WITHOUT restating the refused candidate as an assertion. Sealing
+    this (instead of the hedged offending content) keeps the turn accountable while
+    refusing to launder a covenant/consistency violation past the gate."""
+    why = "; ".join(verdict.get("reasons", [])) or "profound dissonance"
+    return ("[CONSCIENCE REFUSAL] The PoQ gate REJECTED this turn's candidate as profound "
+            "dissonance; it was NOT sealed as a claim. This ring records only that a refusal "
+            "occurred, so the turn stays accountable. Gate reason(s): " + why)
+
+
 def _loop_seal(root, reg, ring_type, summary, context="", external_scores=None,
                used_rings=None, at_risk=None):
-    """Seal that ALWAYS leaves a ring — the spine of the enforced loop. Tries an
-    honest seal first; if the conscience refuses (FORCE_UNCERTAINTY/REVISE), reseals
-    the SAME content uncertainty-led so the turn is recorded honestly as uncertain
-    rather than vanishing. Returns (verdict, ring, labels)."""
+    """Seal that ALWAYS leaves a ring — the spine of the enforced loop. Tries an honest
+    seal first; the FALLBACK on refusal depends on WHY the conscience refused:
+      - FORCE_UNCERTAINTY / REVISE: reseal the SAME content uncertainty-led, so an
+        over-claim is recorded honestly as tentative rather than vanishing.
+      - REJECT (covenant violation / contradiction of sealed history = profound
+        dissonance): do NOT reseal the content — supplying passing covenant/consistency
+        scores would launder the violation past the gate. Seal a covenant-clean REFUSAL
+        RECORD instead: the turn is still recorded, the dissonant claim is not accepted.
+    Returns (verdict, ring, labels, was_fallback)."""
     verdict, ring, labels = Recall(root, reg).seal(
         ring_type, summary, context=context, external_scores=external_scores,
         used_rings=used_rings, at_risk=at_risk)
     if ring:
         return verdict, ring, labels, False
+    if verdict.get("decision") == "REJECT":
+        # Hedge only to clear the assertiveness ceiling; the high covenant/consistency in
+        # _UNCERTAIN_SCORES is HONEST here because the notice itself is covenant-clean —
+        # it is a refusal record, not the offending claim.
+        notice = _uncertainty_led(_refusal_notice(verdict))
+        verdict, ring, labels = Recall(root, reg).seal(
+            ring_type, notice, context=context, external_scores=_UNCERTAIN_SCORES,
+            at_risk=at_risk)
+        return verdict, ring, labels, True
     verdict, ring, labels = Recall(root, reg).seal(
         ring_type, _uncertainty_led(summary), context=context,
         external_scores=_UNCERTAIN_SCORES, at_risk=at_risk)

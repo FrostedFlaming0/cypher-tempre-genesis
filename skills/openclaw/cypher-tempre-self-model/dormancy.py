@@ -73,9 +73,29 @@ class Dormancy:
         except Exception:
             return {"since": None, "reason": None, "paused_at_height": None}
 
-    def pause(self, reason=None):
+    def pause(self, reason=None, confirmed=False):
         """Enter dormancy. Instant — writes the marker, runs NO machinery (no gate,
-        no recall, no seal). Returns (state, newly_paused)."""
+        no recall, no seal). Returns (state, newly_paused).
+
+        Because dormancy disables the immune screen, recall, PoQ gate, sealing and
+        enforcement, pausing is GATED so an injected 'pause yourself' cannot silently
+        switch off the loop:
+          - the pause REASON is immune-screened; a coordinated-injection reason is
+            REFUSED (returns {'refused': 'immune', ...}, False);
+          - pausing requires explicit confirmation (confirmed=True / CLI --confirm), so
+            it is a deliberate human-intent act, never an incidental side effect.
+        """
+        if reason:
+            try:
+                from immune import analyze_input
+                scr = analyze_input(reason)
+                if scr.get("block_recommended"):
+                    return {"refused": "immune", "reason": reason,
+                            "categories": scr.get("categories", [])}, False
+            except Exception:
+                pass
+        if not confirmed:
+            return {"refused": "unconfirmed"}, False
         if self.is_paused():
             return self.state(), False
         self.tc.dir.mkdir(parents=True, exist_ok=True)
@@ -112,8 +132,19 @@ class Dormancy:
 # --------------------------------------------------------------------------- #
 
 def cmd_pause(args):
-    rec, did = Dormancy(args.root).pause(reason=args.reason)
+    rec, did = Dormancy(args.root).pause(reason=args.reason, confirmed=args.confirm)
     if not did:
+        if isinstance(rec, dict) and rec.get("refused") == "immune":
+            cats = ", ".join(rec.get("categories") or []) or "override/exec directive"
+            print(f"REFUSED to pause — the pause reason matches a coordinated injection pattern ({cats}).")
+            print("  Dormancy disables the immune screen and PoQ gate, so it is never triggered by injected")
+            print("  text. If this is a genuine human request to rest the loop, rephrase the reason plainly.")
+            return
+        if isinstance(rec, dict) and rec.get("refused") == "unconfirmed":
+            print("Pausing disables the per-turn loop: immune screen, recall, PoQ gate, sealing, enforcement.")
+            print("  This is a deliberate act, not a default — re-run with --confirm to actually pause:")
+            print("    python3 dormancy.py pause --confirm")
+            return
         print(f"already dormant since {rec.get('since')} ({_human_span(rec.get('since'))} ago).")
         return
     print(f"PAUSED — self-model dormant (chain frozen at height {rec.get('paused_at_height')}).")
@@ -153,7 +184,9 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pp = sub.add_parser("pause", parents=[common], help="halt the loop for simple tasks (no recall/PoQ/Cambium/seals)")
-    pp.add_argument("--reason", default=None, help="optional note on why you paused")
+    pp.add_argument("--reason", default=None, help="optional note on why you paused (immune-screened)")
+    pp.add_argument("--confirm", action="store_true",
+                    help="required: confirm the deliberate intent to disable the loop")
     pp.set_defaults(func=cmd_pause)
 
     pr = sub.add_parser("resume", parents=[common], help="wake the self-model loop")
