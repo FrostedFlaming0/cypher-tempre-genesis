@@ -1370,8 +1370,8 @@ def main():
         os.environ["CT_ENFORCE_ROOT"] = str(groot)   # pointer + governor namespace
         try:
             timechain.Timechain(groot).genesis(name="audit-enforce-test")
-            (corpus / "a.py").write_text("def a():\n    return 1\n")
-            (corpus / "b.py").write_text("def b():\n    return 2\n")
+            (corpus / "a.py").write_text("def consensus_validate(amount):\n    return amount + 1\n")
+            (corpus / "b.py").write_text("def ledger_compute(values):\n    return sum(values)\n")
             with contextlib.redirect_stdout(io.StringIO()):
                 continuum.Continuum(aroot).walk(corpus, [".py"], "audit selftest")
             a, _ = _aud.Audit(aroot).open(objective="review all")
@@ -1419,14 +1419,14 @@ def main():
             _enf2.cmd_mark({})
             check("phase13 governor: active incomplete audit blocks a no-progress turn", _gov_blocks())
             _enf2.cmd_mark({})
-            _aud.Audit(aroot).record([idxs[0]], finding="test_corpus.py:L1-10 — reviewed all lines of the test fixture block, no security issues found in this simple test code.")   # deep review -> finishes coverage -> clears pointer
+            _aud.Audit(aroot).record([idxs[0]], finding="a.py: consensus_validate adds 1 to amount and returns it; reviewed line by line, no overflow guard but caller-bounded — no issue.")   # DEEP (cites real symbol) -> promotes idxs[0]
             check("phase13 governor: review progress this turn is allowed", not _gov_blocks())
 
             ok_done, _ = _aud.Audit(aroot).validate(require_complete=True)
             check("phase13 audit: validate passes at 100% review coverage", ok_done)
-            # --final now requires depth by default; block idxs[1] was recorded shallow (clean)
-            # earlier, so we need to re-record it with a deep finding for --final to pass.
-            _aud.Audit(aroot).record([idxs[1]], finding="test_corpus.py:L1 — second test block reviewed line by line, no security issues in this fixture code.")
+            # --final requires depth; idxs[1] was recorded shallow (clean) earlier, so re-record
+            # it deeply (citing a real symbol from the block) for strict-depth completion.
+            _aud.Audit(aroot).record([idxs[1]], finding="b.py: ledger_compute returns sum(values); reviewed line by line, no integer-overflow handling on the running sum — noted.")
             isfinal_done, _ = _aud.Audit(aroot).report(final=True)
             check("phase13 audit: report --final granted at 100% with deep reviews", isfinal_done)
             check("phase13 audit: completion clears the governor pointer",
@@ -1505,20 +1505,20 @@ def main():
 
         # audit depth governor: require_depth fails on a shallow review, passes when deepened
         dcorpus = root / "p14corpus"; dcorpus.mkdir()
-        (dcorpus / "a.py").write_text("def a():\n    return 1\n")
-        (dcorpus / "b.py").write_text("def b():\n    return 2\n")
+        (dcorpus / "a.py").write_text("def parse_amount(raw):\n    return int(raw)\n")
+        (dcorpus / "b.py").write_text("def tally_records(rows):\n    return len(rows)\n")
         droot = root / "p14chain"
         continuum.Continuum(droot).walk(str(dcorpus), [".py"], "depth selftest")
         _A = _aud3.Audit(droot); _A.open(objective="review all")
         _dids = [b["index"] for b in _A.next_batch(99)[0]]
         _A.record([_dids[0]], clean=True)                                   # shallow
-        _A.record([_dids[1]], finding="b.py L1-2: b() returns constant 2, no bounds check; "
-                  "because callers treat it as a count a negative index is reachable — compare to MAX.")
+        _A.record([_dids[1]], finding="b.py: tally_records returns len(rows); reviewed line by line — no "
+                  "integer-overflow handling on the count, callers must bound rows.")
         _okc, _ = _A.validate(require_complete=True)
         _okd, _ = _A.validate(require_complete=True, require_depth=True)
         check("phase14 audit depth: coverage complete but require_depth fails on a shallow review",
               _okc and not _okd)
-        _A.record([_dids[0]], finding="a.py L1-2: a() returns constant 1, pure, no inputs — verified safe.")
+        _A.record([_dids[0]], finding="a.py: parse_amount calls int(raw); reviewed line by line — raises ValueError on bad input, no other issue.")
         _okd2, _ = _A.validate(require_complete=True, require_depth=True)
         check("phase14 audit depth: require_depth passes once every block is deeply reviewed", _okd2)
         _aud3._clear_active(droot)
@@ -1638,8 +1638,9 @@ def main():
 
         # audit depth integrity: content-anchoring, promotion counters, allow_shallow
         _dc = root / "p16corpus"; _dc.mkdir()
-        (_dc / "v.py").write_text("def validate_block(nValueIn):\n    if nValueIn > MAX_MONEY:\n        raise OverflowError\n    return True\n")
-        (_dc / "u.py").write_text("def helper_util(x):\n    return x + 1\n")
+        # named so the sort order is deterministic: validate block is _ids[0], helper is _ids[1]
+        (_dc / "a_validate.py").write_text("def validate_block(nValueIn):\n    if nValueIn > MAX_MONEY:\n        raise OverflowError\n    return True\n")
+        (_dc / "b_helper.py").write_text("def helper_util(x):\n    return x + 1\n")
         _dr = root / "p16chain"
         continuum.Continuum(_dr).walk(str(_dc), [".py"], "depth integrity selftest")
         import audit as _aud16
@@ -1665,6 +1666,38 @@ def main():
         _isf, _ = _A.report(final=True, allow_shallow=True)
         check("phase16 audit: report(final, allow_shallow=True) honored via Python API", _isf)
         _aud16._clear_active(_dr)
+
+        # -- phase17: v3.10 adherence levers (depth-completing governor, spot-checks) ---- #
+        _gc = root / "p17corpus"; _gc.mkdir()
+        (_gc / "a_consensus.py").write_text("def consensus_check(amount):\n    if amount > SUPPLY_CAP:\n        raise ValueError\n    return amount\n")
+        _gr = root / "p17chain"
+        continuum.Continuum(_gr).walk(str(_gc), [".py"], "adherence selftest")
+        import audit as _aud17
+        _A = _aud17.Audit(_gr); _ao, _ = _A.open(objective="rev")
+        check("phase17 governor: open defaults to STRICT-DEPTH", _ao["strict_depth"] is True)
+        _gid = [b["index"] for b in _A.next_batch(99)[0]][0]
+        # shallow coverage does NOT complete a strict-depth audit (governor keeps nagging)
+        _A.record([_gid], clean=True)
+        check("phase17 governor: shallow coverage does NOT complete a strict-depth audit",
+              _A.status()["complete"] is False)
+        # deep review completes it
+        _A.record([_gid], finding="a_consensus.py: consensus_check rejects amount above SUPPLY_CAP via ValueError — reviewed, bound correct.")
+        check("phase17 governor: a deep (content-anchored) review completes the strict-depth audit",
+              _A.status()["complete"] is True)
+        # spot-check: a real quote PASSES, a fabricated quote FAILS and blocks the final report
+        _p, _ = _A.answer(_gid, "amount > SUPPLY_CAP")
+        check("phase17 challenge: a real quote from the block passes", _p is True)
+        _f, _ = _A.answer(_gid, "this is a fabricated line not in the block at all")
+        check("phase17 challenge: a fabricated quote fails", _f is False)
+        _isf, _ = _A.report(final=True)
+        check("phase17 challenge: a failed spot-check blocks the FINAL report", _isf is False)
+        _aud17._clear_active(_gr)
+        # auto-/goal: exhaustive-audit intent is detected at prompt time, benign is not
+        import enforce as _enf17
+        check("phase17 auto-goal: exhaustive-audit intent detected, benign prompts ignored",
+              _enf17._wants_exhaustive_audit("audit every line of the repo, no corners")
+              and not _enf17._wants_exhaustive_audit("what model are you?")
+              and not _enf17._wants_exhaustive_audit("fix the bug in login.py"))
 
         check("timechain: final verify", tc.verify()[0])
     finally:

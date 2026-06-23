@@ -1,5 +1,36 @@
 # Changelog
 
+## v3.10.0 — 2026-06-23
+
+The deferred adherence levers — make "do the full job" enforceable, not just advised.
+
+### Added
+- **Depth-completing governor (default strict-depth).** An audit is "complete" — and the
+  turn-end governor only disengages — when every block is DEEPLY (content-anchored) reviewed,
+  not merely covered. Shallow `--clean` coverage can no longer make the governor stop nagging.
+  `audit.py open --coverage-only` relaxes it to coverage-completion.
+- **Spot-check challenges (falsifiable proof of reading).** `audit.py challenge` picks
+  already-deep-reviewed blocks at random and demands an exact quote; `audit.py answer` verifies
+  it against the block's real content. A wrong quote records a fabricated-review failure and
+  **blocks the final report** — a model that didn't read block N cannot quote it.
+- **Auto-engaging /goal.** The `UserPromptSubmit` hook detects exhaustive-audit intent
+  ("audit every line", "line-by-line", "no corners", "full audit") and injects the governed
+  workflow automatically, so the model can't quietly downshift to triage and the user need not
+  invoke anything.
+- **Stronger content anchor.** A cited LINE NUMBER alone no longer proves reading (`next` prints
+  the line range in its header, so an in-range line is gameable); a DEEP review must cite a
+  symbol/literal that genuinely appears in the block's content. `challenge` double-verifies.
+- **Per-batch fork reminders.** The `next` scaffold and the auto-/goal guidance prompt running
+  the chronosynaptic security-perspective forks against each batch — a reasoning discipline
+  reminded, not a hard mechanical gate (stated honestly).
+
+### Notes
+- selftest PASS on all five bundles (266 checks; new phase17 covers strict-depth completion,
+  spot-check pass/fail + final-report block, and auto-/goal detection).
+- SkillSpector status unchanged from v3.9.0: these changes add no new findings; the repo's
+  overall flag is the pre-existing v3.8 sandboxed model-authored `exec()` — still an open
+  architectural decision, not introduced here.
+
 ## v3.9.0 — 2026-06-23
 
 Hardening from an external code review — every finding verified and fixed, plus
