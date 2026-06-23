@@ -96,7 +96,7 @@ def _dormant(root):
 # `audit.py open` drops a pointer (chain/.active_audit) naming the task chain
 # under review. While that pointer exists and the audit is < 100% reviewed, a
 # turn that made NO review progress (and sealed nothing) is treated as "stopped
-# early" — the exact Firefox/Bitcoin-Core failure — and blocked (bounded), so
+# early" — the exact stopped-too-early failure this guards against — and blocked (bounded), so
 # the model keeps grinding the unreviewed-block queue instead of writing a
 # premature "Final Report". Pausing (dormancy) or closing the audit disengages.
 # --------------------------------------------------------------------------- #

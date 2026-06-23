@@ -19,7 +19,7 @@ bundle:
 
 ```bash
 python3 timechain.py init --name OpenClaw
-python3 selftest.py
+python3 timechain.py verify
 ```
 
 ## OpenClaw Enforcement

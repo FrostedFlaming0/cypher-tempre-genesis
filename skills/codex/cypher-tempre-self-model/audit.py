@@ -8,10 +8,8 @@ prove the model has *semantically reviewed* every block. So on a "read every
 line / no corners / full audit" task, a model walks the repo (ingest = 100%),
 does a seductive round of high-risk *retrieval* + grep, writes a "Final Report",
 and stops — converting an EXHAUSTIVE audit into a TARGETED one without noticing.
-Field-observed on Firefox (46,866 blocks ingested, a few dozen reviewed) and,
-honestly, on this skill's own Bitcoin Core chain (2,525 files / 8,196 blocks
-ingested, "findings" that were really `X lines, Y defs, Z classes` structural
-metadata — not review).
+The common failure is a chain that shows 100% INGEST coverage with "findings" that
+are really structural metadata (line/def/class counts), not line-by-line review.
 
 THE GOVERNOR. This module separates INGEST coverage from REVIEW coverage and
 drives completion off an unreviewed-block queue:

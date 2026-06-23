@@ -38,11 +38,11 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v3.11.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.11.0.zip) |
-| Codex | [cypher-tempre-codex-skill-v3.11.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.11.0.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v3.11.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.11.0.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v3.11.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.11.0.zip) |
-| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.11.0.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.11.0.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v3.11.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.11.1.zip) |
+| Codex | [cypher-tempre-codex-skill-v3.11.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.11.1.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v3.11.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.11.1.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v3.11.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.11.1.zip) |
+| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.11.1.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.11.1.zip) |
 
 ## Timechain Dashboard
 
@@ -86,11 +86,11 @@ https://github.com/cyberphysicsai/cypher-tempre-genesis/archive/refs/heads/main.
 Use only this folder from the ZIP:
 skills/codex/cypher-tempre-self-model
 
-Copy that folder into my Codex skills directory as cypher-tempre-self-model, then run python3 selftest.py inside it to verify the install. After that, run python3 install_codex_hooks.py inside the installed skill folder so Codex can load the lifecycle hooks from ~/.codex/hooks.json.
+Copy that folder into my Codex skills directory as cypher-tempre-self-model, then run python3 timechain.py verify to confirm the install works. After that, run python3 install_codex_hooks.py inside the installed skill folder so Codex can load the lifecycle hooks from ~/.codex/hooks.json.
 ```
 
 The current Codex bundle is also mirrored in `downloads/` as
-`cypher-tempre-codex-skill-v3.11.0.zip`. After installing hooks, open `/hooks`
+`cypher-tempre-codex-skill-v3.11.1.zip`. After installing hooks, open `/hooks`
 in Codex to review and trust the new command hooks, then restart or start a
 new session.
 
@@ -149,7 +149,7 @@ faculties.
 - Hermes: copy `skills/hermes/cypher-tempre-self-model` into the Hermes skills directory configured by that agent runtime.
 - NanoClaw: copy `skills/nanoclaw/cypher-tempre-self-model` into the NanoClaw skills directory configured by that agent runtime.
 
-Run `python3 selftest.py` inside any bundle to validate the local copy.
+Quick install check: `python3 timechain.py verify` (after you `init` a chain). The full development test suite lives at `tests/selftest.py` in the repository, not in the shipped bundle.
 
 ## Upgrading an existing install (preserve your chain and faculties)
 
@@ -178,8 +178,8 @@ destroys your `chain/`.
 > run `python3 timechain.py verify` and back up my whole skill folder. Then update **only**
 > the code (`*.py`, `SKILL.md`, `VERSION`, `CHANGELOG.md`) from the new bundle — leave
 > `chain/` and `registry/` exactly as they are. Afterward run `python3 timechain.py verify`
-> and `python3 selftest.py` to confirm my chain still passes and the new code works.
+> to confirm my chain still passes and the new code works.
 
 **Manual:** back up the folder, then copy only the `*.py` files + `SKILL.md` + `VERSION` +
 `CHANGELOG.md` from the new bundle over the old ones (leave `chain/` and `registry/`
-alone), and run `python3 timechain.py verify` and `python3 selftest.py`.
+alone), and run `python3 timechain.py verify`.

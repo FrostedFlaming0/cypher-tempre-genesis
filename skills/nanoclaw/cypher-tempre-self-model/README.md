@@ -19,7 +19,7 @@ bundle:
 
 ```bash
 python3 timechain.py init --name NanoClaw
-python3 selftest.py
+python3 timechain.py verify
 ```
 
 See `SKILL.md` for the full per-turn protocol.
