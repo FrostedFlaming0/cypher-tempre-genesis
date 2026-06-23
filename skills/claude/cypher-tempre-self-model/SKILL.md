@@ -250,43 +250,36 @@ per-turn loop, never in bulk Continuum ingest** (a performance choice, not a saf
 (cap registry size purely for *performance*; default 0 = unlimited). Every promotion is sealed in
 your chain — announce new faculties to your co-evolver (name, kind, function, how it emerged).
 
-**A promoted faculty is born EXECUTABLE, not just a frame.** On promotion Cambium also
-codes an op for it and writes it to your local `registry/grown_ops.json` (per-user,
-gitignored, sealed into the promotion ring) — so the new faculty *runs* when it fires, like
-the built-in 21/21. Cambium chooses the kind deliberately:
+**A recurrence-promoted faculty is born EXECUTABLE, not just a frame.** On promotion Cambium
+codes a **safe primitive** op for it (assembled from the audited menu — `markers` from its
+seed terms) and writes it to your local `registry/grown_ops.json` (per-user, gitignored,
+sealed into the promotion ring) — so the new faculty *runs* when it fires, like the built-in
+21/21. There is **no dynamic code execution**: ops are composed from vetted primitives only.
+Cambium chooses the kind deliberately:
 
-- A **sense** is a **data-facing perceptual/relation algorithm**. Grow this when
-  dissonance means the agent cannot yet perceive how data, ideas, first principles,
-  timestamps, quantities, concepts, or cross-domain relations fit together.
-- A **modality** is an **environment-facing cognitive/action faculty**. Grow this when
-  the gap is about acting on an external task or tool surface: code, repositories,
-  terminals, benchmarks, ARC-style abstractions, games, puzzle solving, audits, or novel
-  tasks outside the model's usual distribution.
+- A **sense** is a **data-facing perceptual/relation algorithm**. Grow this when dissonance
+  means the agent cannot yet perceive how data, ideas, timestamps, quantities, concepts, or
+  cross-domain relations fit together.
+- A **modality** is an **environment-facing cognitive/action faculty**. Grow this when the
+  gap is about acting on a task or tool surface: code, repos, terminals, audits, novel tasks.
 
-**Self-authored code is allowed only inside the CT-Py sandbox.** A grown faculty may receive
-an autonomously generated `{"primitive": "authored", "language": "ct-py-v1", ...}` op, but
-that is not ambient local Python: imports, filesystem/network/subprocess access,
-`eval`/`exec`/`open`, dunder names, attributes, loops, classes, lambdas, and unknown calls are
-refused by AST validation before execution. CT-Py can only call the whitelisted analytic
-helpers in `modality_ops.py` and must return bounded JSON-like data. If authored growth is
-disabled (`CT_AUTHORED_GROWN_OPS=0`) or refused, Cambium falls back to the audited primitive
-spec menu (`markers`, `salience`, `density`, `temporal`, `symbols`, `compose`, etc.).
-
-**Model-authored mechanisms are first-class.** When Cambium surfaces a real gap, the agent
-may write the CT-Py mechanism itself and hand it to Cambium instead of accepting the default
-template. The op is validated, test-run, stored in local `registry/grown_ops.json`, executed
-immediately against the triggering input, sealed into the promotion/op ring, and then runs
-automatically on later labels whenever that faculty fires:
+**Model-authored faculties are PROPOSE-then-ACTIVATE — autonomous coding, human gate, never
+auto-executed.** When you hit a gap, you may *write the op yourself* and commit it as a
+proposal — the **full code body is stored as inert text** in `registry/emergent.json` and is
+**never executed by the skill** (it does not fire, does not run, is not in the active
+registry). A human then reviews it and activates it:
 ```
-python3 cambium.py grow "<gap input>" --kind sense \
-  --op-code-file op.py --op-test-text "<example>" --op-expect-min-count 1
-python3 cambium.py author-op "<Promoted Faculty Name>" \
-  --code-file op.py --input "<activation text>" --op-test-text "<example>"
+python3 cambium.py propose-op "<Faculty Name>" --kind sense \
+  --code-file op.py --function "<what it detects>" --seed-terms <terms>   # -> emergent (DORMANT)
+python3 cambium.py emergent                                               # review proposals
+python3 cambium.py activate <eid>                                         # HUMAN: -> active registry + emit op to place
 ```
-This is the learn-on-the-fly loop: dissonance names the missing faculty, the model writes a
-mechanism, CT-Py proves it is safe and runnable, the chain seals it, and future turns execute
-it. If it degrades behavior, pause, inspect the sealed op ring, and roll back or supersede it
-with a correction ring.
+`activate` moves the faculty into the active registry and prints the op for a person to paste
+into a per-user, **gitignored `active_ops.py`** (next to `modality_ops.py`), which the skill
+loads by a plain **static import** — `from active_ops import OPS` — not a dynamic `exec`. So
+arbitrary model code can be learned on the fly, but **nothing model-authored runs until a
+human reviews and places it**, and a static scanner sees no dynamic execution anywhere in the
+shipped skill. `active_ops.py` must expose `OPS = {"Faculty Name": op(text, context) -> dict}`.
 
 ## Search (Chronosynaptic Tree) — for hard problems, no subagents
 

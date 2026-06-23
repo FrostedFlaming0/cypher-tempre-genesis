@@ -19,7 +19,6 @@ These ops do NOT replace the model's reasoning; they perform the mechanical part
 
 Stdlib only. Python 3.8+.
 """
-import ast
 import json
 import re
 from collections import Counter
@@ -376,172 +375,10 @@ _PRIMITIVE_OPS = {
     "numbers": lambda t, c="": {"numbers": numbers(t)},
 }
 
-_AUTHORED_LANGUAGE = "ct-py-v1"
-_AUTHORED_MAX_SOURCE = 4096
-_AUTHORED_MAX_AST_NODES = 220
-_AUTHORED_MAX_CONST = 700
-_AUTHORED_HELPERS = {
-    "top_terms": top_terms,
-    "density": density,
-    "entities": entities,
-    "numbers": numbers,
-    "count_terms": count_terms,
-    "sum_counts": sum_counts,
-    "contains_any": contains_any,
-    "missing_terms": missing_terms,
-    "relation_pairs": relation_pairs_for_terms,
-    "action_affordances": action_affordances,
-    "novelty_score": novelty_score,
-    "domains": domains,
-    "richness": richness,
-}
-_AUTHORED_ALLOWED_NAMES = {"text", "context", "True", "False", "None"} | set(_AUTHORED_HELPERS)
-_AUTHORED_ALLOWED_NODES = (
-    ast.Module, ast.FunctionDef, ast.arguments, ast.arg, ast.Return, ast.Assign,
-    ast.Expr, ast.Name, ast.Load, ast.Store, ast.Constant, ast.Dict, ast.List,
-    ast.Tuple, ast.Set, ast.BoolOp, ast.BinOp, ast.UnaryOp, ast.Compare,
-    ast.If, ast.IfExp, ast.keyword,
-    ast.And, ast.Or, ast.Not, ast.UAdd, ast.USub,
-    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod,
-    ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn,
-    ast.Call,
-)
-_AUTHORED_BANNED_CALLS = {
-    "eval", "exec", "compile", "open", "input", "__import__", "globals", "locals",
-    "vars", "dir", "getattr", "setattr", "delattr", "type", "object",
-}
-
-
-def _sanitize_result(value, depth=0):
-    if depth > 4:
-        return "<depth-limit>"
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    if isinstance(value, str):
-        return value[:500]
-    if isinstance(value, dict):
-        out = {}
-        for i, (k, v) in enumerate(value.items()):
-            if i >= 24:
-                break
-            out[str(k)[:80]] = _sanitize_result(v, depth + 1)
-        return out
-    if isinstance(value, (list, tuple, set)):
-        return [_sanitize_result(v, depth + 1) for v in list(value)[:24]]
-    return str(value)[:200]
-
-
-def _authored_error(message):
-    raise ValueError(f"unsafe authored op: {message}")
-
-
-def _validate_authored_tree(tree):
-    nodes = list(ast.walk(tree))
-    if len(nodes) > _AUTHORED_MAX_AST_NODES:
-        _authored_error("too many AST nodes")
-    for node in nodes:
-        if not isinstance(node, _AUTHORED_ALLOWED_NODES):
-            _authored_error(f"{type(node).__name__} is not allowed")
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and len(node.value) > _AUTHORED_MAX_CONST:
-            _authored_error("string constant too long")
-        if isinstance(node, ast.Name):
-            if node.id.startswith("__") or node.id in _AUTHORED_BANNED_CALLS:
-                _authored_error(f"name {node.id!r} is not allowed")
-        if isinstance(node, ast.Call):
-            if not isinstance(node.func, ast.Name):
-                _authored_error("only direct helper calls are allowed")
-            if node.func.id not in _AUTHORED_HELPERS:
-                _authored_error(f"call {node.func.id!r} is not allowed")
-
-    funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
-    if len(funcs) != 1 or funcs[0].name != "op":
-        _authored_error("spec must define exactly def op(text, context='')")
-    extra = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) or
-                                          (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
-                                           and isinstance(n.value.value, str)))]
-    if extra:
-        _authored_error("module may contain only a docstring and op()")
-    fn = funcs[0]
-    if fn.decorator_list or fn.returns:
-        _authored_error("decorators and annotations are not allowed")
-    args = [a.arg for a in fn.args.args]
-    if args[:2] != ["text", "context"] or len(args) > 2:
-        _authored_error("op args must be text, context")
-
-    assigned = {"text", "context"}
-    for node in ast.walk(fn):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if not isinstance(target, ast.Name) or target.id.startswith("__"):
-                    _authored_error("only simple local assignments are allowed")
-                assigned.add(target.id)
-    allowed = _AUTHORED_ALLOWED_NAMES | assigned
-    for node in ast.walk(fn):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id not in allowed:
-            _authored_error(f"name {node.id!r} is not defined in CT-Py")
-    if not any(isinstance(n, ast.Return) for n in ast.walk(fn)):
-        _authored_error("op must return a value")
-
-
-def _json_contains(value, needle):
-    try:
-        blob = json.dumps(value, ensure_ascii=False, sort_keys=True).lower()
-    except Exception:
-        blob = str(value).lower()
-    return str(needle).lower() in blob
-
-
-def _run_authored_tests(op, tests):
-    for test in (tests or [])[:6]:
-        if not isinstance(test, dict):
-            return False
-        text = str(test.get("text", ""))
-        context = str(test.get("context", ""))
-        try:
-            out = op(text, context)
-        except Exception:
-            return False
-        for key in ("expect_json_contains", "expect_contains"):
-            want = test.get(key)
-            if want and not _json_contains(out, want):
-                return False
-        if "expect_key" in test and isinstance(out, dict) and test["expect_key"] not in out:
-            return False
-        if "expect_min_count" in test:
-            try:
-                if int((out or {}).get("count", 0)) < int(test["expect_min_count"]):
-                    return False
-            except Exception:
-                return False
-    return True
-
-
-def _build_authored_op(spec):
-    code = spec.get("code")
-    if not isinstance(code, str) or not code.strip() or len(code) > _AUTHORED_MAX_SOURCE:
-        return None
-    if spec.get("language", _AUTHORED_LANGUAGE) != _AUTHORED_LANGUAGE:
-        return None
-    try:
-        tree = ast.parse(code, mode="exec")
-        _validate_authored_tree(tree)
-        compiled = compile(tree, "<ct-grown-op>", "exec")
-        env = {"__builtins__": {}}
-        env.update(_AUTHORED_HELPERS)
-        loc = {}
-        exec(compiled, env, loc)
-        fn = loc.get("op")
-        if not callable(fn):
-            return None
-
-        def wrapped(text, context="", _fn=fn):
-            return _sanitize_result(_fn(str(text or ""), str(context or "")))
-
-        if not _run_authored_tests(wrapped, spec.get("tests") or []):
-            return None
-        return wrapped
-    except Exception:
-        return None
+# v3.11: model-authored ops are NO LONGER built or executed by the skill. The agent
+# PROPOSES op code as inert text to emergent.json; a human reviews it and places the
+# approved code into the per-user, gitignored active_ops.py (loaded statically above).
+# So there is no ast.parse/compile/exec of authored strings anywhere in the shipped skill.
 
 
 def _clean_terms(terms, fallback="gap"):
@@ -555,81 +392,25 @@ def _clean_terms(terms, fallback="gap"):
     return out or [fallback]
 
 
-def authored_op_spec(kind, name, code, description="", tests=None):
-    """Wrap model-authored CT-Py as a safe grown-op spec.
-
-    The model writes the mechanism, but execution still goes through build_op():
-    AST validation, whitelisted helpers only, bounded output, and tests before
-    the op can be registered or executed.
-    """
-    k = "modality" if kind == "modality" else "sense"
-    return {
-        "primitive": "authored",
-        "language": _AUTHORED_LANGUAGE,
-        "kind": k,
-        "source": "model-authored",
-        "description": description or f"Model-authored {k} op for {name or 'grown faculty'}",
-        "code": str(code or ""),
-        "tests": list(tests or []),
-    }
-
-
-def autonomous_op_spec(faculty):
-    """Generate the executable op spec Cambium should give a promoted faculty.
-
-    Senses get data-facing perceptual algorithms: detect seed terms, measure
-    relational texture, and expose what is missing. Modalities get environment-
-    facing action/reasoning algorithms: detect action affordances, novelty, and
-    the challenge surface for using tools or solving novel tasks.
-    """
+def render_op_code(faculty):
+    """Render a READABLE Python op body proposing how a grown faculty could compute its
+    feature — stored as INERT text in emergent.json for human review. It is NEVER executed
+    by the skill (no exec/compile anywhere); a human reviews it and, if approved, places it
+    into the per-user active_ops.py. This is the 'code it up, commit to emergent, don't run
+    it' step. The default rendering detects the faculty's seed terms; a model may author a
+    richer body instead and pass it to cambium.propose_op."""
     kind = "modality" if faculty.get("kind") == "modality" else "sense"
     seeds = _clean_terms(faculty.get("seed_terms") or _content(faculty.get("function", ""))[:8],
                          fallback=kind)
     literal = json.dumps(seeds, ensure_ascii=True)
-    if kind == "sense":
-        code = (
-            "def op(text, context=''):\n"
-            f"    terms = {literal}\n"
-            "    hits = count_terms(text, terms)\n"
-            "    context_hits = count_terms(context, terms)\n"
-            "    return {\n"
-            "        'kind': 'sense',\n"
-            "        'orientation': 'data-facing perceptual relation algorithm',\n"
-            "        'terms': terms,\n"
-            "        'hits': hits,\n"
-            "        'context_hits': context_hits,\n"
-            "        'count': sum_counts(hits),\n"
-            "        'relations': relation_pairs(text, terms),\n"
-            "        'missing': missing_terms(text, terms),\n"
-            "        'density': density(text),\n"
-            "    }\n"
-        )
-    else:
-        code = (
-            "def op(text, context=''):\n"
-            f"    terms = {literal}\n"
-            "    hits = count_terms(text, terms)\n"
-            "    return {\n"
-            "        'kind': 'modality',\n"
-            "        'orientation': 'environment-facing cognitive action faculty',\n"
-            "        'terms': terms,\n"
-            "        'hits': hits,\n"
-            "        'count': sum_counts(hits),\n"
-            "        'action_affordances': action_affordances(text, terms),\n"
-            "        'novelty': novelty_score(text, context, terms),\n"
-            "        'challenge_markers': top_terms(text),\n"
-            "        'missing': missing_terms(text, terms),\n"
-            "    }\n"
-        )
-    return {
-        "primitive": "authored",
-        "language": _AUTHORED_LANGUAGE,
-        "kind": kind,
-        "description": f"Autonomously generated {kind} op for {faculty.get('name', 'grown faculty')}",
-        "code": code,
-        "tests": [{"text": " ".join(seeds[:3]), "expect_min_count": 1,
-                   "expect_json_contains": seeds[0]}],
-    }
+    return (
+        "def op(text, context=''):\n"
+        f"    # {kind} op for {faculty.get('name', 'grown faculty')} (proposed; review before activating)\n"
+        f"    import modality_ops as mo\n"
+        f"    terms = {literal}\n"
+        "    hits = mo.hits(mo.re.compile(r'\\b(?:' + '|'.join(mo.re.escape(t) for t in terms) + r')\\b', mo.re.I), text)\n"
+        f"    return {{'kind': '{kind}', 'terms': terms, 'hits': hits['hits'], 'count': hits['count']}}\n"
+    )
 
 
 def _markers_op(terms):
@@ -641,18 +422,20 @@ def _markers_op(terms):
 
 
 def build_op(spec):
-    """Build an executable op from a safe spec. Returns a callable or None.
+    """Build an executable op from a safe spec — assembled ONLY from the fixed audited
+    primitive menu (markers / named primitives / compose). Returns a callable or None.
 
-    Primitive specs assemble from the fixed audited menu. Authored specs execute
-    only after passing the CT-Py AST sandbox above.
+    There is NO dynamic execution of authored code here: the skill never exec/eval/compiles
+    a model-written string (removed in v3.11). Arbitrary model-authored ops are PROPOSED to
+    emergent.json as inert text and only run after a human reviews them and places the code
+    into the per-user, gitignored active_ops.py (loaded statically below). So a static scanner
+    has no dynamic-execution call to flag, and no model code runs without human approval.
     """
     if not isinstance(spec, dict):
         return None
     prim = spec.get("primitive")
     if prim == "markers":
         return _markers_op(spec.get("terms"))
-    if prim == "authored":
-        return _build_authored_op(spec)
     if prim in _PRIMITIVE_OPS:
         return _PRIMITIVE_OPS[prim]
     if prim == "compose":
@@ -709,9 +492,23 @@ def register_grown_op(registry_root, name, spec):
         return False
 
 
+# Per-user, human-placed ops for ACTIVATED arbitrary-code faculties. A PLAIN, STATIC
+# import of an optional local module (NOT a dynamic exec/eval/compile — a static scanner
+# has nothing to flag). active_ops.py is gitignored and never shipped; a human creates it
+# via `cambium activate` after reviewing the proposed code in emergent.json. Absent file ->
+# no active authored ops. Contract: OPS = {"Faculty Name": callable(text, context) -> dict}.
+try:
+    from active_ops import OPS as _ACTIVE_OPS
+    if not isinstance(_ACTIVE_OPS, dict):
+        _ACTIVE_OPS = {}
+except Exception:
+    _ACTIVE_OPS = {}
+
+
 def run_for(name, text, context=""):
-    """Run the executable op for a fired faculty `name`, or None if it has none."""
-    op = OPS.get(name)
+    """Run the executable op for a fired faculty `name`, or None if it has none. Base OPS
+    first, then human-activated arbitrary-code ops from the local active_ops module."""
+    op = OPS.get(name) or _ACTIVE_OPS.get(name)
     if not op:
         return None
     try:

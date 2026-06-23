@@ -1,5 +1,40 @@
 # Changelog
 
+## v3.11.0 — 2026-06-23
+
+Model-authored growth becomes **propose-then-activate** — autonomous coding with a human
+gate, and **no dynamic code execution anywhere in the shipped skill**.
+
+### Removed
+- **The v3.8 sandboxed `exec()` is gone.** `modality_ops` no longer `ast.parse`/`compile`/
+  `exec`s model-authored code (the whole CT-Py sandbox, `_build_authored_op`,
+  `authored_op_spec`, `autonomous_op_spec` and `import ast` are deleted). A static scanner now
+  finds **no dynamic-execution call** in the skill — a new selftest asserts the source has no
+  `exec(`/`eval(`/`compile(` of authored code. `build_op` assembles ops only from the fixed
+  audited primitive menu.
+
+### Added
+- **`cambium propose-op` → emergent (DORMANT).** An agent can sprout and *code* a faculty in
+  real time, committing the **full op body as inert text** to `registry/emergent.json`. It is
+  never executed: it does not fire, does not run via `run_for`, and is not in the active
+  registry — it simply waits, fully coded, for human review.
+- **`cambium activate <eid>` → active registry (HUMAN step).** A person reviews the proposed
+  code in `emergent.json`, then activates it: the faculty moves into the active registry and
+  the op code is emitted for the human to **place into a per-user, gitignored `active_ops.py`**
+  (loaded by a plain *static* import — not a dynamic exec). Nothing model-authored runs until a
+  human approves and places it. This separates the *active* faculties from the *dormant*
+  proposals so scanners never see autonomous execution of generated code.
+- Autonomous (recurrence) growth still gives a promoted faculty a safe **primitive (markers)**
+  op — assembled from the audited menu, no exec.
+
+### Notes
+- Resolves the dynamic-`exec` SkillSpector finding (AST1). Other **pre-existing** findings
+  remain and still read DO_NOT_INSTALL — least-privilege/file-I/O on `cambium.py`, the codex
+  `notify` shell hook, env-var reads, and attack-string/test-pattern false positives in the
+  shipped `selftest.py`. None are dynamic code execution; clearing them is a separate pass.
+- selftest PASS (new phase15: no-exec assertion, propose→dormant, activate→active, active_ops
+  plugin, primitive grown ops).
+
 ## v3.10.0 — 2026-06-23
 
 The deferred adherence levers — make "do the full job" enforceable, not just advised.
