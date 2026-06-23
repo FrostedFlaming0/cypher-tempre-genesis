@@ -23,3 +23,5 @@ dashboard/node_modules/
 
 # Local tooling
 .claude/
+# Per-user human-placed ops for activated arbitrary-code faculties (never shipped).
+**/active_ops.py

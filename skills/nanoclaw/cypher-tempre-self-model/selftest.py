@@ -1523,79 +1523,63 @@ def main():
         check("phase14 audit depth: require_depth passes once every block is deeply reviewed", _okd2)
         _aud3._clear_active(droot)
 
-        # -- phase15: autonomous coded faculties — Cambium grows AND codes a faculty -- #
-        # Safety: authored growth is CT-Py, not ambient local Python. Imports, files,
-        # subprocess-style powers, dunders, attributes, loops/classes, and unknown calls
-        # are rejected before execution; primitive specs still use the audited menu.
-        check("phase15 cambium ops: a non-whitelisted op spec is refused (no code execution)",
-              _mo.build_op({"primitive": "arbitrary_unlisted_primitive", "payload": "ignored"}) is None
-              and _mo.build_op({"primitive": "markers", "terms": []}) is None)
-        check("phase15 cambium ops: unsafe authored code is refused by the CT-Py sandbox",
-              _mo.build_op({"primitive": "authored",
-                            "code": "import os\ndef op(text, context=''):\n    return os.listdir('.')\n"}) is None
-              and _mo.build_op({"primitive": "authored",
-                                "code": "def op(text, context=''):\n    return open('/etc/passwd').read()\n"}) is None)
-        _model_spec = _mo.authored_op_spec(
-            "sense", "Model Authored Probe Sensing",
-            "def op(text, context=''):\n"
-            "    terms = ['probe', 'signal']\n"
-            "    hits = count_terms(text, terms)\n"
-            "    return {'kind': 'sense', 'count': sum_counts(hits), 'hits': hits}\n",
-            tests=[{"text": "probe signal", "expect_min_count": 1, "expect_json_contains": "probe"}],
-        )
-        _model_op = _mo.build_op(_model_spec)
-        check("phase15 cambium ops: model-authored CT-Py specs build and run",
-              _model_op is not None and _model_op("probe signal", "").get("count", 0) >= 1)
-        _sense_spec = _mo.autonomous_op_spec({"kind": "sense", "name": "Waveguide Sensing",
-                                              "seed_terms": ["waveguide", "resonator"]})
-        _mod_spec = _mo.autonomous_op_spec({"kind": "modality", "name": "Waveguide Reasoning",
-                                            "seed_terms": ["waveguide", "resonator"]})
-        _sense_out = _mo.build_op(_sense_spec)("waveguide resonator coupling data", "")
-        _mod_out = _mo.build_op(_mod_spec)("implement a waveguide resonator benchmark tool", "")
-        check("phase15 cambium ops: authored sense and modality ops have distinct orientations",
-              _sense_out.get("kind") == "sense" and "relations" in _sense_out
-              and _mod_out.get("kind") == "modality" and "action_affordances" in _mod_out)
-        _novel = "Photonics waveguide resonator microring lithography metamaterial plasmonics nanofabrication."
+        # -- phase15: model-authored growth is PROPOSE-then-ACTIVATE, never auto-executed (v3.11) -- #
+        # No dynamic execution of authored code anywhere in the shipped skill: build_op only
+        # assembles from the audited primitive menu; arbitrary code is proposed to emergent
+        # (dormant) and only runs after a human places it in the per-user active_ops.py.
+        import pathlib as _pl, re as _re
+        _src = (_pl.Path(SKILL) / "modality_ops.py").read_text() + "\n" + (_pl.Path(SKILL) / "cambium.py").read_text()
+        check("phase15 no-exec: shipped source has no exec/eval/compile of authored code",
+              _re.search(r"(?<![\w.])(?:exec|eval|compile)\s*\(", _src) is None)
+        check("phase15 build_op: authored + unknown specs build to nothing (no dynamic exec)",
+              _mo.build_op({"primitive": "authored", "code": "def op(t,c=''): return {}"}) is None
+              and _mo.build_op({"primitive": "nope"}) is None
+              and _mo.build_op({"primitive": "markers", "terms": ["foo"]}) is not None)
+
+        # autonomous growth still gives a promoted faculty a SAFE primitive (markers) op
+        _novel = "Photonics waveguide resonator microring lithography metamaterial plasmonics."
         _gact, _gname = None, None
         for _ in range(cambium.PROMOTE_AT):
             _gr, _ = cambium.grow(root, _novel, registry_root=root)
             _gact = _gr.get("action")
             if _gact == "promoted":
-                _gname = _gr["faculty"]["name"]      # the faculty just promoted, not some earlier one
+                _gname = _gr["faculty"]["name"]
         _gops = _mo.load_grown_ops(root)
-        check("phase15 cambium ops: promotion registers a LOCAL executable op for the grown faculty",
-              _gact == "promoted" and _gname in _gops)
-        check("phase15 cambium ops: the grown faculty's authored coded op runs and detects its seed terms",
-              bool(_gname) and _gops[_gname]("a microring resonator waveguide on the photonics die").get("count", 0) >= 1)
-        # end-to-end: recall.label fires the grown faculty AND runs its coded op
-        _grec = recall.Recall(root, registry_root=root)
-        _glab = _grec.label("waveguide resonator microring photonics lithography")
+        check("phase15 cambium ops: promotion registers a safe primitive (markers) op that runs",
+              _gact == "promoted" and _gname in _gops
+              and _gops[_gname]("a microring resonator waveguide").get("count", 0) >= 1)
+        _glab = recall.Recall(root, registry_root=root).label("waveguide resonator microring photonics")
         check("phase15 cambium ops: recall.label runs the grown faculty's op into labels.computed",
               isinstance(_glab.get("computed"), dict) and _gname in _glab.get("computed", {}))
 
-        _model_code = (
-            "def op(text, context=''):\n"
-            "    terms = ['cryovolcanic', 'clathrate']\n"
-            "    hits = count_terms(text, terms)\n"
-            "    return {'kind': 'sense', 'count': sum_counts(hits), "
-            "'signals': hits, 'relations': relation_pairs(text, terms)}\n"
-        )
-        _ma = {"code": _model_code, "description": "Model-authored cryovolcanic relation detector",
-               "tests": [{"text": "cryovolcanic clathrate plume",
-                           "expect_min_count": 1, "expect_json_contains": "cryovolcanic"}]}
-        _gr2, _ring2 = cambium.grow(
-            root, "Cryovolcanic clathrate plume spectrograph brinestream",
-            mode="sprout", kind_override="sense", registry_root=root, op_author=_ma)
-        _payload2 = (_ring2 or {}).get("payload", {})
-        _gname2 = (_gr2.get("faculty") or {}).get("name")
-        check("phase15 cambium ops: Cambium accepts model-authored code at growth time",
-              _gr2.get("action") == "promoted" and _payload2.get("op_source") == "model-authored")
-        check("phase15 cambium ops: model-authored growth op executes immediately",
-              ((_payload2.get("op_activation") or {}).get("executed") is True)
-              and ((_payload2.get("op_activation") or {}).get("result") or {}).get("count", 0) >= 1)
-        _glab2 = recall.Recall(root, registry_root=root).label("cryovolcanic clathrate plume")
-        check("phase15 cambium ops: model-authored growth op activates on later labels",
-              isinstance(_glab2.get("computed"), dict) and _gname2 in _glab2.get("computed", {}))
+        # propose_op -> emergent DORMANT: code stored inert, NOT in active registry, op does NOT run
+        _pcode = "def op(text, context=''):\n    return {'count': text.lower().count('cryovolcanic')}\n"
+        _pres, _ = cambium.propose_op(root, "Cryovolcanic Sensing", _pcode, kind="sense",
+                                      function="detect cryovolcanic activity", seed_terms=["cryovolcanic"])
+        _em = json.loads((root / "registry" / "emergent.json").read_text())
+        _prop = next((f for f in _em["faculties"] if f.get("name") == "Cryovolcanic Sensing"), None)
+        _gj0 = root / "registry" / "grown.json"
+        _grown_now = json.loads(_gj0.read_text()) if _gj0.exists() else {}
+        check("phase15 propose_op: coded faculty is DORMANT in emergent — stored inert, not active, not run",
+              _prop is not None and _prop.get("status") == "proposed" and bool(_prop.get("op_code"))
+              and "Cryovolcanic Sensing" not in json.dumps(_grown_now)
+              and _mo.run_for("Cryovolcanic Sensing", "cryovolcanic plume") is None)
+
+        # activate -> HUMAN moves it to the active registry + gets the op code to place (no auto-write)
+        _ares, _ = cambium.activate(root, _pres["eid"])
+        _grown2 = json.loads(_gj0.read_text())
+        check("phase15 activate: human activation moves it to active + emits op code (no auto-write)",
+              _ares["ok"] and "Cryovolcanic Sensing" in json.dumps(_grown2)
+              and bool(_ares.get("op_code")) and not (root / "active_ops.py").exists())
+
+        # active_ops plugin: a human-placed op is run by run_for (simulate the loaded module dict)
+        _saved = dict(_mo._ACTIVE_OPS)
+        try:
+            _mo._ACTIVE_OPS["Cryovolcanic Sensing"] = lambda t, c="": {"count": t.lower().count("cryovolcanic")}
+            check("phase15 active_ops: a human-placed active op is run by run_for",
+                  (_mo.run_for("Cryovolcanic Sensing", "cryovolcanic cryovolcanic") or {}).get("count") == 2)
+        finally:
+            _mo._ACTIVE_OPS.clear(); _mo._ACTIVE_OPS.update(_saved)
 
         # eager growth: the per-turn loop autonomously fills a gap (a sense AND a modality),
         # into the LOCAL (temp) registry — never SKILL. Default PROMOTE_AT=1.

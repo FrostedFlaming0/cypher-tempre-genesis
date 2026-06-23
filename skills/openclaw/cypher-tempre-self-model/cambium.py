@@ -282,23 +282,6 @@ def faculty_poq(gap: dict, function: str) -> dict:
     }
 
 
-def _model_op_spec(kind: str, name: str, author):
-    """Build a model-authored CT-Py spec from the agent-provided author packet.
-
-    This is the missing seam: Cambium detects and names the gap; the attached
-    model can now write the mechanism. The mechanism is still only accepted if
-    modality_ops.build_op() validates and test-runs it.
-    """
-    if not author or not str(author.get("code", "")).strip():
-        return None
-    import modality_ops
-    return modality_ops.authored_op_spec(
-        kind, name, author.get("code", ""),
-        description=author.get("description", ""),
-        tests=author.get("tests") or [],
-    )
-
-
 def _op_activation(spec, text: str, context: str = ""):
     """Execute a just-registered op once against its triggering input.
 
@@ -330,47 +313,78 @@ def _find_grown_faculty(home: Path, selector: str, kind=None):
     return None, None
 
 
-def author_op(root: Path, selector: str, code: str, kind=None, description: str = "",
-              tests=None, registry_root=None, activation_text: str = "",
-              activation_context: str = "", difficulty: int = 0):
-    """Register model-authored CT-Py for an already-grown faculty and seal it.
-
-    Used by agents that want to respond to a Cambium gap by writing a bespoke
-    mechanism themselves. The op is validated, test-run, stored in grown_ops.json,
-    immediately activated, and sealed as a faculty-op ring.
-    """
+def propose_op(root: Path, name: str, code: str, kind: str = "sense", function: str = "",
+               category: str = "knowledge", seed_terms=None, registry_root=None,
+               difficulty: int = 0):
+    """Autonomously COMMIT a coded faculty as a PROPOSAL to emergent.json. The full op code
+    is stored as INERT text and is NEVER executed by the skill (no exec/eval/compile anywhere).
+    A human reviews it in emergent.json and runs `cambium activate` to add it to the active
+    registry and place the code into the per-user active_ops.py. This is real-time learning
+    WITHOUT autonomous execution: a static scanner sees no dynamic execution, and no
+    model-authored code runs until a human approves it."""
     home = registry_home(root, registry_root)
-    fkind, fac = _find_grown_faculty(home, selector, kind=kind)
+    tc = Timechain(root)
+    k = "modality" if kind == "modality" else "sense"
+    data = load_emergent(home)
+    fac = next((f for f in data["faculties"] if f.get("name") == name and f.get("kind") == k), None)
+    if fac:
+        fac["op_code"] = str(code or "")
+        fac["status"] = "proposed"
+    else:
+        fac = {"eid": f"E{len(data['faculties']) + 1}", "kind": k, "name": name,
+               "function": function or f"Proposed {k}: {name}", "category": category,
+               "origin": "model-authored proposal", "parents": [],
+               "seed_terms": list(seed_terms or []), "op_code": str(code or ""),
+               "status": "proposed", "recurrence": 1, "born_at": now_iso(), "promoted_to_id": None}
+        data["faculties"].append(fac)
+    save_emergent(home, data)
+    payload = {"event": "faculty_op_proposed", "eid": fac["eid"], "name": name, "kind": k,
+               "op_code_chars": len(str(code or "")), "status": "proposed",
+               "registry": "registry/emergent.json",
+               "summary": (f"Proposed coded {k} '{name}' to emergent (DORMANT) — full op code stored "
+                           f"inert, NOT executed; awaits human review + `cambium activate`.")}
+    ring = tc.seal("faculty-op-proposed", payload,
+                   poq={"coherence": 215, "relevance": 210, "novelty": 205,
+                        "consistency": 215, "depth": 210, "covenant": 245}, difficulty=difficulty)
+    return {"ok": True, "eid": fac["eid"], "name": name, "kind": k, "status": "proposed"}, ring
+
+
+def activate(root: Path, selector: str, registry_root=None, difficulty: int = 0):
+    """HUMAN step: move a PROPOSED emergent faculty into the ACTIVE registry and return its
+    op code + the active_ops.py snippet to PASTE. Nothing runs autonomously — you run this
+    after reviewing the proposed code in emergent.json, and you place the code yourself into
+    active_ops.py (per-user, gitignored, statically imported)."""
+    home = registry_home(root, registry_root)
+    tc = Timechain(root)
+    data = load_emergent(home)
+    sel = str(selector).strip().lower()
+    fac = next((f for f in data["faculties"]
+                if str(f.get("eid", "")).lower() == sel or str(f.get("name", "")).lower() == sel), None)
     if not fac:
-        return {"ok": False, "reason": f"no promoted grown faculty matched {selector!r}"}, None
-    spec = _model_op_spec(fkind, fac.get("name"),
-                          {"code": code, "description": description, "tests": tests or []})
-    try:
-        import modality_ops
-        if not modality_ops.register_grown_op(home, fac["name"], spec):
-            return {"ok": False, "reason": "CT-Py validator refused the model-authored op"}, None
-    except Exception as exc:
-        return {"ok": False, "reason": short(str(exc), 180)}, None
-    activation = _op_activation(spec, activation_text or fac.get("function", ""),
-                                activation_context or "")
-    grown_ops_path = home / "registry" / "grown_ops.json"
-    payload = {
-        "event": "faculty_op_authored",
-        "name": fac["name"],
-        "kind": fkind,
-        "selector": selector,
-        "op_source": "model-authored",
-        "op_spec": spec,
-        "op_activation": activation,
-        "registry": "registry/grown_ops.json",
-    }
-    ring = Timechain(root).seal(
-        "faculty-op", payload, files=[str(grown_ops_path)] if grown_ops_path.exists() else [],
-        poq={"coherence": 220, "relevance": 220, "novelty": 210,
-             "consistency": 220, "depth": 225, "covenant": 245},
-        difficulty=difficulty,
-    )
-    return {"ok": True, "faculty": fac, "kind": fkind, "activation": activation}, ring
+        return {"ok": False, "reason": f"no emergent proposal matched {selector!r}"}, None
+    key = "modalities" if fac["kind"] == "modality" else "senses"
+    base = json.loads((home / "registry" / f"{key}.json").read_text()).get(key, [])
+    grown = load_grown(home)
+    existing_ids = [it["id"] for it in base] + [it["id"] for it in grown.get(key, [])]
+    new_id = (max(existing_ids) if existing_ids else 0) + 1
+    grown.setdefault(key, []).append({
+        "id": new_id, "name": fac["name"],
+        "origin": f"activated from emergent {fac['eid']} (human-approved)",
+        "function": fac.get("function", ""), "category": fac.get("category", "knowledge")})
+    save_grown(home, grown)
+    fac["status"] = "activated"
+    fac["promoted_to_id"] = new_id
+    save_emergent(home, data)
+    grown_path = home / "registry" / "grown.json"
+    payload = {"event": "faculty_activated", "eid": fac["eid"], "name": fac["name"],
+               "kind": fac["kind"], "promoted_to_id": new_id, "registry": "registry/grown.json",
+               "summary": (f"Human-activated '{fac['name']}' ({fac['kind']}) from emergent into the active "
+                           f"registry; operator places the op code in active_ops.py.")}
+    ring = tc.seal("faculty-activated", payload, files=[str(grown_path)],
+                   poq={"coherence": 215, "relevance": 210, "novelty": 190,
+                        "consistency": 220, "depth": 210, "covenant": 250}, difficulty=difficulty)
+    return {"ok": True, "name": fac["name"], "kind": fac["kind"], "promoted_to_id": new_id,
+            "op_code": fac.get("op_code", "")}, ring
 
 
 # --------------------------------------------------------------------------- #
@@ -403,28 +417,23 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
     # added to the user's LOCAL setup (registry/grown_ops.json). First try an authored
     # CT-Py op (AST-sandboxed, no imports/io/network/subprocess/eval/exec); fall back to
     # the older audited primitive marker op if authored growth is disabled or refused.
+    # v3.11: a promoted faculty gets a SAFE primitive-composed op (markers from its seed
+    # terms) — assembled from the audited menu, NO exec. Arbitrary model-authored CODE is
+    # NOT executed here; it goes through propose_op -> emergent (dormant) -> human activate.
     op_spec = None
     op_source = None
     op_activation = None
     try:
         import modality_ops
         seeds = e.get("seed_terms") or [w for w in tokens(e.get("function", "")) if len(w) >= 4][:6]
-        specs = []
-        if op_spec_override:
-            specs.append(("model-authored", op_spec_override))
-        if AUTHORED_OPS:
-            specs.append(("autonomous-template", modality_ops.autonomous_op_spec(e)))
-        specs.append(("primitive-fallback", {"primitive": "markers", "terms": seeds}))
-        for source, spec in specs:
-            if not modality_ops.register_grown_op(root, e["name"], spec):
-                continue
+        spec = op_spec_override or {"primitive": "markers", "terms": seeds}
+        if modality_ops.register_grown_op(root, e["name"], spec):
             op_spec = spec
-            op_source = source
+            op_source = "model-authored" if op_spec_override else "primitive"
             e["op_spec"] = spec
-            e["op_source"] = source
+            e["op_source"] = op_source
             op_activation = _op_activation(
                 spec, activation_text or " ".join(seeds), activation_context or "")
-            break
     except Exception:
         pass
 
@@ -447,7 +456,7 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
 
 def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
          kind_override=None, difficulty: int = 0, registry_root=None, force=False,
-         gap_override=None, op_author=None):
+         gap_override=None):
     tc = Timechain(root)
     home = registry_home(root, registry_root)   # faculties live here; rings seal to root
     corpus = load_corpus(home)
@@ -474,7 +483,6 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
             {"ts": now_iso(), "dissonance": gap["dissonance"], "context": short(input_text, 120)})
         if existing["recurrence"] >= PROMOTE_AT and existing["status"] == "emergent":
             ring = promote(home, tc, existing, difficulty=difficulty,
-                           op_spec_override=_model_op_spec(existing["kind"], existing["name"], op_author),
                            activation_text=input_text, activation_context=context or "")
             if ring is not None:               # None == soft cap reached; stay emergent
                 existing["status"] = "promoted"
@@ -509,7 +517,6 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
     # just-born faculty into the canonical registry immediately and code it.
     if fac["recurrence"] >= PROMOTE_AT and fac["status"] == "emergent":
         promo = promote(home, tc, fac, difficulty=difficulty,
-                        op_spec_override=_model_op_spec(fac["kind"], fac["name"], op_author),
                         activation_text=input_text, activation_context=context or "")
         if promo is not None:
             fac["status"] = "promoted"
@@ -581,45 +588,10 @@ def cmd_sense(args):
     print(f"  verdict: {'GAP — growth would fire' if gap['dissonance'] > DISSONANCE_FLOOR else 'covered — no growth needed'}")
 
 
-def _tests_from_args(args):
-    tests = []
-    texts = list(getattr(args, "op_test_text", None) or getattr(args, "test_text", None) or [])
-    if not texts and (getattr(args, "op_expect_key", None) or getattr(args, "op_expect_contains", None) or
-                      getattr(args, "op_expect_min_count", None) is not None):
-        texts = [getattr(args, "input", "") or "test"]
-    for text in texts[:6]:
-        item = {"text": text}
-        context = getattr(args, "context", None)
-        if context:
-            item["context"] = context
-        key = getattr(args, "op_expect_key", None)
-        contains = getattr(args, "op_expect_contains", None)
-        min_count = getattr(args, "op_expect_min_count", None)
-        if key:
-            item["expect_key"] = key
-        if contains:
-            item["expect_json_contains"] = contains
-        if min_count is not None:
-            item["expect_min_count"] = min_count
-        tests.append(item)
-    return tests
-
-
-def _op_author_from_args(args):
-    code_file = getattr(args, "op_code_file", None) or getattr(args, "code_file", None)
-    if not code_file:
-        return None
-    return {
-        "code": Path(code_file).read_text(),
-        "description": getattr(args, "op_description", None) or getattr(args, "description", "") or "",
-        "tests": _tests_from_args(args),
-    }
-
-
 def cmd_grow(args):
     result, ring = grow(args.root, args.input, args.context or "", mode=args.mode,
                         kind_override=args.kind, difficulty=args.difficulty,
-                        registry_root=args.registry_root, op_author=_op_author_from_args(args))
+                        registry_root=args.registry_root)
     _print_gap(result["gap"])
     if not result["grew"]:
         print(f"  -> {result['reason']}")
@@ -632,25 +604,35 @@ def cmd_grow(args):
         print(f"  op source: {payload['op_source']}  executed: {bool(act.get('executed'))}")
 
 
-def cmd_author_op(args):
-    author = _op_author_from_args(args)
-    if not author:
-        print("  -> --code-file is required")
+def cmd_propose_op(args):
+    code = Path(args.code_file).read_text() if args.code_file else (args.code or "")
+    if not str(code).strip():
+        print("  -> provide --code-file or --code (the op body to propose)")
         return
-    result, ring = author_op(args.root, args.faculty, author["code"], kind=args.kind,
-                             description=author.get("description", ""),
-                             tests=author.get("tests") or [], registry_root=args.registry_root,
-                             activation_text=args.input or "",
-                             activation_context=args.context or "",
-                             difficulty=args.difficulty)
+    result, ring = propose_op(args.root, args.name, code, kind=args.kind,
+                              function=args.function or "", category=args.category,
+                              seed_terms=args.seed_terms or [],
+                              registry_root=args.registry_root, difficulty=args.difficulty)
+    print("\n  -- PROPOSED coded faculty -> emergent (DORMANT, not executed) --")
+    print(f"    eid:    {result['eid']}    name: {result['name']} ({result['kind']})")
+    print(f"    status: {result['status']}  (review registry/emergent.json, then `cambium activate {result['eid']}`)")
+    print(f"\n  sealed {ring['ring_type']} Ring {ring['index']}  {ring['ring_hash'][:16]}..")
+
+
+def cmd_activate(args):
+    result, ring = activate(args.root, args.selector, registry_root=args.registry_root,
+                            difficulty=args.difficulty)
     if not result.get("ok"):
-        print(f"  -> refused: {result.get('reason')}")
+        print(f"  -> {result.get('reason')}")
         return
-    fac = result["faculty"]
-    print("\n  -- co-evolver report: MODEL-AUTHORED OP ACTIVATED --")
-    print(f"    name:      {fac['name']}")
-    print(f"    kind:      {result['kind']}")
-    print(f"    executed:  {bool((result.get('activation') or {}).get('executed'))}")
+    print(f"\n  -- ACTIVATED '{result['name']}' ({result['kind']}) -> active registry id {result['promoted_to_id']} --")
+    code = result.get("op_code", "")
+    if code.strip():
+        print("\n  To finish: review this op and PASTE it into your per-user active_ops.py")
+        print("  (same dir as modality_ops.py, gitignored, statically imported). The module must")
+        print(f"  expose OPS = {{\"{result['name']}\": <callable>}}. Proposed op body:\n")
+        print("  " + "\n  ".join(code.splitlines()))
+        print(f"\n  # then, in active_ops.py:  OPS = {{ ..., \"{result['name']}\": op }}")
     print(f"\n  sealed {ring['ring_type']} Ring {ring['index']}  {ring['ring_hash'][:16]}..")
 
 
@@ -683,33 +665,28 @@ def build_parser():
     pg.add_argument("input")
     pg.add_argument("--mode", choices=["auto", "fuse", "sprout"], default="auto")
     pg.add_argument("--kind", choices=["sense", "modality"], default=None)
-    pg.add_argument("--op-code-file", type=Path, default=None,
-                    help="model-authored CT-Py op to attach if this growth promotes")
-    pg.add_argument("--op-description", default="")
-    pg.add_argument("--op-test-text", action="append", default=[],
-                    help="test input the CT-Py op must pass before registration")
-    pg.add_argument("--op-expect-key", default=None)
-    pg.add_argument("--op-expect-contains", default=None)
-    pg.add_argument("--op-expect-min-count", type=int, default=None)
     pg.add_argument("--difficulty", type=int, default=0)
     pg.set_defaults(func=cmd_grow)
 
-    pa = sub.add_parser("author-op", parents=[common],
-                        help="register and immediately activate model-authored CT-Py for a promoted faculty")
-    pa.add_argument("faculty", help="grown faculty name or id")
-    pa.add_argument("--kind", choices=["sense", "modality"], default=None)
-    pa.add_argument("--code-file", type=Path, required=True)
-    pa.add_argument("--description", default="")
-    pa.add_argument("--input", default="", help="activation text to run the op against immediately")
-    pa.add_argument("--op-test-text", dest="test_text", action="append", default=[],
-                    help="test input the CT-Py op must pass before registration")
-    pa.add_argument("--op-expect-key", default=None)
-    pa.add_argument("--op-expect-contains", default=None)
-    pa.add_argument("--op-expect-min-count", type=int, default=None)
-    pa.add_argument("--difficulty", type=int, default=0)
-    pa.set_defaults(func=cmd_author_op)
+    pp = sub.add_parser("propose-op", parents=[common],
+                        help="commit a model-AUTHORED coded faculty to emergent (DORMANT, never executed)")
+    pp.add_argument("name", help="faculty name for the proposal")
+    pp.add_argument("--kind", choices=["sense", "modality"], default="sense")
+    pp.add_argument("--code-file", type=Path, default=None, help="file with the op body to propose")
+    pp.add_argument("--code", default=None, help="op body inline (alternative to --code-file)")
+    pp.add_argument("--function", default="", help="one-line description of what the faculty does")
+    pp.add_argument("--category", default="knowledge")
+    pp.add_argument("--seed-terms", nargs="*", default=[])
+    pp.add_argument("--difficulty", type=int, default=0)
+    pp.set_defaults(func=cmd_propose_op)
 
-    pe = sub.add_parser("emergent", parents=[common], help="list the Dream Cache of emergent faculties")
+    pac = sub.add_parser("activate", parents=[common],
+                         help="HUMAN: move a proposed emergent faculty into the active registry + emit its op to place")
+    pac.add_argument("selector", help="emergent eid or name to activate")
+    pac.add_argument("--difficulty", type=int, default=0)
+    pac.set_defaults(func=cmd_activate)
+
+    pe = sub.add_parser("emergent", parents=[common], help="list the Dream Cache of emergent faculties (proposals)")
     pe.set_defaults(func=cmd_emergent)
     return p
 
