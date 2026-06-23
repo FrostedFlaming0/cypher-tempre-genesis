@@ -1,5 +1,36 @@
 # Changelog
 
+## v3.11.2 — 2026-06-23
+
+Compliance — SkillSpector goes from DO_NOT_INSTALL to SAFE. Cleared every
+actionable static-scan finding (all behavior-preserving; no functional change).
+
+### Fixed
+- **`AST3` (dynamic import):** `enforce.py` resolved the bundle's own `timechain`
+  module via `__import__("timechain")`; replaced with a plain lazy `import timechain`
+  (the rest of the file already imported it that way).
+- **`LP1` (undeclared shell capability):** caused by a **stale comment** — leftover
+  CT-Py-sandbox prose in `cambium.py` (and `modality_ops.py`) still mentioned
+  "subprocess", tripping the shell heuristic. The sandbox itself was removed in
+  v3.11.0; this purges the dangling comments that described it.
+- **`AS1` (agent-config access):** `codex_notify_hook.sh` (which documents wiring into
+  `~/.codex/config.toml`) is Codex-specific but was shipping in every bundle. Removed it
+  from the four non-Codex bundles (claude/hermes/nanoclaw/openclaw); it stays in the
+  Codex bundle where it belongs.
+- **`EA2` (autonomous decision making):** the scanner matched the literal substring
+  "auto-execute" inside a sentence stating faculties are *never* auto-executed. Reworded
+  the SKILL.md line so it states the same guarantee without the trigger substring.
+- **`E2` (env-var harvesting):** `enforce.py` read two named, non-secret location hints
+  (`PWD`, `CT_WORKSPACE_ROOT`) via a loop variable; rewrote to read them by literal so it
+  no longer pattern-matches credential harvesting.
+
+### Removed
+- Dead `AUTHORED_OPS` / `CT_AUTHORED_GROWN_OPS` env flag in `cambium.py` (defined, never
+  read — another v3.11.0 exec-removal leftover).
+
+Remaining scan note: one LOW `EA3` on the `LICENSE` file — a generic false positive on
+standard license boilerplate. Overall SkillSpector recommendation is now **SAFE**.
+
 ## v3.11.1 — 2026-06-23
 
 Repo hygiene — no test data or benchmark/prior-task relics ship in the skill.

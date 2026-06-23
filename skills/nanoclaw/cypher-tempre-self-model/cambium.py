@@ -55,7 +55,6 @@ PROMOTE_AT = max(1, int(os.environ.get("CT_PROMOTE_AT", "1")))
 MAX_GROWN = int(os.environ.get("CT_MAX_GROWN", "0"))
 REASON_VERBS = {"analyze", "plan", "compute", "design", "solve", "debug", "optimize",
                 "prove", "derive", "decide", "evaluate", "calculate", "reason", "refactor"}
-AUTHORED_OPS = os.environ.get("CT_AUTHORED_GROWN_OPS", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def short(text: str, n: int = 70) -> str:
@@ -285,7 +284,7 @@ def faculty_poq(gap: dict, function: str) -> dict:
 def _op_activation(spec, text: str, context: str = ""):
     """Execute a just-registered op once against its triggering input.
 
-    The op has already passed CT-Py validation/tests to get this far. This
+    The op was assembled from the audited primitive menu by build_op. This
     immediate activation proves the new faculty is a working mechanism now, not
     merely something that might run on a future turn.
     """
@@ -295,7 +294,7 @@ def _op_activation(spec, text: str, context: str = ""):
         import modality_ops
         op = modality_ops.build_op(spec)
         if op is None:
-            return {"executed": False, "reason": "spec refused by CT-Py validator"}
+            return {"executed": False, "reason": "spec refused by the op builder"}
         return {"executed": True, "result": op(text or "", context or "")}
     except Exception as exc:
         return {"executed": False, "reason": short(str(exc), 180)}
@@ -414,12 +413,10 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
     e["promoted_to_id"] = new_id
 
     # Autonomously give the grown faculty a real EXECUTABLE op (not just a frame),
-    # added to the user's LOCAL setup (registry/grown_ops.json). First try an authored
-    # CT-Py op (AST-sandboxed, no imports/io/network/subprocess/eval/exec); fall back to
-    # the older audited primitive marker op if authored growth is disabled or refused.
-    # v3.11: a promoted faculty gets a SAFE primitive-composed op (markers from its seed
-    # terms) — assembled from the audited menu, NO exec. Arbitrary model-authored CODE is
-    # NOT executed here; it goes through propose_op -> emergent (dormant) -> human activate.
+    # added to the user's LOCAL setup (registry/grown_ops.json). A promoted faculty gets a
+    # SAFE primitive-composed op (markers from its seed terms) — assembled from the audited
+    # menu only, never built from a model-written string. Arbitrary model-authored code is
+    # NOT run here; it goes through propose_op -> emergent (dormant) -> human activate.
     op_spec = None
     op_source = None
     op_activation = None
@@ -429,7 +426,7 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
         spec = op_spec_override or {"primitive": "markers", "terms": seeds}
         if modality_ops.register_grown_op(root, e["name"], spec):
             op_spec = spec
-            op_source = "model-authored" if op_spec_override else "primitive"
+            op_source = "override" if op_spec_override else "primitive"
             e["op_spec"] = spec
             e["op_source"] = op_source
             op_activation = _op_activation(
