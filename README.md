@@ -35,11 +35,11 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v3.8.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.8.2.zip) |
-| Codex | [cypher-tempre-codex-skill-v3.8.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.8.2.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v3.8.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.8.2.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v3.8.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.8.2.zip) |
-| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.8.2.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.8.2.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v3.8.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.8.3.zip) |
+| Codex | [cypher-tempre-codex-skill-v3.8.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.8.3.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v3.8.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.8.3.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v3.8.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.8.3.zip) |
+| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.8.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.8.3.zip) |
 
 ## Timechain Dashboard
 
@@ -87,7 +87,7 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 The current Codex bundle is also mirrored in `downloads/` as
-`cypher-tempre-codex-skill-v3.8.2.zip`. After installing hooks, open `/hooks`
+`cypher-tempre-codex-skill-v3.8.3.zip`. After installing hooks, open `/hooks`
 in Codex to review and trust the new command hooks, then restart or start a
 new session.
 
