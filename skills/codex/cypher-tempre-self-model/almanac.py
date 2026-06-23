@@ -138,7 +138,7 @@ def find_in_text(text, asked_on):
     """Scan free text (a question) for EVERY resolvable relative expression.
     Returns [{'expr': matched phrase, 'from': iso, 'to': iso}, …] in match order.
     A phrase preceded by a BOUND word ('before today', 'since last week') names
-    a limit, not a target window — skipped (benchmark-measured false positive:
+    a limit, not a target window — skipped (a known false positive:
     'airlines I flew before today' must not collapse to the asking day)."""
     anchor = parse_stamp(asked_on)
     if anchor is None or not text:
@@ -164,7 +164,7 @@ def find_in_text(text, asked_on):
 
 def days_between(a, b):
     """Inclusive-aware interval: returns (delta, delta_inclusive) | None.
-    The benchmark convention accepts both 'N days' and 'N+1 (including the
+    Date-arithmetic convention accepts both 'N days' and 'N+1 (including the
     last day)' — report both, let the model phrase it."""
     da, db = parse_stamp(a), parse_stamp(b)
     if da is None or db is None:

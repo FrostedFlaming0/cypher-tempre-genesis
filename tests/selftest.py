@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Self-test — exercise all thirteen mechanisms end-to-end on a throwaway chain and assert
-the core invariants (incl. telemetry capture, embedder fingerprints, and the bench
-baseline added in Phase A of the learning membrane). Run from the skill directory:
-python3 selftest.py    Exit 0 = all green. Stdlib only.
+Self-test — exercise all mechanisms end-to-end on a throwaway chain and assert the core
+invariants. This is a REPOSITORY development/CI tool; it is intentionally NOT shipped inside
+the skill bundles (the bundles carry no test data). It tests the canonical `claude` bundle;
+the other runtime bundles share identical engine code. Run from the repo root:
+    python3 tests/selftest.py        Exit 0 = all green. Stdlib only.
 """
 
 from __future__ import annotations
@@ -16,9 +17,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The canonical bundle under test (engine code is identical across the five runtimes).
+SKILL = Path(__file__).resolve().parent.parent / "skills" / "claude" / "cypher-tempre-self-model"
+sys.path.insert(0, str(SKILL))
+
 import timechain, poq, cambium, chronosynaptic, continuum, recall, consensus, immune, embed, hippocampus, dormancy, telemetry, bench, policy, learner, faculties, guard, replay, lens, dream, extractor, task
 
-SKILL = Path(__file__).resolve().parent
 _ok = True
 
 

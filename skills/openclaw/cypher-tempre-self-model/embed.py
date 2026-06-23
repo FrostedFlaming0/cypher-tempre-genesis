@@ -107,8 +107,8 @@ class _STEmbedder:
     def __init__(self, model="all-MiniLM-L6-v2"):
         from sentence_transformers import SentenceTransformer
         self.m, self.model = SentenceTransformer(model), model
-        # window-matched chunking (V4 P4): text past the model's input window is
-        # silently invisible to the vector (benchmark-measured: 12 recall points)
+        # window-matched chunking: text past the model's input window is
+        # silently invisible to the vector (a measured recall gap)
         self.window_chars = int(getattr(self.m, "max_seq_length", 256) or 256) * 4
 
     @property

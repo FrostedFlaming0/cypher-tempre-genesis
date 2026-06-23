@@ -21,7 +21,7 @@ several patch releases. The zips are built **once** and used for **both**.
 3. **Sync the live installs** you maintain (code only — never touch their `chain/`):
    `~/.claude/skills/...`, `~/.codex/skills/...`, `~/.openclaw/workspace/skills/...`.
 
-4. **Selftest all five bundles** — `python3 selftest.py` in each must print `PASS`.
+4. **Run the test suite** — `python3 tests/selftest.py` from the repo root must print `PASS` (it tests the canonical `claude` bundle; engine code is identical across the five). The suite is NOT shipped in the bundles.
 
 5. **SkillSpector all five** — each must report **SAFE** (only the MIT-`LICENSE`
    "NOT LIMITED TO" EA3 false-positive is acceptable).

@@ -19,7 +19,7 @@ bundle:
 
 ```bash
 python3 timechain.py init --name Hermes
-python3 selftest.py
+python3 timechain.py verify
 ```
 
 ## Hermes Enforcement

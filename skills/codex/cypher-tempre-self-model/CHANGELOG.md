@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.11.1 — 2026-06-23
+
+Repo hygiene — no test data or benchmark/prior-task relics ship in the skill.
+
+### Changed
+- **The test suite no longer ships in the skill bundles.** `selftest.py` moved to a
+  repository-level `tests/selftest.py` (it tests the canonical `claude` bundle; engine code is
+  identical across the five runtimes). The shipped bundles now carry **no test data** — the
+  attack-string / injection fixtures that used to live in the bundled selftest (which static
+  scanners flagged) are gone from what users receive. Quick install check is now
+  `python3 timechain.py verify`; the full suite runs from the repo root via `python3 tests/selftest.py`.
+- **Genericized benchmark / prior-task prose** in source comments and docstrings — removed
+  references to specific prior runs (a browser tree, a coin's source tree, specific block/file
+  counts) and "benchmark-measured/lesson/convention/harness" phrasing from `audit.py`,
+  `enforce.py`, `continuum.py`, `recall.py`, `almanac.py`, `embed.py`. Benchmarks belong in
+  separate announcements, not baked into the skill. No behavior change.
+- README / RELEASING / bundle READMEs updated to match.
+
 ## v3.11.0 — 2026-06-23
 
 Model-authored growth becomes **propose-then-activate** — autonomous coding with a human

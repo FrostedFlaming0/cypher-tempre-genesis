@@ -1277,7 +1277,7 @@ class Recall:
         """Update lineage (V4 P3): every mention of ONE entity, in time order,
         each row carrying its MENTION sentences and any values found in them —
         because "what is X now?" and "what was X before?" are the same question
-        read at different rows of one table (benchmark-measured: knowledge-update
+        read at different rows of one table (a common failure mode: knowledge-update
         misses picked the wrong mention, or answered the current value when asked
         for the previous). Latest-wins is read OFF the table: CURRENT = the last
         dated row, PREVIOUS = the row before it. Undated mentions are listed
@@ -1395,7 +1395,7 @@ class Recall:
         """Mechanical fallback for entity decomposition — named entities first,
         then question-word-filtered keywords. YOU (the model) override this by
         passing explicit entities; the heuristic exists so headless callers get
-        something sane (benchmark lesson: 'how many' is not an entity)."""
+        something sane (lesson: 'how many' is not an entity)."""
         ents = entities(question)
         if ents:
             return ents[:cap]
@@ -1428,8 +1428,8 @@ class Recall:
         return shapes
 
     def _rank_groups(self, query, context="", embed=False):
-        """Deterministic group ranking by best-block relevance — the benchmark
-        harness's proven packaging path. No appetite, no relative cut: evidence
+        """Deterministic group ranking by best-block relevance — the proven
+        packaging path. No appetite, no relative cut: evidence
         assembly wants the top groups, period (appetite is for conversation)."""
         if embed and self.embedder is None:
             self.embedder = embmod.get_embedder("hashing")

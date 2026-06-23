@@ -328,10 +328,9 @@ class Continuum:
         return self._labeler.label(content)
 
     def _apply_window_cap(self):
-        """Window-matched chunking (V4 P4): a block longer than the active
+        """Window-matched chunking: a block longer than the active
         embedder's input window is silently half-blind to retrieval — the model
-        truncates, the vector never sees the tail (benchmark-measured: 12 recall
-        points between window-matched and oversized chunks). When self-embedding
+        truncates, the vector never sees the tail. When self-embedding
         is on, cap the data-height band to the embedder's window. Also replaces
         a provider STRING with the built embedder object so the labeler reuses
         it (no double model load)."""

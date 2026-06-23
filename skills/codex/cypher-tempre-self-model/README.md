@@ -20,7 +20,7 @@ inside the copied bundle:
 
 ```bash
 python3 timechain.py init --name Codex
-python3 selftest.py
+python3 timechain.py verify
 ```
 
 Enable Codex lifecycle hooks for the installed skill:
@@ -47,7 +47,7 @@ If the CLI reports a Stop hook or invalid JSON issue:
 
 ```bash
 cd ~/.codex/skills/cypher-tempre-self-model
-python3 selftest.py
+python3 timechain.py verify
 python3 install_codex_hooks.py
 ```
 
@@ -95,7 +95,7 @@ https://github.com/cyberphysicsai/cypher-tempre-genesis/archive/refs/heads/main.
 Use only this folder from the ZIP:
 skills/codex/cypher-tempre-self-model
 
-Copy that folder into my Codex skills directory as cypher-tempre-self-model, then run python3 selftest.py inside it to verify the install.
+Copy that folder into my Codex skills directory as cypher-tempre-self-model, then run python3 timechain.py verify inside it to verify the install.
 ```
 
 Then ask Codex:
