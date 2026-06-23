@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.8.3 — 2026-06-23
+
+Anti-skipping guards + structural immune analysis.
+
+### Added
+- Structural immune analysis in `immune.py`: 22 regex patterns across 6 injection
+  categories (override_negation, role_hijack, prompt_exfiltration, instruction_injection,
+  constraint_removal, obfuscation_execution). Layered on top of existing covenant
+  blocklist and scar matching — purely additive, existing `screen()` behavior unchanged.
+- `--allow-shallow` flag on `audit.py report` for explicit acknowledgment of incomplete
+  reading when shallow reviews are acceptable.
+- Depth ratio display in audit reports: "X% deep (target: 100% for line-by-line audit)".
+- `batch_size` field in sealed audit_review ring data for forensic analysis.
+
+### Fixed
+- **Gap 1 — `--clean` batch-skipping prevention**: `MAX_CLEAN_BATCH=1` prevents
+  recording more than 1 block as `--clean` per call. `MAX_FINDING_BATCH=5` limits
+  finding batches. `MIN_DEEP_FINDING_LEN=60` rejects thin findings like "mirrors async
+  version" or "looks fine" — the exact pattern that let models skip reading ~100,000
+  lines while still getting a FINAL report.
+- **Gap 2 — Governor requires deep progress**: `enforce.py` now tracks `deep_reviews`
+  at turn start/end and blocks turns where the cursor moved but zero deep reviews were
+  added. Previously a model could batch-record 50 blocks as `--clean` and the governor
+  counted cursor movement as progress.
+- **Gap 3 — `report --final` requires depth by default**: A 100%-coverage audit with
+  shallow `--clean` reviews now gets INTERIM, not FINAL. The model must re-review each
+  shallow block with a cited, specific finding before the report upgrades to FINAL.
+
 ## v3.8.2 — 2026-06-19
 
 Model-authored Cambium mechanisms.
