@@ -30,12 +30,96 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
 
 from timechain import Timechain
 from poq import PoQGate, tokens, score_covenant
+
+# --------------------------------------------------------------------------- #
+# Structural injection patterns
+# --------------------------------------------------------------------------- #
+# Regex-based detection of prompt-injection / jailbreak structural patterns.
+# Layered ON TOP of the existing covenant keyword blocklist and scar matching.
+# Catches adversarial prompts that avoid blocklist vocabulary but use known
+# injection scaffolding (override directives, role-hijacking, instruction
+# negation, system-prompt exfiltration attempts).
+
+_INJECTION_PATTERNS = [
+    # Override / negation of prior instructions
+    re.compile(r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?|directives?)", re.I),
+    re.compile(r"disregard\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)", re.I),
+    re.compile(r"forget\s+(?:your|all|previous)\s+(?:instructions?|rules?|guidelines?|prompt)", re.I),
+    re.compile(r"override\s+(?:your|all|the)\s+(?:system|safety|policy)\s+(?:prompt|instructions?|rules?)", re.I),
+    re.compile(r"do\s+not\s+follow\s+(?:your|the|any)\s+(?:system|safety|policy)\s+(?:prompt|instructions?|rules?)", re.I),
+
+    # Role-hijacking / identity replacement
+    re.compile(r"you\s+are\s+now\s+(?:a|an)\s+", re.I),
+    re.compile(r"act\s+as\s+(?:if\s+you\s+(?:are|were)\s+|a\s+|an\s+)", re.I),
+    re.compile(r"pretend\s+(?:you\s+(?:are|were)|to\s+be)\s+", re.I),
+    re.compile(r"from\s+now\s+on\s+(?:you\s+)?(?:will|are|act)", re.I),
+    re.compile(r"new\s+(?:role|persona|identity|instructions?)\s*:", re.I),
+
+    # System-prompt exfiltration / reflection requests
+    re.compile(r"(?:show|reveal|display|print|repeat|output|give)\s+(?:me\s+)?(?:your|the)\s+(?:system\s+)?(?:prompt|instructions?|rules?|directives?)", re.I),
+    re.compile(r"what\s+(?:are|is)\s+your\s+(?:system\s+)?(?:prompt|instructions?|rules?|directives?)", re.I),
+    re.compile(r"(?:what|which)\s+(?:model|ai|llm)\s+(?:are\s+you|do\s+you\s+use)", re.I),
+    re.compile(r"repeat\s+(?:everything|all)\s+(?:above|before|prior)", re.I),
+
+    # Instruction injection via framing
+    re.compile(r"\[\s*(?:system|admin|developer|root|override)\s*\]", re.I),
+    re.compile(r"<\s*(?:system|admin|developer|root|override|imagine)\s*>", re.I),
+    re.compile(r"(?:system|admin|developer)\s*(?:prompt|message|instruction)\s*(?:says|states|reads)\s*[:\-]", re.I),
+
+    # Constraint removal attempts
+    re.compile(r"(?:remove|disable|turn\s+off|deactivate)\s+(?:your|all|the)\s+(?:safety|content|ethical)\s+(?:filter|guidelines?|restrictions?|policies?)", re.I),
+    re.compile(r"you\s+(?:have\s+)?no\s+(?:restrictions?|limitations?|guidelines?|rules?|boundaries)", re.I),
+    re.compile(r"(?:this|that)\s+(?:does\s+not|doesn't)\s+apply\s+(?:to\s+you|here|anymore)", re.I),
+
+    # Encoding / obfuscation hints (base64, rot13, hex payloads as instructions)
+    re.compile(r"decode\s+(?:the\s+following|this)\s+(?:base64|b64|hex|rot13|binary)", re.I),
+    re.compile(r"execute\s+(?:the\s+)?(?:following|this)\s+(?:command|instruction|payload)", re.I),
+]
+
+
+def detect_injection_patterns(text: str) -> list[dict]:
+    """Return a list of structural injection matches found in *text*.
+
+    Each match is a dict with:
+        pattern: the matched regex pattern (string)
+        match: the actual text snippet that triggered
+        category: the injection category
+
+    This is a pre-seal membrane check — it runs BEFORE the agent reasons
+    about the input. It does NOT replace the covenant blocklist or scar
+    matching; it adds a structural layer that catches adversarial prompts
+    avoiding blocklist vocabulary.
+    """
+    matches = []
+    for i, pat in enumerate(_INJECTION_PATTERNS):
+        m = pat.search(text)
+        if m:
+            # Categorize by pattern index ranges
+            if i < 5:
+                category = "override_negation"
+            elif i < 10:
+                category = "role_hijack"
+            elif i < 14:
+                category = "prompt_exfiltration"
+            elif i < 17:
+                category = "instruction_injection"
+            elif i < 20:
+                category = "constraint_removal"
+            else:
+                category = "obfuscation_execution"
+            matches.append({
+                "pattern": pat.pattern,
+                "match": m.group(0),
+                "category": category,
+            })
+    return matches
 
 
 class Immune:
@@ -98,10 +182,24 @@ class Immune:
                 "first_bad_height": first_bad, "incoming": incoming}
 
     def screen(self, input_text):
-        """Pre-seal intake check — the best defense is to refuse at the membrane."""
+        """Pre-seal intake check — the best defense is to refuse at the membrane.
+
+        Three layers, all must pass for admission:
+          1. Covenant blocklist (score_covenant) — keyword-based, existing behavior
+          2. Scar matching (match_scar) — known attack vector signatures, existing behavior
+          3. Structural injection detection (detect_injection_patterns) — regex-based,
+             catches override/negation, role-hijacking, exfiltration, framing,
+             constraint removal, and obfuscation patterns that avoid blocklist vocab
+        """
         cov = score_covenant(input_text)
         sc = self.match_scar(input_text)
-        return {"blocked": cov < self.floor or sc is not None, "covenant": cov, "scar": sc}
+        structural = detect_injection_patterns(input_text)
+        return {
+            "blocked": cov < self.floor or sc is not None or len(structural) > 0,
+            "covenant": cov,
+            "scar": sc,
+            "structural": structural,
+        }
 
     # ---- response ----
     def lockdown(self):
@@ -191,7 +289,9 @@ def cmd_scan(args):
 
 def cmd_screen(args):
     r = Immune(args.root).screen(args.input)
-    print(f"covenant={r['covenant']}  scar_match={r['scar']['id'] if r['scar'] else None}")
+    print(f"covenant={r['covenant']}  scar_match={r['scar']['id'] if r['scar'] else None}  structural_hits={len(r.get('structural', []))}")
+    for s in r.get("structural", []):
+        print(f"  ! structural [{s['category']}]: '{s['match']}'")
     print("BLOCKED at membrane" if r["blocked"] else "admitted")
     sys.exit(2 if r["blocked"] else 0)
 

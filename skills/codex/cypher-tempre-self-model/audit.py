@@ -215,6 +215,16 @@ class Audit:
         return out, a
 
     # -- record ------------------------------------------------------------- #
+    # Maximum blocks a single --clean call can cover. Prevents batch-skipping.
+    # A model that records 50 blocks as --clean in one call did not read them.
+    MAX_CLEAN_BATCH = 1
+    # Maximum blocks per finding call. Findings require reading, but even so,
+    # recording more than this in one call means some blocks were skimmed.
+    MAX_FINDING_BATCH = 5
+    # Minimum finding length (chars) to count as DEEP. Below this, the finding
+    # is too thin to prove the model read the code.
+    MIN_DEEP_FINDING_LEN = 60
+
     def record(self, indices, finding=None, clean=False, status="reviewed", difficulty=0):
         st = self._head_state()
         if st is None or "audit" not in st:
@@ -230,6 +240,35 @@ class Audit:
         if invalid:
             raise RuntimeError("Block index(es) are not reviewable in-scope continuum blocks: "
                                + ", ".join(str(i) for i in invalid))
+
+        # --- Anti-skipping guards ---
+        # GAP 1 FIX: --clean is a model-asserted escape hatch. Limit batch size
+        # so the model cannot record 50 unread blocks in one call.
+        if clean and not finding:
+            if len(idxset) > self.MAX_CLEAN_BATCH:
+                raise RuntimeError(
+                    f"--clean batch of {len(idxset)} blocks exceeds MAX_CLEAN_BATCH={self.MAX_CLEAN_BATCH}. "
+                    "A --clean assertion means you read the block and found nothing — you cannot "
+                    "batch-assert that for multiple blocks without reading them. Record each block "
+                    "individually with --clean, or provide a --finding that cites what you read. "
+                    "This guard exists because models skip reading on large corpora.")
+
+        # GAP 1 FIX: Even findings have a batch cap — reading 20 blocks at once
+        # means some were skimmed, not read line by line.
+        if finding and len(idxset) > self.MAX_FINDING_BATCH:
+            raise RuntimeError(
+                f"Finding batch of {len(idxset)} blocks exceeds MAX_FINDING_BATCH={self.MAX_FINDING_BATCH}. "
+                "Reading more than this in one record means some blocks were skimmed. "
+                "Split into smaller batches and record each with specific line citations.")
+
+        # GAP 1 FIX: A finding too short to cite specifics is not a deep review.
+        # "looks fine" or "mirrors async" is not a line-by-line finding.
+        if finding and len(finding) < self.MIN_DEEP_FINDING_LEN:
+            raise RuntimeError(
+                f"Finding too short ({len(finding)} chars, minimum {self.MIN_DEEP_FINDING_LEN}). "
+                "A deep review must cite specific lines/symbols and articulate what was found. "
+                "Short findings like 'looks fine' or 'mirrors async version' are shallow passes "
+                "that skip reading. Cite the file, line range, and what you observed.")
 
         new_idxs = idxset - reviewed_before
         new_lines, paths = 0, []
@@ -257,7 +296,7 @@ class Audit:
             floor = modality_ops.RICHNESS_FLOOR
         except Exception:
             pass
-        is_deep = bool(finding) and depth >= floor
+        is_deep = bool(finding) and depth >= floor and len(finding) >= self.MIN_DEEP_FINDING_LEN
         if is_deep:
             a["deep_reviews"] = a.get("deep_reviews", 0) + newly
         else:
@@ -274,7 +313,8 @@ class Audit:
         data = {"reviewed_indices": sorted(idxset), "status": status,
                 "clean": bool(clean and not finding),
                 "finding": finding, "paths": [p for p in paths if p],
-                "depth": depth, "deep": is_deep}
+                "depth": depth, "deep": is_deep,
+                "batch_size": len(idxset)}
         ring = self.tc.seal("audit_review",
                             {"event": "audit_review", "task": (a.get("objective") or "")[:48],
                              "state": st, "data": data}, difficulty=difficulty)
@@ -325,11 +365,20 @@ class Audit:
         if require_depth and shallow:
             out.append(f"SHALLOW blocks (reviewed but no substantive finding): {len(shallow)} "
                        f"(e.g. rings {sorted(shallow)[:8]}) — re-review with cited lines/symbols.")
+            out.append(f"DEEP reviews: {len(deep_in_scope)} / {len(reviewed_in_scope)} "
+                       f"({len(deep_in_scope)/max(1,len(reviewed_in_scope))*100:.0f}%). "
+                       f"Shallow reviews do not count as reading the code.")
         passed = ok and (complete if require_complete else True) and (depth_complete if require_depth else True)
         return passed, out
 
     # -- report ------------------------------------------------------------- #
-    def report(self, final=False, require_depth=False):
+    # GAP 3 FIX: --final now requires depth by default. A 100%-coverage audit
+    # where half the blocks are shallow --clean is not a complete audit.
+    # The model must override with --allow-shallow to get a final report with
+    # shallow blocks (explicit acknowledgment that it skipped reading).
+    def report(self, final=False, require_depth=True, allow_shallow=False):
+        if final and not allow_shallow:
+            require_depth = True  # force depth check on final reports
         ok, lines = self.validate(require_complete=True, require_depth=require_depth)
         a = self.status() or {}
         bar = "coverage" + (" + depth" if require_depth else "")
@@ -340,12 +389,21 @@ class Audit:
             head.append(f"===== INTERIM AUDIT REPORT (--final REFUSED: {bar} < 100%) =====")
             head.append("A 'final' report on an incomplete exhaustive audit is a persistence/")
             head.append("covenant miss. Keep going (audit.py next) or state this is interim.")
+            if require_depth and not allow_shallow:
+                head.append("")
+                head.append("NOTE: --final now requires DEPTH by default (every block must have")
+                head.append("a cited, specific finding — not just --clean). If you genuinely")
+                head.append("need to finalize with shallow reviews, pass --allow-shallow to")
+                head.append("acknowledge that you are accepting incomplete reading.")
         else:
             head.append("===== INTERIM AUDIT REPORT =====")
         head.append(f"objective: {a.get('objective')}")
         head.append(f"review coverage: {a.get('review_cursor', 0)}/{a.get('total_blocks', 0)} blocks, "
                     f"~{a.get('reviewed_lines', 0)}/{a.get('total_lines', 0)} lines")
         head.append(f"depth: {a.get('deep_reviews', 0)} deep / {a.get('shallow_reviews', 0)} shallow reviews")
+        if a.get('total_blocks', 0) > 0:
+            dpct = 100.0 * a.get('deep_reviews', 0) / max(1, a.get('review_cursor', 1))
+            head.append(f"depth ratio: {dpct:.0f}% deep (target: 100% for a line-by-line audit)")
         head.append(f"findings recorded: {a.get('findings_total', 0)}")
         if a.get("recent_findings"):
             head.append("recent findings:")
@@ -382,6 +440,8 @@ def cmd_next(args):
     print(f"\n# record after reading (fill the finding with cited specifics):")
     print(f"#   audit.py record --root {args.root} --block {ids} --finding \"<file:Lstart-Lend — what & why>\"")
     print(f"#   (only if genuinely nothing of note: audit.py record --root {args.root} --block <id> --clean)")
+    print(f"#   CAUTION: --clean limited to 1 block/call. Findings limited to 5 blocks/call.")
+    print(f"#   Short findings like 'looks fine' or 'mirrors async' will be REJECTED — cite specific lines.")
 
 
 def cmd_record(args):
@@ -426,7 +486,9 @@ def cmd_close(args):
 
 
 def cmd_report(args):
-    is_final, lines = Audit(args.root).report(final=args.final, require_depth=args.require_depth)
+    is_final, lines = Audit(args.root).report(
+        final=args.final, require_depth=args.require_depth,
+        allow_shallow=args.allow_shallow)
     for ln in lines:
         print(ln)
     # exit nonzero when --final was requested but refused, so scripts/hooks notice
@@ -457,7 +519,9 @@ def build_parser():
     pr.add_argument("--block", nargs="+", type=int, required=True, help="ring index(es) just reviewed")
     prx = pr.add_mutually_exclusive_group(required=True)
     prx.add_argument("--finding", default=None, help="a real finding (omit + use --clean if nothing)")
-    prx.add_argument("--clean", action="store_true", help="reviewed, nothing of note")
+    prx.add_argument("--clean", action="store_true",
+                     help="reviewed, nothing of note. LIMITED TO 1 BLOCK PER CALL to prevent batch-skipping. "
+                          "You must have actually read the block's content first.")
     pr.add_argument("--status", default="reviewed")
     pr.set_defaults(func=cmd_record)
 
@@ -471,9 +535,11 @@ def build_parser():
     pv.set_defaults(func=cmd_validate)
 
     prp = sub.add_parser("report", parents=[common], help="audit report (refuses FINAL below 100%%)")
-    prp.add_argument("--final", action="store_true", help="request a FINAL report (refused if incomplete)")
+    prp.add_argument("--final", action="store_true", help="request a FINAL report (refused if incomplete or shallow)")
     prp.add_argument("--require-depth", action="store_true",
-                     help="FINAL also requires depth-complete (no shallow reviews)")
+                     help="require depth-complete (no shallow reviews). DEFAULT for --final since v3.8.3.")
+    prp.add_argument("--allow-shallow", action="store_true",
+                     help="allow --final to pass with shallow reviews (explicit acknowledgment of incomplete reading)")
     prp.set_defaults(func=cmd_report)
 
     pc = sub.add_parser("close", parents=[common], help="disengage the turn-end governor (pause/abandon)")
