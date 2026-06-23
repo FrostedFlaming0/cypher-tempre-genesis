@@ -2079,12 +2079,18 @@ def cmd_turn(args):
             import immune
             scr = immune.Immune(root).screen(args.input)
             if scr.get("blocked"):
-                print(f"immune: BLOCKED at membrane (covenant {scr['covenant']}, "
-                      f"scar {scr['scar']}) — refusing this input.")
+                # Forensics: say exactly WHY it was refused — reason + structural
+                # category/match — not just "covenant high, scar none".
+                reason = scr.get("reason") or "covenant/scar"
+                cats = ", ".join(scr.get("categories") or []) or "—"
+                hit = next((s.get("match") for s in scr.get("structural") or []), "")
+                print(f"immune: BLOCKED at membrane (reason={reason}, severity={scr.get('severity')}, "
+                      f"categories=[{cats}], covenant={scr['covenant']}, scar={scr['scar']}) — refusing this input.")
                 _, ring0, _, rs0 = _loop_seal(
                     root, reg, "immune",
-                    f"Declined covenant-violating input at the membrane (covenant "
-                    f"{scr['covenant']}, scar {scr['scar']}); did not act on it.",
+                    f"Declined input at the membrane: reason={reason}, severity={scr.get('severity')}, "
+                    f"structural categories=[{cats}]" + (f", trigger='{hit[:80]}'" if hit else "") +
+                    f" (covenant {scr['covenant']}, scar {scr['scar']}); did not act on it.",
                     external_scores={"coherence": 220, "relevance": 220, "novelty": 120,
                                      "consistency": 230, "depth": 150, "covenant": 255})
                 if ring0:
