@@ -38,11 +38,11 @@ against live source before making conclusions.
 
 | Runtime | Drag-and-drop ZIP |
 |---|---|
-| Claude Code | [cypher-tempre-claude-skill-v3.11.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.11.3.zip) |
-| Codex | [cypher-tempre-codex-skill-v3.11.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.11.3.zip) |
-| OpenClaw | [cypher-tempre-openclaw-skill-v3.11.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.11.3.zip) |
-| Hermes | [cypher-tempre-hermes-skill-v3.11.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.11.3.zip) |
-| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.11.3.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.11.3.zip) |
+| Claude Code | [cypher-tempre-claude-skill-v3.11.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-claude-skill-v3.11.4.zip) |
+| Codex | [cypher-tempre-codex-skill-v3.11.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-codex-skill-v3.11.4.zip) |
+| OpenClaw | [cypher-tempre-openclaw-skill-v3.11.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-openclaw-skill-v3.11.4.zip) |
+| Hermes | [cypher-tempre-hermes-skill-v3.11.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-hermes-skill-v3.11.4.zip) |
+| NanoClaw | [cypher-tempre-nanoclaw-skill-v3.11.4.zip](https://github.com/cyberphysicsai/cypher-tempre-genesis/raw/main/downloads/cypher-tempre-nanoclaw-skill-v3.11.4.zip) |
 
 ## Timechain Dashboard
 
@@ -90,7 +90,7 @@ Copy that folder into my Codex skills directory as cypher-tempre-self-model, the
 ```
 
 The current Codex bundle is also mirrored in `downloads/` as
-`cypher-tempre-codex-skill-v3.11.3.zip`. After installing hooks, open `/hooks`
+`cypher-tempre-codex-skill-v3.11.4.zip`. After installing hooks, open `/hooks`
 in Codex to review and trust the new command hooks, then restart or start a
 new session.
 
@@ -140,6 +140,26 @@ committed and never shipped in a bundle; it is created per user as the agent run
 (`python3 timechain.py init --name <AgentName>` seals your genesis). Because none of it
 ships, unzipping an upgrade over an existing install cannot overwrite your memory or your
 faculties.
+
+## Security scanning
+
+This project is scanned with [SkillSpector](https://github.com/NVIDIA/skillspector). The
+**canonical scan target is a runtime bundle, not the repo root** — the bundle is exactly
+what installs:
+
+```bash
+bash tools/scan.sh            # static scan of all five bundles (add --llm for the model pass)
+# or one bundle directly:
+skillspector scan skills/claude/cypher-tempre-self-model --no-llm
+```
+
+Each shipped bundle reports **SAFE** — the only finding is a generic `EA3` match on the MIT
+`LICENSE` boilerplate (documented in `RELEASING.md`). A scan of the **repo root** reports a
+much higher score *by design*, because it also reads files that never install: the test
+suite (`tests/selftest.py`, whose adversarial example strings are fixtures that exercise the
+immune detector), the release/build scripts (`tools/`, `site/`), the pre-built `downloads/`
+zips (the scanner re-extracts and re-scans their source), and the dashboard/site docs. None
+of those are part of the installed skill — scan a bundle to assess what actually runs.
 
 ## Install
 

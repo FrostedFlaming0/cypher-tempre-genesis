@@ -23,8 +23,15 @@ several patch releases. The zips are built **once** and used for **both**.
 
 4. **Run the test suite** — `python3 tests/selftest.py` from the repo root must print `PASS` (it tests the canonical `claude` bundle; engine code is identical across the five). The suite is NOT shipped in the bundles.
 
-5. **SkillSpector all five** — each must report **SAFE** (only the MIT-`LICENSE`
-   "NOT LIMITED TO" EA3 false-positive is acceptable).
+5. **SkillSpector all five** — run `bash tools/scan.sh` (scans each **bundle** — the
+   canonical target, i.e. exactly what installs). Each must report **SAFE** (only the
+   MIT-`LICENSE` "NOT LIMITED TO" EA3 false-positive is acceptable). Do **not** judge the
+   release by a repo-ROOT scan: that intentionally reads non-shipped files (the test suite
+   and its adversarial fixtures, `tools/`/`site/` scripts, the `downloads/` zips it
+   re-extracts) and will score high by design. **Scan after the changelog is final** — a
+   changelog that quotes a finding's literal trigger string (a sensitive path, an example
+   payload, a token such as the "auto" + "execute" compound) will re-flag itself; describe
+   fixes without embedding the literal token.
 
 6. **Rebuild the zips — ONE source of truth:** `bash tools/build_zips.sh`. This
    refreshes `downloads/` from current source and removes stale-version zips. **Do

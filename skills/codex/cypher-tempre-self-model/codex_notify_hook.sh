@@ -7,7 +7,7 @@
 # existing integration (e.g. Computer Use) we chain: record first, then forward
 # every argument to the original program unchanged.
 #
-# Wire it in ~/.codex/config.toml (back up first) as:
+# Wire it into your Codex config file (config.toml in the Codex home; back up first) as:
 #   notify = ["/abs/path/codex_notify_hook.sh", "<original_program>", "<original_args...>"]
 # If there is no original program, just:
 #   notify = ["/abs/path/codex_notify_hook.sh"]

@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.11.4 — 2026-06-23
+
+All five shipped bundles now scan SAFE, plus repo scan tooling. No engine change.
+
+### Fixed
+- **Codex bundle now SAFE.** The Codex notify-hook wrapper carried an `AS1` (agent-config
+  access) finding that came from a how-to COMMENT naming the Codex config path verbatim —
+  the script never reads that file in code (it runs `enforce.py` and forwards the notify
+  args). Reworded the comment so the wiring instruction stays clear without the literal path
+  token. The hook's purpose is already declared in the codex `SKILL.md` permissions.
+
+### Added
+- **`tools/scan.sh`** — scans every runtime bundle with SkillSpector. The canonical scan
+  target is a **bundle** (exactly what installs); a repo-ROOT scan intentionally reads
+  non-shipped files (the test suite and its adversarial fixtures, the build/release scripts,
+  the pre-built `downloads/` zips it re-extracts) and scores high by design. A "Security
+  scanning" note in `README.md` and the `RELEASING.md` checklist document this.
+
 ## v3.11.3 — 2026-06-23
 
 Hardening from a deeper semantic review — closes two integrity gaps in the safety
