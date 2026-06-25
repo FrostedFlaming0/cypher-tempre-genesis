@@ -6,6 +6,42 @@ Changes maintained in the **FrostedFlaming0** fork, layered on top of the upstre
 cyberphysicsai releases listed below. These are not part of upstream's `vX.Y.Z`
 versioning; some are deliberately experimental and ship disabled by default.
 
+### Experimental — structural AUTHOR-OP trigger for the arbitrary-code faculty path — 2026-06-25
+
+Builds on the arbitrary-code faculty entry below. That feature made authoring an op
+*possible* on deliberate invocation; this makes the per-turn loop *surface the opportunity*
+automatically. When the experimental toggle is on, every per-turn gap-fill that grows a
+faculty now also checks whether the gap warrants a richer, model-authored op and, if so,
+prints an `AUTHOR-OP` prompt. The loop automates only the **when** — it names the uncovered
+terms and the freshly grown faculties; the model still authors the code, since arbitrary op
+logic can only originate from the model. Off unless `CT_EXPERIMENTAL_AUTOEXEC` is set.
+
+#### Added
+- **`recall.py` `_maybe_prompt_autoexec()`** — wired into the per-turn autogrow block
+  (right after `cambium.fill_gap`). When the toggle is on and a turn grows a faculty for a
+  substantial gap filled with only primitive term-presence ops, it surfaces an `AUTHOR-OP`
+  prompt naming the uncovered gap terms, the grown faculties, and the exact `cambium.py
+  autoexec` command to author a richer op that same turn. The model judges whether
+  term-presence is insufficient (relational / quantitative / structural computation); a
+  purely lexical gap stays markers-only, so the loop does not accumulate redundant ops that
+  would run on every future turn.
+- **`CT_AUTOEXEC_PROMPT`** — set to `0` / `false` / `no` / `off` to silence the prompt while
+  leaving the underlying capability enabled.
+- **`CT_AUTOEXEC_PROMPT_AT`** — dissonance threshold for the prompt. Defaults to the
+  faculty-growth floor (`cambium.DISSONANCE_FLOOR`, currently 150) so the two stay coupled:
+  if a gap was worth growing a faculty for, it is worth considering whether that faculty
+  needs a richer op. Raise it to prompt less often.
+
+#### Notes
+- **Loop triggers, model authors.** No code is auto-written; the loop cannot generate
+  arbitrary op logic, so it only automates the decision point, never the authoring. Every
+  authored op still flows through `cambium.py autoexec` and is sealed/recorded exactly as
+  before.
+- **Fail-open and inert by default.** The trigger is wrapped in try/except and never raises
+  into a turn; it stays silent whenever the toggle is off, so non-experimental installs are
+  unaffected.
+- Applied identically across all five bundles (claude / codex / hermes / nanoclaw / openclaw).
+
 ### Experimental — autonomous arbitrary-code faculty auto-activation — 2026-06-25
 
 Adds an opt-in path for the agent to author an op, **auto-activate it with no human

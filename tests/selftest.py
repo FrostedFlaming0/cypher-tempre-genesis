@@ -1537,14 +1537,37 @@ def main():
         check("phase14 audit depth: require_depth passes once every block is deeply reviewed", _okd2)
         _aud3._clear_active(droot)
 
-        # -- phase15: model-authored growth is PROPOSE-then-ACTIVATE, never auto-executed (v3.11) -- #
-        # No dynamic execution of authored code anywhere in the shipped skill: build_op only
+        # -- phase15: model-authored growth is PROPOSE-then-ACTIVATE, no UNGATED auto-exec (v3.11) -- #
+        # No *ungated* dynamic execution of authored code in the shipped skill: build_op only
         # assembles from the audited primitive menu; arbitrary code is proposed to emergent
-        # (dormant) and only runs after a human places it in the per-user active_ops.py.
+        # (dormant) and only runs after a human places it in the per-user active_ops.py. The
+        # ONE intentional exception is the experimental op compiler in
+        # modality_ops._compile_autoexec_op — reachable only when CT_EXPERIMENTAL_AUTOEXEC is
+        # set, and compiled into a restricted sandboxed namespace tagged "<autoexec-op>".
         import pathlib as _pl, re as _re
-        _src = (_pl.Path(SKILL) / "modality_ops.py").read_text() + "\n" + (_pl.Path(SKILL) / "cambium.py").read_text()
-        check("phase15 no-exec: shipped source has no exec/eval/compile of authored code",
-              _re.search(r"(?<![\w.])(?:exec|eval|compile)\s*\(", _src) is None)
+        _mo_src = (_pl.Path(SKILL) / "modality_ops.py").read_text()
+        _src = _mo_src + "\n" + (_pl.Path(SKILL) / "cambium.py").read_text()
+        # Every exec/eval/compile in shipped source must be the single gated experimental
+        # op-compiler line (vacuously satisfied if the experimental feature is absent).
+        _exec_hits = [_src[_src.rfind("\n", 0, _m.start()) + 1: _src.find("\n", _m.start())].strip()
+                      for _m in _re.finditer(r"(?<![\w.])(?:exec|eval|compile)\s*\(", _src)]
+        check("phase15 no-exec: no UNGATED dynamic execution of authored code "
+              "(only the gated experimental op compiler)",
+              all('"<autoexec-op>"' in _h for _h in _exec_hits))
+        # That experimental exec must be gated by construction — the env toggle and the
+        # restricted-builtins sandbox are both present in source.
+        check("phase15 autoexec gate: the experimental op path is env-gated + sandboxed in source",
+              "CT_EXPERIMENTAL_AUTOEXEC" in _mo_src and "_safe_builtins" in _mo_src)
+        # Functional gate: with the toggle OFF, no authored op registers or loads, env-independent.
+        _saved_ae = os.environ.pop("CT_EXPERIMENTAL_AUTOEXEC", None)
+        try:
+            check("phase15 autoexec gate: toggle OFF -> register/load refuse authored ops",
+                  _mo.autoexec_enabled() is False
+                  and _mo.register_autoexec_op(SKILL, "X", "def op(t,c=''): return {}") is False
+                  and _mo.load_autoexec_ops(SKILL) == {})
+        finally:
+            if _saved_ae is not None:
+                os.environ["CT_EXPERIMENTAL_AUTOEXEC"] = _saved_ae
         check("phase15 build_op: authored + unknown specs build to nothing (no dynamic exec)",
               _mo.build_op({"primitive": "authored", "code": "def op(t,c=''): return {}"}) is None
               and _mo.build_op({"primitive": "nope"}) is None

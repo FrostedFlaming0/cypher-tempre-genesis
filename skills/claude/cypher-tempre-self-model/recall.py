@@ -2168,8 +2168,58 @@ def cmd_turn(args):
                             if g.get("action") in ("born", "promoted") and g.get("faculty")})
             if names:
                 print("grew faculties to cover the gap: " + ", ".join(names))
+            _maybe_prompt_autoexec(grown, names)
         except Exception:
             pass
+
+
+def _maybe_prompt_autoexec(grown, names):
+    """Structural autoexec trigger. When the experimental arbitrary-code toggle is on and
+    this turn filled a SUBSTANTIAL gap with bare primitive (term-presence) ops, surface an
+    AUTHOR-OP prompt. The loop only TRIGGERS — naming the uncovered terms and the freshly
+    grown faculties; the model judges whether a markers op is too weak and, if so, authors a
+    richer op via `cambium.py autoexec` THIS turn. No code is auto-written: arbitrary op logic
+    can only originate from the model, so the loop automates the WHEN, never the authoring.
+    Silent when the toggle is off, when CT_AUTOEXEC_PROMPT=0, or below CT_AUTOEXEC_PROMPT_AT
+    dissonance. Fail-open: never raises into the turn."""
+    try:
+        import os as _os
+        if _os.environ.get("CT_AUTOEXEC_PROMPT", "1").lower() in ("0", "false", "no", "off"):
+            return
+        import modality_ops
+        if not modality_ops.autoexec_enabled() or not names:
+            return
+        # Default the prompt threshold to the growth floor itself: if a gap was worth
+        # growing a faculty for, it is worth considering whether that faculty needs a
+        # richer op. They stay coupled unless CT_AUTOEXEC_PROMPT_AT overrides.
+        try:
+            import cambium as _cambium
+            _floor = int(_cambium.DISSONANCE_FLOOR)
+        except Exception:
+            _floor = 150
+        at = int(_os.environ.get("CT_AUTOEXEC_PROMPT_AT", str(_floor)))
+        best = None
+        for g in (grown or []):
+            gap = g.get("gap") or {}
+            d = gap.get("dissonance")
+            if isinstance(d, (int, float)) and (best is None or d > (best.get("dissonance") or -1)):
+                best = gap
+        if not best or (best.get("dissonance") or 0) < at:
+            return
+        uncovered = [t for t in (best.get("uncovered") or []) if t][:10]
+        print(f"AUTHOR-OP: substantial gap (dissonance {best.get('dissonance')}, "
+              f"threshold {at}) filled with primitive term-presence ops only.")
+        if uncovered:
+            print("  uncovered gap terms: " + ", ".join(uncovered))
+        print("  faculties grown (bare markers ops): " + ", ".join(names))
+        print("  -> If a term-presence op cannot capture this gap (it needs relational, "
+              "quantitative, or structural computation), AUTHOR a richer op THIS turn:")
+        print("     python3 cambium.py autoexec \"<Faculty Name>\" --kind sense|modality \\")
+        print("        --code-file <op.py> --function \"<what it computes>\" --seed-terms <terms>")
+        print("  (Judgment call: skip when the primitive op already captures the gap — don't "
+              "bloat autoexec_ops.json. Silence with CT_AUTOEXEC_PROMPT=0.)")
+    except Exception:
+        pass
 
 
 def _emit_loop_ran(root, decision, resealed=False):
