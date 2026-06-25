@@ -1,5 +1,54 @@
 # Changelog
 
+## FrostedFlaming0 Fork
+
+Changes maintained in the **FrostedFlaming0** fork, layered on top of the upstream
+cyberphysicsai releases listed below. These are not part of upstream's `vX.Y.Z`
+versioning; some are deliberately experimental and ship disabled by default.
+
+### Experimental — autonomous arbitrary-code faculty auto-activation — 2026-06-25
+
+Adds an opt-in path for the agent to author an op, **auto-activate it with no human
+review**, and have it compute on the very turn it is born — the one boundary the shipped
+skill otherwise refuses (dynamic execution of model-authored code). Off by default and
+gated by an **environment variable**, so injected *input* can never switch it on.
+
+#### Added
+- **`cambium.py autoexec`** (new subcommand + `autoexec()` function). When the toggle is
+  set, it persists a model-authored op body to `registry/autoexec_ops.json`, registers the
+  faculty in `grown.json`, records it in `emergent.json` (`status: auto-activated`), and
+  fires it once on the activation text so it computes on its birth turn and every turn
+  after. It seals **no dedicated ring** — the turn's own ring records the authoring — to
+  keep the chain free of noise.
+- **`modality_ops.py` autoexec runtime** — `autoexec_enabled()` (gated on
+  `CT_EXPERIMENTAL_AUTOEXEC`), `_compile_autoexec_op()` which compiles the op in a
+  **restricted namespace** (safe builtins only + `re` + a curated `mo` helper of
+  side-effect-free text primitives; no `os` / `json` / `Path` / `open` / `__import__` /
+  `eval` / `exec`), a SIGALRM-based `_time_limit` wall-clock timeout, plus
+  `load_autoexec_ops` / `register_autoexec_op`. Auto-activated ops merge into
+  `load_grown_ops`, riding the existing `extra_ops` channel into `run_all`, so no
+  `recall.py` change was needed.
+- **`.gitignore`** — `**/registry/autoexec_ops.json` (per-user live op code, never shipped).
+
+#### Notes
+- **Honest threat model.** The restricted namespace + timeout + try/except are a
+  robustness and *speed-bump* layer, not a vault — a determined adversary can chase gadget
+  chains. They are meaningful against accidents and casual misuse, the realistic threat when
+  the agent itself is the author. A complementary static dangerous-pattern screen of the
+  generated code text ("Part A") was considered and **intentionally dropped** as low-value
+  given the restricted namespace and the env-gate.
+- Applied identically across all five bundles (claude / codex / hermes / nanoclaw / openclaw).
+
+### Clarified the Formula of Experience — 2026-06-24
+
+- Expanded the genesis covenant's `formula_of_experience` so `5x5x5x5x5 = 8^12`
+  (5 dimensions x 5 perspectives, 8 domains, 12 reasoning planes) is explicitly described
+  as **dynamic slots chosen each turn — a structured-thinking prompt to reason from many
+  angles, not a fixed taxonomy and not a literal equation.** Keeps the glyph from being read
+  as an arithmetic claim.
+
+---
+
 ## v3.11.4 — 2026-06-23
 
 All five shipped bundles now scan SAFE, plus repo scan tooling. No engine change.

@@ -19,7 +19,9 @@ These ops do NOT replace the model's reasoning; they perform the mechanical part
 
 Stdlib only. Python 3.8+.
 """
+import contextlib
 import json
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -467,6 +469,12 @@ def load_grown_ops(registry_root):
                     out[name] = op
     except Exception:
         pass
+    # EXPERIMENTAL: merge auto-activated arbitrary-code ops (gated by CT_EXPERIMENTAL_AUTOEXEC;
+    # returns {} when off). Rides the same extra_ops channel into run_all, so no caller changes.
+    try:
+        out.update(load_autoexec_ops(registry_root))
+    except Exception:
+        pass
     return out
 
 
@@ -483,6 +491,156 @@ def register_grown_op(registry_root, name, spec):
         if "ops" not in data or not isinstance(data.get("ops"), dict):
             data = {"registry": "grown_ops", "ops": {}}
         data["ops"][name] = spec
+        p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        return True
+    except Exception:
+        return False
+
+
+# --------------------------------------------------------------------------- #
+# EXPERIMENTAL — autonomously auto-activated arbitrary-code faculties.
+#
+# OFF by default. Enabled ONLY when CT_EXPERIMENTAL_AUTOEXEC is set in the
+# environment — an ENV VAR, so injected *input* can never switch it on. When on,
+# model-authored op code in registry/autoexec_ops.json is compiled and run in a
+# RESTRICTED namespace (no __import__/open/eval/exec, no os/subprocess/socket; only
+# safe builtins + `re` + a curated `mo` helper of modality_ops text primitives are
+# exposed) under a wall-clock timeout. This DOES dynamically execute model-authored
+# code — the one mechanism the shipped skill otherwise refuses — so it lives behind
+# the toggle and is documented as experimental. The restricted namespace is a SPEED
+# BUMP, not a vault (a determined adversary can chase gadget chains); it is meaningful
+# against accidents and casual misuse, the realistic threat when the agent is the author.
+# --------------------------------------------------------------------------- #
+def autoexec_enabled():
+    return str(os.environ.get("CT_EXPERIMENTAL_AUTOEXEC", "")).strip().lower() \
+        not in ("", "0", "false", "no", "off")
+
+
+_AUTOEXEC_TIMEOUT_S = float(os.environ.get("CT_AUTOEXEC_TIMEOUT", "2") or 2)
+_AUTOEXEC_SANDBOX = str(os.environ.get("CT_AUTOEXEC_SANDBOX", "1")).strip().lower() \
+    not in ("0", "false", "no", "off")
+_SAFE_BUILTIN_NAMES = (
+    "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float", "int",
+    "len", "list", "map", "max", "min", "range", "repr", "reversed", "round",
+    "set", "sorted", "str", "sum", "tuple", "zip",
+)
+
+
+def _safe_builtins():
+    import builtins as _b
+    return {n: getattr(_b, n) for n in _SAFE_BUILTIN_NAMES if hasattr(_b, n)}
+
+
+class _OpHelpers:
+    """The `mo` surface exposed to autoexec ops: a curated, side-effect-free set of
+    modality_ops text primitives. Deliberately omits Path/json/os so an op cannot reach
+    the filesystem or environment through the helper."""
+
+
+def _op_helpers():
+    h = _OpHelpers()
+    for fn in ("top_terms", "density", "temporal", "symbols", "repeats", "concept_pairs",
+               "overlap", "richness", "entities", "numbers", "hits", "count_terms",
+               "contains_any", "missing_terms", "relation_pairs_for_terms", "novelty_score"):
+        if fn in globals():
+            setattr(h, fn, globals()[fn])
+    h.re = re
+    return h
+
+
+class _Timeout(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def _time_limit(seconds):
+    """Best-effort wall-clock cap via SIGALRM (POSIX, main thread). A no-op where
+    unavailable — the try/except around every op still contains failures."""
+    try:
+        import signal as _sig
+        have = hasattr(_sig, "SIGALRM") and seconds and seconds > 0
+    except Exception:
+        have = False
+    if not have:
+        yield
+        return
+
+    def _raise(_signum, _frame):
+        raise _Timeout("op exceeded time limit")
+    try:
+        old = _sig.signal(_sig.SIGALRM, _raise)
+    except (ValueError, OSError):
+        yield                       # not in main thread -> skip the alarm, still try/except'd
+        return
+    try:
+        _sig.setitimer(_sig.ITIMER_REAL, float(seconds))
+        yield
+    finally:
+        _sig.setitimer(_sig.ITIMER_REAL, 0)
+        _sig.signal(_sig.SIGALRM, old)
+
+
+def _compile_autoexec_op(code):
+    """Compile a model-authored op body into a callable op(text, context) -> dict bound to
+    a restricted namespace, wrapped in a timeout + try/except. Returns None on any failure."""
+    if not isinstance(code, str) or "def op" not in code:
+        return None
+    g = {"re": re, "mo": _op_helpers()}
+    if _AUTOEXEC_SANDBOX:
+        g["__builtins__"] = _safe_builtins()
+    try:
+        exec(compile(code, "<autoexec-op>", "exec"), g)   # EXPERIMENTAL, gated + sandboxed
+    except Exception:
+        return None
+    op = g.get("op")
+    if not callable(op):
+        return None
+
+    def _wrapped(text, context="", _op=op):
+        try:
+            with _time_limit(_AUTOEXEC_TIMEOUT_S):
+                out = _op(text or "", context or "")
+            return out if isinstance(out, dict) else {"value": out}
+        except Exception:
+            return None             # an op must never break labeling/sealing
+    return _wrapped
+
+
+def _autoexec_path(registry_root):
+    return Path(registry_root) / "registry" / "autoexec_ops.json"
+
+
+def load_autoexec_ops(registry_root):
+    """Build {name: callable} for auto-activated arbitrary-code faculties. Returns {} unless
+    CT_EXPERIMENTAL_AUTOEXEC is set. Best-effort; never raises."""
+    if not autoexec_enabled():
+        return {}
+    out = {}
+    try:
+        p = _autoexec_path(registry_root)
+        if p.is_file():
+            for name, rec in (json.loads(p.read_text()).get("ops") or {}).items():
+                code = rec.get("code") if isinstance(rec, dict) else rec
+                op = _compile_autoexec_op(code)
+                if op is not None:
+                    out[name] = op
+    except Exception:
+        pass
+    return out
+
+
+def register_autoexec_op(registry_root, name, code):
+    """Persist a model-authored op's CODE to autoexec_ops.json. Refuses unless the toggle is
+    on AND the code compiles into a usable op. Returns True/False."""
+    if not autoexec_enabled() or not name or _compile_autoexec_op(code) is None:
+        return False
+    try:
+        p = _autoexec_path(registry_root)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        data = json.loads(p.read_text()) if p.is_file() else {}
+        if not isinstance(data.get("ops"), dict):
+            data = {"registry": "autoexec_ops", "ops": {}}
+        data["ops"][name] = {"code": str(code)}
         p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
         return True
     except Exception:

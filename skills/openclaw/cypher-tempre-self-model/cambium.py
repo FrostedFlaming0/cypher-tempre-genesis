@@ -386,6 +386,65 @@ def activate(root: Path, selector: str, registry_root=None, difficulty: int = 0)
             "op_code": fac.get("op_code", "")}, ring
 
 
+def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: str = "",
+             category: str = "knowledge", seed_terms=None, registry_root=None,
+             activation_text: str = "", activation_context: str = ""):
+    """EXPERIMENTAL — auto-activate a MODEL-AUTHORED arbitrary-code faculty with NO human
+    review. Gated by CT_EXPERIMENTAL_AUTOEXEC (refuses otherwise). Writes the code live to
+    autoexec_ops.json, registers the faculty in grown.json, records it in emergent.json
+    (status `auto-activated`, code stored), and FIRES it once on the activation text so it
+    computes on the very turn it is born — then every future turn via the grown-ops channel.
+
+    Deliberately does NOT seal a dedicated ring: the turn's own ring records the authoring,
+    and the on-disk emergent/autoexec records preserve the trail, keeping the chain lean.
+
+    This is the boundary the shipped skill otherwise never crosses (dynamic execution of
+    model-authored code). It exists only behind the experimental toggle."""
+    home = registry_home(root, registry_root)
+    k = "modality" if kind == "modality" else "sense"
+    try:
+        import modality_ops
+    except Exception as exc:
+        return {"ok": False, "reason": f"modality_ops unavailable: {exc}"}, None
+    if not modality_ops.autoexec_enabled():
+        return {"ok": False, "reason": ("CT_EXPERIMENTAL_AUTOEXEC is not set — refusing to "
+                "auto-activate arbitrary code. Export it to enable the experiment.")}, None
+    if modality_ops._compile_autoexec_op(code) is None:
+        return {"ok": False, "reason": "op code did not compile into a usable op(text, context) -> dict"}, None
+    if not modality_ops.register_autoexec_op(home, name, code):
+        return {"ok": False, "reason": "failed to persist op code to autoexec_ops.json"}, None
+    key = "modalities" if k == "modality" else "senses"
+    base = json.loads((home / "registry" / f"{key}.json").read_text()).get(key, [])
+    grown = load_grown(home)
+    existing_ids = [it["id"] for it in base] + [it["id"] for it in grown.get(key, [])]
+    new_id = (max(existing_ids) if existing_ids else 0) + 1
+    if not any(str(it.get("name", "")).lower() == name.lower() for it in grown.get(key, [])):
+        grown.setdefault(key, []).append({
+            "id": new_id, "name": name,
+            "origin": "auto-activated arbitrary-code faculty (EXPERIMENTAL, no human review)",
+            "function": function or f"Auto-activated {k}: {name}", "category": category})
+        save_grown(home, grown)
+    data = load_emergent(home)
+    fac = next((f for f in data["faculties"] if f.get("name") == name and f.get("kind") == k), None)
+    if fac:
+        fac["op_code"] = str(code)
+        fac["status"] = "auto-activated"
+        fac["promoted_to_id"] = new_id
+    else:
+        data["faculties"].append({
+            "eid": f"E{len(data['faculties']) + 1}", "kind": k, "name": name,
+            "function": function or f"Auto-activated {k}: {name}", "category": category,
+            "origin": "model-authored auto-activated (EXPERIMENTAL)", "parents": [],
+            "seed_terms": list(seed_terms or []), "op_code": str(code),
+            "status": "auto-activated", "recurrence": 1, "born_at": now_iso(),
+            "promoted_to_id": new_id})
+    save_emergent(home, data)
+    fired = modality_ops.load_autoexec_ops(home).get(name)
+    result = fired(activation_text or "", activation_context or "") if fired else None
+    return {"ok": True, "name": name, "kind": k, "promoted_to_id": new_id,
+            "fired": result is not None, "result": result}, None
+
+
 # --------------------------------------------------------------------------- #
 # Promotion: emergent -> canonical registry
 # --------------------------------------------------------------------------- #
@@ -633,6 +692,26 @@ def cmd_activate(args):
     print(f"\n  sealed {ring['ring_type']} Ring {ring['index']}  {ring['ring_hash'][:16]}..")
 
 
+def cmd_autoexec(args):
+    code = Path(args.code_file).read_text() if args.code_file else (args.code or "")
+    if not str(code).strip():
+        print("  -> provide --code-file or --code (the op body to auto-activate)")
+        return
+    result, _ring = autoexec(args.root, args.name, code, kind=args.kind,
+                             function=args.function or "", category=args.category,
+                             seed_terms=args.seed_terms or [], registry_root=args.registry_root,
+                             activation_text=args.text or "", activation_context=args.context or "")
+    if not result.get("ok"):
+        print(f"  -> {result.get('reason')}")
+        return
+    print("\n  -- AUTO-ACTIVATED arbitrary-code faculty (EXPERIMENTAL, no human review) --")
+    print(f"    name: {result['name']} ({result['kind']})  active id: {result['promoted_to_id']}")
+    print(f"    fired same-turn: {result['fired']}")
+    if result.get("result") is not None:
+        print(f"    computed: {json.dumps(result['result'], ensure_ascii=False)[:300]}")
+    print("    live in registry/autoexec_ops.json — fires every future turn while the toggle is set.")
+
+
 def cmd_emergent(args):
     data = load_emergent(registry_home(args.root, args.registry_root))
     if not data["faculties"]:
@@ -682,6 +761,19 @@ def build_parser():
     pac.add_argument("selector", help="emergent eid or name to activate")
     pac.add_argument("--difficulty", type=int, default=0)
     pac.set_defaults(func=cmd_activate)
+
+    pae = sub.add_parser("autoexec", parents=[common],
+                         help="EXPERIMENTAL: auto-activate a model-AUTHORED arbitrary-code faculty "
+                              "(gated by CT_EXPERIMENTAL_AUTOEXEC; runs sandboxed, no human review)")
+    pae.add_argument("name", help="faculty name")
+    pae.add_argument("--kind", choices=["sense", "modality"], default="sense")
+    pae.add_argument("--code-file", type=Path, default=None, help="file with the op body to auto-activate")
+    pae.add_argument("--code", default=None, help="op body inline (alternative to --code-file)")
+    pae.add_argument("--function", default="", help="one-line description of what the faculty does")
+    pae.add_argument("--category", default="knowledge")
+    pae.add_argument("--seed-terms", nargs="*", default=[])
+    pae.add_argument("--text", default="", help="activation text to fire the op on same-turn")
+    pae.set_defaults(func=cmd_autoexec)
 
     pe = sub.add_parser("emergent", parents=[common], help="list the Dream Cache of emergent faculties (proposals)")
     pe.set_defaults(func=cmd_emergent)
