@@ -24,10 +24,11 @@ same as upstream's — the genesis covenant, the PoQ gate on every seal, the imm
 > (claude / codex / hermes / nanoclaw / openclaw). Per-user state — `composites.json`,
 > `grown_ops.json`, `autoexec_ops.json`, `chain/` — is gitignored and never shipped.
 
-## The four fork changes (newest first)
+## The fork changes (newest first)
 
 | # | Change | Date | Default | Touches |
 |---|--------|------|---------|---------|
+| 5 | **Full faculty frame-set imported** (192 faculties; frames first-class; registry↔OPS now one-directional) | 2026-06-27 | **on** (data only) | `registry/*.json`, `tests/selftest.py` |
 | 4 | **Composability — faculties as circuits** (DAG `run_all`, combinator menu, composites-as-data, pipeline search, dream abstraction) | 2026-06-27 | **on** (no-exec SAFE lane) | `modality_ops`, `recall`, `cambium`, `chronosynaptic`, `dream` |
 | 3 | **Structural AUTHOR-OP trigger** (`op_need.py` — fires op-authoring on computation need, not vocabulary) | 2026-06-27 | **on** (prompt only; no code auto-runs) | `op_need` (new), `recall`, `modality_ops` |
 | 2 | **Autonomous arbitrary-code faculty** (`cambium.py autoexec` — author + auto-activate an op in a sandboxed namespace) | 2026-06-25 | **off** — env-gated `CT_EXPERIMENTAL_AUTOEXEC` | `cambium`, `modality_ops` |
@@ -35,6 +36,26 @@ same as upstream's — the genesis covenant, the PoQ gate on every seal, the imm
 
 Changes 3 and 4 landed together as the composability build; change 3 **supersedes** an earlier
 (2026-06-25) experimental trigger that fired on vocabulary novelty.
+
+## Change 5 — Full faculty frame-set; frames are first-class
+
+The fork imports the **entire parent (timechain-agent) faculty set** — 84 modalities + 107 senses
+— and unions it with the curated mechanisms already present, giving **84 modalities + 108 senses
+(192)**. The parent always carried these as *frames* (named interpretive lenses) and only ever
+implemented ~30 as deterministic detectors; the import simply restores that full vocabulary.
+
+- **Two kinds of faculty.** A **mechanism** has an executable op (code does the mechanical
+  extract/measure); a **frame** has none (the model fills it with judgment). ~43 of the 192 are
+  mechanisms; the rest are frames. Frames cost ~nothing at runtime — `run_all` executes only
+  *fired* faculties and a frame returns nothing — they enrich labeling, retrieval anchoring, and
+  the chronosynaptic perspective pool.
+- **The registry↔OPS invariant is now one-directional:** every op must map to a registered
+  faculty (no orphans), but a faculty may be an op-less frame.
+- **Don't give every frame a lexical op.** A keyword op is worse than the model at perception and
+  manufactures false precision in `labels.computed`. Write an op only where deterministic code
+  out-computes the model (counting, structure) — exactly where `op_need` fires. Side effect:
+  with the registry far denser, autonomous gap-growth is *quieter* (only genuinely uncovered gaps
+  sprout) — intended, not a regression.
 
 ---
 
@@ -211,5 +232,5 @@ and it is the capability the fork adds.
 | `chronosynaptic.py` | `PipelineTree` + `pipeline` command (search over compositions) |
 | `dream.py` | `abstract_pipelines` (promote recurring wirings) |
 | `recall.py` | runs composites every turn via the DAG; routes op-authoring through `op_need`; `--computed-need` seam |
-| `registry/senses.json` | + Computational-Shape Sensing (22nd sense) |
+| `registry/modalities.json` / `registry/senses.json` | full timechain-agent frame set imported (84 + 108 = 192; ~43 mechanisms, rest frames; + Computational-Shape Sensing) |
 | `registry/composites.json` | **per-user, gitignored** — authored/searched circuits |

@@ -94,14 +94,19 @@ each sealed block.
    And check **replay**: `python3 replay.py match "<query>"` — if a sealed antecedent
    already answers this, confirm it and ground on it instead of regenerating (see *Replay*).
 4. **Reason** — engage the relevant **modalities** (`registry/modalities.json`), fusing when
-   one is not enough. For hard or high-stakes problems → see *Search*. All **21 modalities +
-   21 senses** are **executable**: when a faculty fires, `modality_ops.py` runs its op and
-   attaches the computed feature to the ring under `labels.computed` — e.g. *Bad-Idea Alarm*
-   → risk markers, *Dependency-Graph Vision* → extracted symbols, *Honesty-Spectrum Sensing*
-   → hedge/assert balance, *Richness Scoring* → a depth score. The op performs the mechanical
-   extract/measure/detect; you reason over computed signal, not vibes. (Cambium-grown
-   faculties stay frames until given an op.) Faculties also **compose into circuits**: a
-   composite op reads other faculties' outputs through the data-flow channel, so one organ can
+   one is not enough. For hard or high-stakes problems → see *Search*. Faculties are of two
+   sorts: a **mechanism** (a faculty with an executable op) and a **frame** (a faculty that is a
+   named interpretive lens with no op — you fill it with your own judgment). When a *mechanism*
+   fires, `modality_ops.py` runs its op and attaches the computed feature to the ring under
+   `labels.computed` — e.g. *Bad-Idea Alarm* → risk markers, *Dependency-Graph Vision* →
+   extracted symbols, *Honesty-Spectrum Sensing* → hedge/assert balance, *Richness Scoring* → a
+   depth score. The op does the mechanical extract/measure/detect; you reason over computed
+   signal, not vibes. **Write an op only where deterministic code out-computes you** (counting,
+   structure, hashing) — a frame stays a frame where your own perception is the better instrument
+   (see *Why frames are first-class*). The fork carries the full timechain-agent faculty set
+   (**84 modalities + 108 senses**); ~43 are mechanisms, the rest are frames. Faculties also
+   **compose into circuits**: a composite op reads other faculties' outputs through the data-flow
+   channel, so one organ can
    sense over another's signal (see *Composability*).
 5. **Form a candidate, then audit through PoQ** — score it yourself, 0–255, on the six
    dimensions, and cite the rings you relied on:
@@ -385,6 +390,22 @@ model-authored runs here):
 This is the connective tissue of the DreamCoder mapping: **Search** (`chronosynaptic pipeline`)
 proposes circuits, **Library** (`composites.json`) banks them, **Abstraction** (`dream`) promotes
 the recurring ones — wake-sleep over your own faculties.
+
+## Why frames are first-class — don't write an op for every faculty
+
+The registry carries far more **frames** (named interpretive lenses, no op) than **mechanisms**
+(faculties with ops). That is deliberate. An op exists to do what deterministic code does
+*better than you* — exact counting, symbol/dependency extraction, hashing, structural relations.
+It is **not** a formality to bolt onto every faculty. A bare lexical (keyword/regex) op for a
+*perceptual* faculty is strictly worse than your own judgment: it cannot generalize ("dangerous"
+but not "a footgun"), and — worse — it lands in `labels.computed` with the **same status as a
+real measurement**, manufacturing false precision that can pull you into trusting a hollow
+signal (the very thing the honesty doctrine guards against). An empty frame is honest: it says
+*you* judged this. So write an op where computation beats perception (that is exactly when
+`op_need` fires — operation over operands, dropped structure); everywhere else, **be the op**.
+"An LLM is just lexical prediction, so formalize each faculty as a regex" conflates
+surface-string matching with distributed-semantic computation — the CPU-is-just-NAND-gates
+fallacy. Frames and mechanisms are both first-class.
 
 ## Recall & self-labeling (relevance realization) — reasoning across a chain bigger than context
 
@@ -974,8 +995,8 @@ python3 immune.py status                                # safe height, quarantin
 | `enforce.py` | adherence spine — the brain behind the hooks; makes the per-turn loop non-bypassable (fail-open, dormancy-aware, bounded) |
 | `*_hook.sh` | Claude Code hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
 | `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
-| `registry/modalities.json` | branches — executable reasoning modalities (21 base + fork growth) |
-| `registry/senses.json` | leaves — executable perceptual senses (22 base incl. Computational-Shape Sensing + per-user growth) |
+| `registry/modalities.json` | branches — 84 reasoning modalities (mechanisms with ops + frames; the full timechain-agent set) |
+| `registry/senses.json` | leaves — 108 perceptual senses (mechanisms with ops + frames, incl. Computational-Shape Sensing; + per-user growth) |
 | `registry/emergent.json` | Dream Cache — emergent faculties awaiting promotion |
 | `registry/composites.json` | composite circuits — per-user, gitignored wirings (Change-2 data; fires every turn via the DAG) |
 | `chain/rings.jsonl` | the Timechain itself |

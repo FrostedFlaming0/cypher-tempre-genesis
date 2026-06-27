@@ -714,9 +714,15 @@ def main():
         pol_data["growth"] = {"window": 12, "min_cluster": 3, "min_intra_sim": 0.3,
                               "max_label_agreement": 0.5, "max_proposals_per_dream": 2}
         pol_file.write_text(json.dumps(pol_data))
+        # Rich, distinctive, faculty-uncovered cluster. It must stay a genuine GAP (dissonance
+        # > floor) even though propose_growth's fixed context ("dream growth proposal: tight
+        # unlabeled cluster") contributes a few tokens that prior dream-grown faculties cover —
+        # so the exemplar carries many rare tokens, keeping coverage_ratio low. (With the fork's
+        # 192-faculty frame set the registry is much denser, so a thin cluster reads as covered.)
         for i in range(4):
-            tc.seal("experience", {"summary": f"kubernetes pod crashloopbackoff oomkill "
-                                              f"replicaset kubelet eviction probe {i}"})
+            tc.seal("experience", {"summary": f"kubernetes crashloopbackoff oomkill replicaset "
+                                              f"kubelet eviction sidecar istio envoy mutatingwebhook "
+                                              f"cordon drain taint toleration daemonset statefulset {i}"})
         emergent_before = len(cambium.load_emergent(root)["faculties"])
         r_g = dream.Dream(root, registry_root=root).run()
         grown_props = [p for p in r_g["growth"]["proposals"]
@@ -1505,8 +1511,13 @@ def main():
         _facnames = (set(json.loads((SKILL / "registry" / "modalities.json").read_text())["modalities"]
                          and [m["name"] for m in json.loads((SKILL / "registry" / "modalities.json").read_text())["modalities"]])
                      | set(s["name"] for s in json.loads((SKILL / "registry" / "senses.json").read_text())["senses"]))
-        check("phase14 ops: every curated faculty has an executable op (registry<->OPS bijection)",
-              len(_facnames) >= 42 and _facnames == set(_mo.OPS) and not (_facnames - set(_mo.OPS)))
+        # One-directional invariant (fork): every executable op maps to a registered faculty
+        # (no orphan ops), but a faculty MAY be an op-less FRAME — the model fills frames, code
+        # fills mechanisms. The fork imports the full timechain-agent frame set (192 faculties),
+        # so the old registry<->OPS bijection no longer holds; OPS (the 43 curated mechanisms)
+        # must remain a subset of the registry.
+        check("phase14 ops: every executable op maps to a registered faculty (OPS subset of registry; frames may be op-less)",
+              len(set(_mo.OPS)) >= 42 and set(_mo.OPS) <= _facnames and not (set(_mo.OPS) - _facnames))
         check("phase14 ops: a non-faculty name has no op", _mo.run_for("Not A Faculty", "x") is None)
         check("phase14 ops: Bad-Idea Alarm detects risk markers",
               "overflow" in _mo.run_for("Bad-Idea Alarm", "integer overflow is dangerous")["hits"])

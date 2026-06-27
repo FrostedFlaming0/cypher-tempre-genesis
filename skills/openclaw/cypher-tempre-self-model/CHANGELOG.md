@@ -6,6 +6,41 @@ Changes maintained in the **FrostedFlaming0** fork, layered on top of the upstre
 cyberphysicsai releases listed below. These are not part of upstream's `vX.Y.Z`
 versioning; some are deliberately experimental and ship disabled by default.
 
+### Full faculty frame-set imported (192 faculties); frames are first-class — 2026-06-27
+
+Imported the **entire timechain-agent faculty set** — 84 modalities + 107 senses — into the
+fork's registries, joined with the curated subset already present (net **84 modalities + 108
+senses = 192**, the extra sense being the fork's Computational-Shape Sensing). The parent
+project always carried these as *frames* (named interpretive lenses) and only ever implemented
+~30 as deterministic detectors; this brings the fork's expressive vocabulary up to the parent's
+while keeping the **frames-vs-mechanisms** distinction explicit.
+
+#### Added
+- **149 new faculty frames** in `registry/modalities.json` / `registry/senses.json`, each tagged
+  `origin: "timechain-agent"`, preserving the parent's ids (the curated subset already used the
+  parent's ids, so the union is collision-free). They carry no op — they enrich labeling,
+  retrieval anchoring, and the chronosynaptic perspective pool, and the model fills them with its
+  own judgment. Runtime cost is ~nil: `run_all` executes only *fired* faculties, and a frame with
+  no op returns nothing.
+
+#### Changed
+- **The registry↔OPS invariant is now one-directional.** Previously every registered faculty had
+  to have an op (a bijection). Now **every op must map to a registered faculty** (no orphan ops),
+  but a faculty MAY be an op-less frame. The 43 curated mechanisms are unchanged; selftest's
+  assertion was relaxed accordingly.
+- **Growth is quieter, by design.** With the registry far denser, more of the input space is
+  already *named*, so autonomous gap-growth fires less often (only genuinely uncovered gaps
+  sprout). A selftest growth fixture was made more distinctive so its cluster still reads as a
+  real gap under the denser registry — the behavior change is intended, not a regression.
+
+#### Notes
+- **Why not give every frame a (lexical) op?** Because a keyword op is worse than the model at a
+  perceptual faculty and manufactures false precision in `labels.computed`. Ops are for
+  computation that beats perception (counting, structure) — exactly where `op_need` fires.
+  Frames and mechanisms are both first-class; see SKILL.md *Why frames are first-class*.
+- Applied identically across all five bundles (claude / codex / hermes / nanoclaw / openclaw).
+  Full selftest: 279 PASS / 0 FAIL.
+
 ### Composability (faculties as circuits) + structural op-write trigger — 2026-06-27
 
 Faculties were isolated parallel lenses: every fired op read the raw input independently and
