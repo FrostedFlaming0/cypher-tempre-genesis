@@ -411,6 +411,130 @@ class ChronosynapticTree:
                 "synthesis": synthesis, "payload": payload}, ring
 
 
+class PipelineTree(ChronosynapticTree):
+    """Change-4: the same single-pass MCTS, but each path is a CANDIDATE PIPELINE of
+    faculties rather than a synthesis of perspectives. expand appends a faculty; the value
+    is PoQ on the pipeline description BLENDED with the pipeline's actual composition-yield
+    (it builds the Change-2 `intersect` combinator over the path and RUNS it on the query —
+    a pipeline whose faculties genuinely agree on signal scores above one that stacks
+    redundant or non-interacting lenses). On collapse the winning pipeline is emitted as a
+    Change-2 composite spec, registered into composites.json, and sealed as a `pipeline`
+    ring — so search → compose → (dream) abstract closes the wake-sleep loop."""
+
+    CANDIDATE_NAME = "__candidate_pipeline__"
+
+    def compose(self, path, query):
+        steps = " ∩ ".join(p["name"] for p in path) or "(empty)"
+        return (f"Pipeline composition for «{short(query, 64)}»: {steps} — faculties fused "
+                f"via intersect (the signal they agree on)")
+
+    def candidate_spec(self, path):
+        names = [p["name"] for p in path]
+        if len(names) < 2:
+            return None
+        return {"primitive": "intersect", "of": names}
+
+    def run_candidate(self, path, text, context):
+        """Build the path's intersect combinator and run it (with its input faculties) over
+        the text via the Change-1 DAG, returning the composite's own output."""
+        spec = self.candidate_spec(path)
+        if spec is None:
+            return {}
+        import modality_ops
+        op = modality_ops.build_op(spec)
+        if op is None:
+            return {}
+        names = [p["name"] for p in path]
+        cname = self.CANDIDATE_NAME
+        computed = modality_ops.run_all(names + [cname], text, context,
+                                        extra_ops={cname: op}, deps={cname: names})
+        return computed.get(cname, {}) or {}
+
+    def value(self, path, query, context, external=None):
+        verdict, text = super().value(path, query, context, external)
+        out = self.run_candidate(path, query, context)
+        agree = bool(out.get("agree"))
+        overlap = len(out.get("intersect") or [])
+        bonus = (35 if agree else 0) + min(overlap, 8) * 5          # composition-yield, 0..75
+        single_penalty = 0 if len(path) >= 2 else 25                # bias toward real pipelines
+        v = dict(verdict)
+        v["yield"] = {"agree": agree, "overlap": overlap, "bonus": bonus}
+        # search-only brightness: PoQ grounding blended with measured yield. The sealed PoQ
+        # `scores` are left untouched (collapse seals leaf.poq["scores"]) — only the MCTS
+        # signal is steered toward compositions that actually compute something.
+        v["brightness"] = max(0.0, min(255.0, verdict["brightness"] * 0.7 + bonus - single_penalty))
+        return v, text
+
+    def search(self, query, context="", seed_names=None):
+        untried = self.rank(query, context, self.forks)
+        if seed_names:
+            by = {f["name"]: f for f in self.faculties}
+            seeds = [by[n] for n in seed_names if n in by]
+            seen = {(f["kind"], f["id"]) for f in seeds}
+            rest = [f for f in untried if (f["kind"], f["id"]) not in seen]
+            untried = seeds + rest
+            if seeds:
+                untried = untried[:max(self.forks, len(seeds))]
+        root = Node(None, 0, None, [], untried)
+        for _ in range(self.iterations):
+            node = self.select(root)
+            if node.depth < self.max_depth and node.untried:
+                node = self.expand(node, query, context)
+            value = self.simulate(node, query, context)
+            self.backprop(node, value)
+        return root
+
+    def collapse_to_composite(self, root, query, context, name=None, kind=None,
+                              register=True, difficulty=0, do_seal=True):
+        chosen = self.best_path(root)
+        if not chosen:
+            return None, None
+        leaf = chosen[-1]
+        path = leaf.path
+        spec = self.candidate_spec(path)
+        names = [p["name"] for p in path]
+        cname = name or ("Confluence: " + " ∩ ".join(names))
+        ckind = kind or path[-1].get("kind") or "modality"
+        sample = self.run_candidate(path, query, context)
+        forks_report = sorted(
+            [{"perspective": ch.perspective["name"], "kind": ch.perspective["kind"],
+              "visits": ch.N, "value": round(ch.q() * 255, 1)} for ch in root.children],
+            key=lambda d: d["visits"], reverse=True)
+
+        registered = False
+        if register and spec is not None:
+            import modality_ops
+            registered = modality_ops.register_composite(
+                registry_home(self.root_path), cname, ckind, names, spec,
+                function=f"pipeline-search winner: intersect of {names}")
+
+        payload = {
+            "event": "pipeline_search_collapse",
+            "mode": "pipeline-search",
+            "query": query,
+            "context": context,
+            "pipeline": names,
+            "composite_name": cname,
+            "kind": ckind,
+            "composite_spec": spec,
+            "sample_output": sample,
+            "registered": registered,
+            "registry": "registry/composites.json" if registered else None,
+            "synthesis": self.compose(path, query),
+            "considered_forks": forks_report,
+            "collapsed_from": len(root.children),
+            "sealed_one_of": len(root.children),
+        }
+        ring = None
+        if do_seal:
+            ring = self.tc.seal("pipeline", payload,
+                                poq=leaf.poq["scores"] if leaf.poq else None,
+                                difficulty=difficulty)
+        return {"chosen": chosen, "leaf": leaf, "forks": forks_report, "spec": spec,
+                "name": cname, "kind": ckind, "pipeline": names, "sample": sample,
+                "registered": registered, "synthesis": payload["synthesis"]}, ring
+
+
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
@@ -481,6 +605,56 @@ def cmd_collapse_notes(args):
         print("\n  (not sealed — pass --seal to commit the explicit collapse to the Timechain)")
 
 
+def cmd_pipeline(args):
+    tree = PipelineTree(args.root, iterations=args.iterations,
+                        forks=args.forks, max_depth=args.depth, window=args.window)
+    if len(tree.chain) == 0:
+        print("No chain yet — run 'python3 timechain.py init' first.")
+        sys.exit(1)
+
+    seed_names = None
+    if args.seed_from_gap:
+        # Folded Change-3: seed the search from a greedy max-coverage faculty selection over
+        # the gap's matched-token SETS (complementary lenses), not raw top_activated count.
+        from cambium import load_corpus, detect_gap, greedy_coverage, registry_home
+        corpus = load_corpus(registry_home(args.root))
+        gap = detect_gap(corpus, args.seed_from_gap, args.context or "")
+        seed = greedy_coverage(gap, k=args.forks)
+        seed_names = [s["name"] for s in seed]
+        if seed_names:
+            print(f"  seeded from greedy max-coverage over the gap: {', '.join(seed_names)}\n")
+
+    root = tree.search(args.query, args.context or "", seed_names=seed_names)
+    result, ring = tree.collapse_to_composite(
+        root, args.query, args.context or "", name=args.name, kind=args.kind,
+        register=not args.no_register, difficulty=args.difficulty, do_seal=args.seal)
+    if result is None:
+        print("  search produced no pipeline (no faculties ranked for this query).")
+        return
+
+    print(f"searched {len(root.children)} candidate pipelines over {args.iterations} "
+          f"in-process iterations (depth {args.depth}); no subagents.\n")
+    print("  CANDIDATE PIPELINES (head faculty | visits | blended value 0-255):")
+    for f in result["forks"]:
+        print(f"    [{f['kind'][0].upper()}] {f['perspective']:<34} N={f['visits']:>3}  v={f['value']}")
+    print(f"\n  COLLAPSE -> winning pipeline ({len(result['pipeline'])} faculties):")
+    print(f"    {' ∩ '.join(result['pipeline'])}")
+    print(f"  composite spec: {json.dumps(result['spec'], ensure_ascii=False)}")
+    sample = result["sample"] or {}
+    print(f"  sample yield  : agree={sample.get('agree')}  "
+          f"overlap={sample.get('intersect') or []}")
+    if result["registered"]:
+        print(f"  REGISTERED as composite '{result['name']}' ({result['kind']}) "
+              f"-> registry/composites.json (fires next turn)")
+    else:
+        print(f"  (not registered — pass without --no-register to bank it as a composite)")
+    if ring:
+        print(f"\n  SEALED pipeline Ring {ring['index']}  {ring['ring_hash'][:16]}..  "
+              f"(1 of {len(root.children)} candidates kept; the rest collapsed away)")
+    else:
+        print("\n  (not sealed — pass --seal to commit the collapse to the Timechain)")
+
+
 def build_parser():
     default_root = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description="Chronosynaptic Tree — single-pass parallel-self MCTS over the Timechain.")
@@ -508,6 +682,24 @@ def build_parser():
     pn.add_argument("--seal", action="store_true", help="seal the explicit collapse into the Timechain")
     pn.add_argument("--difficulty", type=int, default=0)
     pn.set_defaults(func=cmd_collapse_notes)
+
+    pp = sub.add_parser("pipeline", help="Change-4: search over candidate PIPELINES of faculties, "
+                                         "collapse the winner into a Change-2 composite, seal it")
+    pp.add_argument("query")
+    pp.add_argument("--root", type=Path, default=default_root)
+    pp.add_argument("--context", default=None)
+    pp.add_argument("--iterations", type=int, default=24)
+    pp.add_argument("--forks", type=int, default=4)
+    pp.add_argument("--depth", type=int, default=3, help="max pipeline length (faculties)")
+    pp.add_argument("--window", type=int, default=POQ_WINDOW)
+    pp.add_argument("--seed-from-gap", default=None,
+                    help="seed the search from a greedy max-coverage faculty selection over this text's gap")
+    pp.add_argument("--name", default=None, help="name for the emitted composite (default: auto)")
+    pp.add_argument("--kind", choices=["sense", "modality"], default=None)
+    pp.add_argument("--no-register", action="store_true", help="do not write the winner to composites.json")
+    pp.add_argument("--seal", action="store_true", help="seal the pipeline collapse into the chain")
+    pp.add_argument("--difficulty", type=int, default=0)
+    pp.set_defaults(func=cmd_pipeline)
     return p
 
 

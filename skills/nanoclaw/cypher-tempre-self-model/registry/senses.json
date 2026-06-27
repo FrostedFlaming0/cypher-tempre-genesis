@@ -161,6 +161,13 @@
       "origin": "Algorithmic Compassion Vibe",
       "function": "Detect the underlying intent embedded in code or systems.",
       "category": "integrity"
+    },
+    {
+      "id": 108,
+      "name": "Computational-Shape Sensing",
+      "origin": "Op-Write Trigger (mid-turn structural-need detection)",
+      "function": "Detect when text describes an operation (rank, count, correlate, co-occur, compare, ratio, between) over two or more operands that a term-presence op cannot compute, signalling a richer op should be authored.",
+      "category": "structural"
     }
   ]
 }

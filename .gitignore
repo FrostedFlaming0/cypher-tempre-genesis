@@ -14,6 +14,7 @@ dashboard/node_modules/
 **/registry/grown.json
 **/registry/grown_ops.json
 **/registry/autoexec_ops.json
+**/registry/composites.json
 # Per-user learner state (Phases B-E) — trained operators and covenant-tolerance
 # overrides belong to each agent, never to the shipped base. The chain/-rooted
 # ledgers (telemetry, salience, replay, dream state) are covered by **/chain/.

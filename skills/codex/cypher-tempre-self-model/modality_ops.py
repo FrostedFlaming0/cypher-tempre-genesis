@@ -20,10 +20,11 @@ These ops do NOT replace the model's reasoning; they perform the mechanical part
 Stdlib only. Python 3.8+.
 """
 import contextlib
+import inspect
 import json
 import os
 import re
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -339,6 +340,7 @@ OPS = {
                                                    "sentences": density(t)["sentences"]},
     "Embedded-Intent Sensing": lambda t, c="": {"injection": hits(_FAM_RX["injection"], t),
                                                 "override": bool(_FAM_RX["injection"].search(t or ""))},
+    "Computational-Shape Sensing": lambda t, c="": comp_shape(t),
 }
 
 
@@ -347,6 +349,58 @@ def _timeline(text):
     iso = [d for d in dates if re.match(r"\d{4}-\d{1,2}-\d{1,2}", d)]
     ordered = (iso == sorted(iso)) if len(iso) >= 2 else None
     return {"dates": dates[:_MAX], "in_order": ordered}
+
+
+# --------------------------------------------------------------------------- #
+# Computational-Shape Sensing — detects when text describes an OPERATION (rank,
+# count, correlate, co-occur, compare, ratio, between…) over >=2 operands, i.e. a
+# computation a bare term-presence (markers) op structurally cannot perform. This
+# is the perceptual half of the mid-turn op-write trigger (op_need.py Layer 1):
+# it keys on the OPERATION, not on vocabulary novelty. STRONG verbs are
+# unambiguously computational and fire alone; WEAK verbs occur in ordinary prose
+# ("compare notes", "map onto") and require corroboration (an aggregate cue, a
+# struct noun, or >=2 numbers/symbols) before firing — this is what keeps
+# rhetorical phrasing from tripping it.
+# --------------------------------------------------------------------------- #
+_COMP_STRONG_VERBS = re.compile(r"\b(rank|count|tally|correlate|co-?occurs?|aggregate|"
+                                r"intersect|histogram|group\s+by)\b", re.I)
+_COMP_WEAK_VERBS = re.compile(r"\b(sort|order|compare|sum|average|mean|map\s+over|filter|"
+                              r"derive|measure|join|diff|overlap)\b", re.I)
+_COMP_STRUCT_NOUNS = re.compile(r"\b(graph|dependency|tree|matrix|distribution|interval|"
+                                r"sequence|ratio|percentage|topolog\w*)\b", re.I)
+_COMP_AGG_CUES = re.compile(r"\b(how\s+many|number\s+of|per|each|ratio|percent|across|"
+                            r"between|most|least|total)\b|%", re.I)
+_COMP_CUE_WORDS = frozenset(re.findall(r"[a-z]+", _COMP_STRONG_VERBS.pattern +
+                            _COMP_WEAK_VERBS.pattern + _COMP_AGG_CUES.pattern +
+                            _COMP_STRUCT_NOUNS.pattern))
+
+
+def comp_shape(text):
+    """Layer-1 detector: {fired, shape, operands, detail}. fired=True only when an
+    operation signature is present AND >=2 distinct content operands exist."""
+    t = text or ""
+    strong = _COMP_STRONG_VERBS.search(t)
+    weak = _COMP_WEAK_VERBS.search(t)
+    struct = _COMP_STRUCT_NOUNS.search(t)
+    agg = _COMP_AGG_CUES.search(t)
+    n_struct = len(numbers(t)) + len(symbols(t))
+    corroborated = bool(agg) or bool(struct) or n_struct >= 2
+    gate = bool(strong) or (bool(weak) and corroborated)
+    operands = list(dict.fromkeys(w for w in _content(t) if w not in _COMP_CUE_WORDS))
+    fired = gate and len(operands) >= 2
+    if strong:
+        shape, why = strong.group(0).lower(), f"strong-verb='{strong.group(0)}'"
+    elif weak and corroborated:
+        shape = weak.group(0).lower()
+        why = (f"weak-verb='{weak.group(0)}'+corrob("
+               f"{'agg' if agg else ''}{'/struct' if struct else ''}"
+               f"{'/nums' if n_struct >= 2 else ''})")
+    elif weak:
+        shape, why = None, f"weak-verb='{weak.group(0)}'(uncorroborated)"
+    else:
+        shape, why = None, "no operation signature"
+    return {"fired": fired, "shape": shape, "operands": len(operands),
+            "detail": f"{why}; operands={len(operands)}"}
 
 
 # --------------------------------------------------------------------------- #
@@ -450,7 +504,97 @@ def build_op(spec):
                     pass
             return out
         return composed
+    # ---- Change-2 combinators: COMPOSITE ops over the Change-1 `computed` channel ----
+    # These read upstream faculty outputs (the composite declares them in `inputs`, which
+    # drives the DAG order in run_all) and combine them into a derived signal. Still no
+    # exec: every combinator is assembled from this fixed menu only.
+    if prim == "intersect":
+        names = [n for n in (spec.get("of") or []) if isinstance(n, str)]
+        if len(names) < 2:
+            return None
+        def _intersect(t, c="", computed=None, _names=names):
+            sets = [_signals((computed or {}).get(n, {})) for n in _names]
+            common = set.intersection(*sets) if all(sets) else set()
+            return {"intersect": sorted(common), "agree": bool(common), "of": _names}
+        return _intersect
+    if prim == "filter_by":
+        keep, when = spec.get("keep"), spec.get("when")
+        if not isinstance(keep, str) or not isinstance(when, str):
+            return None
+        def _filter_by(t, c="", computed=None, _keep=keep, _when=when):
+            gate = _truthy((computed or {}).get(_when, {}))
+            return {"kept": gate, "by": _when,
+                    "value": (computed or {}).get(_keep) if gate else None}
+        return _filter_by
+    if prim == "map_over":
+        over, field, apply = spec.get("over"), spec.get("field"), spec.get("apply")
+        if not isinstance(over, str) or not isinstance(field, str) or apply not in _PRIMITIVE_OPS:
+            return None
+        def _map_over(t, c="", computed=None, _o=over, _f=field, _a=apply):
+            coll = ((computed or {}).get(_o, {}) or {}).get(_f, []) or []
+            out = []
+            for e in list(coll)[:_MAX]:
+                try:
+                    out.append({"item": e, "result": _PRIMITIVE_OPS[_a](str(e), c)})
+                except Exception:
+                    pass
+            return {"mapped": out, "over": _o, "field": _f, "apply": _a}
+        return _map_over
+    if prim == "pipe":
+        names = [n for n in (spec.get("of") or []) if isinstance(n, str)]
+        if len(names) < 2:
+            return None
+        def _pipe(t, c="", computed=None, _names=names):
+            # feed each stage's output-signals forward as the CONTEXT of the next faculty op
+            ctx, last = c, None
+            steps = []
+            for n in _names:
+                op = OPS.get(n)
+                if op is None:                    # not a built-in faculty -> read its computed
+                    last = (computed or {}).get(n)
+                else:
+                    last = op(t, ctx)
+                ctx = " ".join(sorted(_signals(last or {}))) or ctx
+                steps.append({n: last})
+            return {"piped": last, "stages": steps, "of": _names}
+        return _pipe
     return None      # unknown primitive -> no op (safe by construction)
+
+
+def _signals(result):
+    """Flatten a faculty output dict into the set of 'signal tokens' it emitted: every
+    string in any list value, plus any key whose value is exactly True. The shared
+    vocabulary the Change-2 combinators (intersect/pipe) operate over."""
+    out = set()
+    if not isinstance(result, dict):
+        return out
+    for k, v in result.items():
+        if v is True:
+            out.add(str(k))
+        elif isinstance(v, str):
+            out.add(v)
+        elif isinstance(v, (list, tuple)):
+            for e in v:
+                if isinstance(e, str):
+                    out.add(e)
+                elif isinstance(e, (list, tuple)) and e and isinstance(e[0], str):
+                    out.add(e[0])
+    return out
+
+
+def _truthy(result):
+    """A faculty output counts as a satisfied predicate (for filter_by) if it emitted any
+    signal token, any positive number, or any True flag."""
+    if not isinstance(result, dict):
+        return bool(result)
+    if _signals(result):
+        return True
+    for v in result.values():
+        if v is True:
+            return True
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            return True
+    return False
 
 
 def _grown_ops_path(registry_root):
@@ -491,6 +635,53 @@ def register_grown_op(registry_root, name, spec):
         if "ops" not in data or not isinstance(data.get("ops"), dict):
             data = {"registry": "grown_ops", "ops": {}}
         data["ops"][name] = spec
+        p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        return True
+    except Exception:
+        return False
+
+
+def _composites_path(registry_root):
+    return Path(registry_root) / "registry" / "composites.json"
+
+
+def load_composites(registry_root):
+    """Build ({name: op}, {name: [inputs]}) for Change-2 composite faculties from the
+    per-user registry/composites.json. Composite ops are 3-arg (they read the `computed`
+    channel); their declared `inputs` drive the DAG order in run_all. Best-effort."""
+    ops, deps = {}, {}
+    try:
+        p = _composites_path(registry_root)
+        if p.is_file():
+            for name, rec in (json.loads(p.read_text()).get("composites") or {}).items():
+                spec = (rec or {}).get("spec")
+                op = build_op(spec) if isinstance(spec, dict) else None
+                if op is not None:
+                    ops[name] = op
+                    deps[name] = [n for n in (rec.get("inputs") or []) if isinstance(n, str)]
+    except Exception:
+        pass
+    return ops, deps
+
+
+def register_composite(registry_root, name, kind, inputs, spec, function=""):
+    """Persist a composite faculty to composites.json — only if its spec builds into a
+    usable op. Returns True/False. Pure DATA: nothing executes outside the audited combinator
+    menu, so this needs no human-review gate (unlike model-authored autoexec ops)."""
+    if not name or build_op(spec) is None:
+        return False
+    try:
+        p = _composites_path(registry_root)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        data = json.loads(p.read_text()) if p.is_file() else {}
+        if "composites" not in data or not isinstance(data.get("composites"), dict):
+            data = {"registry": "composites", "composites": {}}
+        data["composites"][name] = {
+            "kind": kind if kind in ("sense", "modality") else "modality",
+            "inputs": [n for n in (inputs or []) if isinstance(n, str)],
+            "spec": spec,
+            "function": function or "",
+        }
         p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
         return True
     except Exception:
@@ -672,17 +863,113 @@ def run_for(name, text, context=""):
         return None      # an op must never break labeling/sealing
 
 
-def run_all(fired_names, text, context="", extra_ops=None):
-    """Run every executable op among the fired faculty names — base OPS first, then
-    any local grown-faculty ops (extra_ops). Returns {name: result}."""
+import weakref as _weakref
+_ARITY_CACHE = _weakref.WeakKeyDictionary()   # keyed by op object; safe across GC
+
+
+def _accepts_computed(op):
+    """True if op consumes the data-flow channel: it has a parameter literally named
+    `computed`, or takes *args. We key on the NAME, not raw arity (pos >= 3), because the
+    standard markers idiom `lambda t, c="", _rx=rx: ...` carries a 3rd *default* param purely
+    to close over its regex — that is NOT a computed-consumer, and feeding it `computed` as
+    `_rx` would break it. Every real composite (intersect/filter_by/map_over/pipe) names the
+    param `computed`. Cached in a WeakKeyDictionary (id-based caching is unsafe — GC can reuse
+    ids across ops)."""
+    try:
+        cached = _ARITY_CACHE.get(op)
+        if cached is not None:
+            return cached
+    except TypeError:
+        cached = None                          # op not weak-referenceable (e.g. a builtin)
+    res = False
+    try:
+        params = list(inspect.signature(op).parameters.values())
+        named = any(p.name == "computed" and
+                    p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+                    for p in params)
+        var = any(p.kind == p.VAR_POSITIONAL for p in params)
+        res = named or var
+    except Exception:
+        res = False
+    try:
+        _ARITY_CACHE[op] = res
+    except TypeError:
+        pass
+    return res
+
+
+def _invoke(op, text, context, computed):
+    """Call op with the data-flow channel when it accepts one, else the legacy 2-arg
+    form. Lets old 2-arg ops and new 3-arg composite ops share one run_all."""
+    if computed is not None and _accepts_computed(op):
+        return op(text, context, computed)
+    return op(text, context)
+
+
+def _run_one(nm, text, context, extra_ops, computed):
+    """Resolve one faculty's op: built-in OPS first (always 2-arg), then a local/grown/
+    composite op from extra_ops (which may consume `computed`). Returns its result or None."""
+    r = run_for(nm, text, context)
+    if r is None and extra_ops and nm in extra_ops:
+        try:
+            r = _invoke(extra_ops[nm], text, context, computed)
+        except Exception:
+            r = None
+    return r
+
+
+def _topo_order(names, deps):
+    """Kahn topo-sort over `names` plus the transitive closure of their declared inputs.
+    Returns (order, dropped) — dropped = nodes left in a dependency cycle (excluded, never
+    raised). Atoms (no deps) sort first; a composite always runs after its inputs."""
+    deps = deps or {}
+    nodes, stack = set(names), list(names)
+    while stack:
+        n = stack.pop()
+        for d in deps.get(n, []):
+            if d not in nodes:
+                nodes.add(d)
+                stack.append(d)
+    indeg = {n: 0 for n in nodes}
+    adj = {n: [] for n in nodes}
+    for n in nodes:
+        for d in deps.get(n, []):
+            if d in nodes:
+                adj[d].append(n)
+                indeg[n] += 1
+    q = deque(sorted(n for n in nodes if indeg[n] == 0))
+    order = []
+    while q:
+        n = q.popleft()
+        order.append(n)
+        for m in adj[n]:
+            indeg[m] -= 1
+            if indeg[m] == 0:
+                q.append(m)
+    dropped = [n for n in nodes if n not in order]   # nodes in a cycle
+    return order, dropped
+
+
+def run_all(fired_names, text, context="", extra_ops=None, deps=None):
+    """Run every executable op among the fired faculty names. Returns {name: result}.
+
+    Without `deps` this is the legacy flat sweep — each fired op runs independently on the
+    same (text, context), byte-identical to before. With `deps` ({name: [input_names]},
+    supplied for composite faculties) it becomes a DEPENDENCY-DAG walk: atoms run first and
+    a composite op receives the `computed`-so-far dict as a third arg, so one faculty can
+    consume another's output. Cycles are dropped (fail-open), never raised."""
+    names = list(fired_names or [])
+    if not deps:
+        out = {}
+        for nm in names:
+            r = _run_one(nm, text, context, extra_ops, computed=None)
+            if r is not None:
+                out[nm] = r
+        return out
+    order, _dropped = _topo_order(names, deps)
     out = {}
-    for nm in fired_names or []:
-        r = run_for(nm, text, context)
-        if r is None and extra_ops and nm in extra_ops:
-            try:
-                r = extra_ops[nm](text, context)
-            except Exception:
-                r = None
+    for nm in order:
+        r = _run_one(nm, text, context, extra_ops, computed=out)
         if r is not None:
             out[nm] = r
     return out

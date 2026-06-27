@@ -251,6 +251,86 @@ class Dream:
                 proposals.append({"cluster_size": len(idx), "error": str(exc)})
         return {"clusters": n_clusters, "proposals": proposals, "examined": len(members)}
 
+    # ---- step 3c: abstract recurring pipelines into named library composites ----
+    @staticmethod
+    def _composition_signature(spec):
+        """A stable key for a composite spec, so the same wiring sealed by different
+        searches collapses to one signature (recurrence counts the WIRING, not the ring)."""
+        if not isinstance(spec, dict):
+            return None
+        prim = spec.get("primitive")
+        if prim in ("intersect", "compose"):
+            of = tuple(sorted(n for n in (spec.get("of") or []) if isinstance(n, str)))
+            return (prim, of) if of else None
+        if prim == "pipe":
+            of = tuple(n for n in (spec.get("of") or []) if isinstance(n, str))
+            return (prim, of) if of else None
+        if prim == "filter_by":
+            return (prim, spec.get("keep"), spec.get("when"))
+        if prim == "map_over":
+            return (prim, spec.get("over"), spec.get("field"), spec.get("apply"))
+        return (prim,)
+
+    def abstract_pipelines(self):
+        """Wake-sleep abstraction: a composition that keeps WINNING the pipeline search (or is
+        hand-composed) ≥ K times is a recurring circuit worth banking as a named library
+        primitive. Scan recent `pipeline`/`composite` births since the high-water mark, count
+        by wiring-signature, and register any signature recurring ≥ K under a stable abstracted
+        name in composites.json — closing search → compose → abstract."""
+        import os
+        from cambium import registry_home
+        import modality_ops
+        K = max(2, int(os.environ.get("CT_ABSTRACT_AT", "2") or 2))
+        state = self._state()
+        seen_to = state.get("abstracted_to", 0)
+        home = registry_home(self.root, self.registry_root)
+        existing = {}
+        try:
+            existing, _deps = modality_ops.load_composites(home)
+        except Exception:
+            existing = {}
+
+        counts, newest = {}, seen_to
+        for r in self.tc.tail_rings(400):
+            if r.get("ring_type") not in ("pipeline", "composite"):
+                continue
+            idx = r.get("index", 0)
+            if idx <= seen_to:
+                continue
+            newest = max(newest, idx)
+            pay = r.get("payload", {}) or {}
+            spec = pay.get("composite_spec") or pay.get("spec")
+            sig = self._composition_signature(spec)
+            if not sig:
+                continue
+            names = pay.get("pipeline") or pay.get("inputs") or (spec.get("of") if isinstance(spec, dict) else None) or []
+            rec = counts.setdefault(sig, {"count": 0, "spec": spec, "names": names,
+                                          "kind": pay.get("kind") or "modality"})
+            rec["count"] += 1
+
+        if newest > seen_to:
+            state["abstracted_to"] = newest
+            self._save_state(state)
+
+        promoted = []
+        for sig, rec in counts.items():
+            if rec["count"] < K:
+                continue
+            names = [n for n in (rec["names"] or []) if isinstance(n, str)]
+            label = " ∩ ".join(names) if names else str(sig[0])
+            name = f"Abstracted: {label}"
+            already = name in existing
+            ok = already
+            if not already:
+                ok = modality_ops.register_composite(
+                    home, name, rec["kind"], names, rec["spec"],
+                    function=f"dream-abstracted recurring composition (seen {rec['count']}x)")
+            promoted.append({"name": name, "recurrence": rec["count"],
+                             "spec": rec["spec"], "registered": bool(ok),
+                             "already": already})
+        return {"candidates": len(counts), "promoted": promoted,
+                "threshold": K, "since_ring": seen_to}
+
     # ---- step 4: bidirectional salience overlay ----
     def resonate(self):
         """Live salience: +1 fetch, +2 use, +3 replay-accept, -4 falsify. Derived
@@ -318,6 +398,10 @@ class Dream:
             report["growth"] = self.propose_growth() if train else {"skipped": True}
         except Exception as exc:
             report["growth"] = {"error": str(exc)}
+        try:
+            report["abstraction"] = self.abstract_pipelines() if train else {"skipped": True}
+        except Exception as exc:
+            report["abstraction"] = {"error": str(exc)}
         report["salience"] = self.resonate()
         report["economics"] = self.account()
         dg = self.tel.digest()                # ONE call: digest() seals on first invocation,
@@ -329,12 +413,16 @@ class Dream:
         mp = report["missed_positives"]["mined"]
         grown = [p for p in (report.get("growth", {}).get("proposals") or [])
                  if p.get("action") in ("born", "recurrence", "promoted")]
+        abst = [p for p in (report.get("abstraction", {}).get("promoted") or [])
+                if p.get("registered")]
         if do_seal:
             ring = self.tc.seal("dream", {
                 "summary": (f"Dream cycle: chain verified; {mp} missed-positive(s) mined; "
                             f"learners trained — adopted: {', '.join(adopted) if adopted else 'none (guards held)'}; "
                             f"{len(grown)} growth proposal(s)"
                             + (f" ({', '.join(p['faculty'] for p in grown if p.get('faculty'))})" if grown else "")
+                            + f"; {len(abst)} pipeline(s) abstracted"
+                            + (f" ({', '.join(p['name'] for p in abst)})" if abst else "")
                             + f"; salience resonance over {report['salience']['rings']} ring(s); "
                             f"telemetry digested; {report['duration_s']}s."),
                 "dream": report,
@@ -385,6 +473,11 @@ def cmd_run(args):
                          for p in props if not p.get("error")) or "none"
         print(f"growth     : {gr.get('clusters', 0)} cluster(s) of {gr.get('examined', 0)} "
               f"block(s) -> {line}")
+    ab = r.get("abstraction", {})
+    if not ab.get("skipped") and "error" not in ab:
+        proms = ab.get("promoted") or []
+        aline = ", ".join(f"{p['name']} (x{p['recurrence']})" for p in proms) or "none"
+        print(f"abstraction: {ab.get('candidates', 0)} composition(s) -> {aline}")
     sal = r["salience"]
     print(f"resonance  : {sal['rings']} ring(s)  "
           f"+{', '.join(sal['reinforced'][:3]) or '-'}   -{', '.join(sal['decayed'][:2]) or '-'}")

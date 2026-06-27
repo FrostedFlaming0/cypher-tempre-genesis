@@ -183,6 +183,35 @@ def detect_gap(corpus, input_text: str, context: str = "") -> dict:
             "input_tokens": sorted(toks)}
 
 
+def greedy_coverage(gap: dict, k: int = 4) -> list:
+    """Folded Change-3: select up to `k` faculties by GREEDY MAX-COVERAGE over their
+    matched-token SETS, NOT by raw `top_activated` COUNT.
+
+    Why this and not top_activated (ring 651): top_activated ranks by len(inter) and throws
+    the matched SETS away, so it cannot tell complementary lenses from redundant ones and is
+    stopword-biased. Greedy coverage keeps the sets: each pick is the faculty that covers the
+    most still-UNCOVERED input tokens, so the selection spans the gap with complementary
+    faculties instead of stacking near-duplicates. This is the principled seed for the
+    Change-4 pipeline search (chronosynaptic), replacing the crude Change-3 signal."""
+    toks = set(gap.get("input_tokens") or [])
+    acts = gap.get("_acts") or []
+    if not toks or not acts:
+        return []
+    remaining = set(toks)
+    chosen, seen = [], set()
+    pool = [(set(toks) & f["tokens"], f) for _, f in acts]
+    while pool and len(chosen) < k:
+        cand = [(s, f) for s, f in pool if (s & remaining) and (f["kind"], f["id"]) not in seen]
+        if not cand:
+            break
+        s, f = max(cand, key=lambda sf: (len(sf[0] & remaining), len(sf[0]), -sf[1]["id"]))
+        chosen.append({"kind": f["kind"], "id": f["id"], "name": f["name"],
+                       "covers": sorted(s & remaining)})
+        remaining -= s
+        seen.add((f["kind"], f["id"]))
+    return chosen
+
+
 def infer_kind(input_text: str) -> str:
     return "modality" if set(tokens(input_text)) & REASON_VERBS else "sense"
 
@@ -712,6 +741,69 @@ def cmd_autoexec(args):
     print("    live in registry/autoexec_ops.json — fires every future turn while the toggle is set.")
 
 
+def _spec_inputs(spec):
+    """Derive the upstream faculty names (DAG deps) a composite spec references — its `of`
+    operands that are NOT primitives, plus keep/when/over. `apply` is a primitive, not an input."""
+    import modality_ops
+    out = []
+    for n in (spec.get("of") or []):
+        if isinstance(n, str) and n not in modality_ops._PRIMITIVE_OPS:
+            out.append(n)
+    for key in ("keep", "when", "over"):
+        v = spec.get(key)
+        if isinstance(v, str):
+            out.append(v)
+    return list(dict.fromkeys(out))
+
+
+def compose(root, name, kind, inputs, spec, function="", registry_root=None, difficulty=0):
+    """Author a Change-2 COMPOSITE faculty: validate the spec builds (audited combinator
+    menu only — no exec), persist it to composites.json, and seal a `composite` ring.
+    Returns (result, ring)."""
+    import modality_ops
+    home = registry_home(root, registry_root)
+    if modality_ops.build_op(spec) is None:
+        return {"ok": False, "reason": "spec does not build into a valid combinator op "
+                "(check primitive / operands)"}, None
+    if not modality_ops.register_composite(home, name, kind, inputs, spec, function):
+        return {"ok": False, "reason": "failed to register composite"}, None
+    tc = Timechain(root)
+    payload = {"event": "composite_birth", "name": name, "kind": kind, "inputs": inputs,
+               "spec": spec, "function": function, "registry": "registry/composites.json",
+               "summary": (f"Composed faculty '{name}' ({kind}) = {spec.get('primitive')} over "
+                           f"{inputs} — pure DATA (no exec); rides the Change-1 DAG `computed` "
+                           f"channel so it combines its inputs' outputs.")}
+    ring = tc.seal("composite", payload,
+                   poq={"coherence": 215, "relevance": 205, "novelty": 200,
+                        "consistency": 210, "depth": 200, "covenant": 230},
+                   difficulty=difficulty)
+    ring_idx = ring.get("index") if isinstance(ring, dict) else getattr(ring, "index", None)
+    return {"ok": True, "name": name, "kind": kind, "spec": spec, "inputs": inputs,
+            "ring": ring_idx}, ring
+
+
+def cmd_compose(args):
+    spec = {"primitive": args.primitive}
+    if args.of:
+        spec["of"] = args.of
+    for key in ("keep", "when", "over", "field", "apply"):
+        v = getattr(args, key, None)
+        if v:
+            spec[key] = v
+    inputs = args.inputs if args.inputs is not None else _spec_inputs(spec)
+    result, _ring = compose(args.root, args.name, args.kind, inputs, spec,
+                            function=args.function or "", registry_root=args.registry_root,
+                            difficulty=args.difficulty)
+    if not result.get("ok"):
+        print(f"  -> {result.get('reason')}")
+        return
+    print("\n  -- COMPOSITE FACULTY BORN (Change-2; pure data, no exec) --")
+    print(f"    name:    {result['name']} ({result['kind']})")
+    print(f"    spec:    {json.dumps(result['spec'], ensure_ascii=False)}")
+    print(f"    inputs:  {result['inputs']}  (DAG deps -> run after these fire)")
+    print(f"    sealed:  ring {result['ring']} | live in registry/composites.json")
+
+
 def cmd_emergent(args):
     data = load_emergent(registry_home(args.root, args.registry_root))
     if not data["faculties"]:
@@ -774,6 +866,26 @@ def build_parser():
     pae.add_argument("--seed-terms", nargs="*", default=[])
     pae.add_argument("--text", default="", help="activation text to fire the op on same-turn")
     pae.set_defaults(func=cmd_autoexec)
+
+    pc = sub.add_parser("compose", parents=[common],
+                        help="Change-2: author a COMPOSITE faculty (pipe/intersect/filter_by/map_over "
+                             "over other faculties' outputs) as data — no exec, no human gate")
+    pc.add_argument("name", help="composite faculty name")
+    pc.add_argument("--kind", choices=["sense", "modality"], default="modality")
+    pc.add_argument("--primitive", required=True,
+                    choices=["pipe", "intersect", "filter_by", "map_over", "compose"],
+                    help="the combinator")
+    pc.add_argument("--of", nargs="*", default=None, help="operand faculty names (pipe/intersect/compose)")
+    pc.add_argument("--keep", default=None, help="filter_by: faculty whose output is kept")
+    pc.add_argument("--when", default=None, help="filter_by: faculty whose truthiness gates --keep")
+    pc.add_argument("--over", default=None, help="map_over: faculty whose field is iterated")
+    pc.add_argument("--field", default=None, help="map_over: which list field of --over to iterate")
+    pc.add_argument("--apply", default=None, help="map_over: primitive op applied to each element")
+    pc.add_argument("--inputs", nargs="*", default=None,
+                    help="explicit DAG deps (default: derived from the spec operands)")
+    pc.add_argument("--function", default="", help="one-line description of what the composite computes")
+    pc.add_argument("--difficulty", type=int, default=0)
+    pc.set_defaults(func=cmd_compose)
 
     pe = sub.add_parser("emergent", parents=[common], help="list the Dream Cache of emergent faculties (proposals)")
     pe.set_defaults(func=cmd_emergent)

@@ -99,7 +99,9 @@ each sealed block.
    → risk markers, *Dependency-Graph Vision* → extracted symbols, *Honesty-Spectrum Sensing*
    → hedge/assert balance, *Richness Scoring* → a depth score. The op performs the mechanical
    extract/measure/detect; you reason over computed signal, not vibes. (Cambium-grown
-   faculties stay frames until given an op.)
+   faculties stay frames until given an op.) Faculties also **compose into circuits**: a
+   composite op reads other faculties' outputs through the data-flow channel, so one organ can
+   sense over another's signal (see *Composability*).
 5. **Form a candidate, then audit through PoQ** — score it yourself, 0–255, on the six
    dimensions, and cite the rings you relied on:
    ```
@@ -283,6 +285,18 @@ Cambium chooses the kind deliberately:
 - A **modality** is an **environment-facing cognitive/action faculty**. Grow this when the
   gap is about acting on a task or tool surface: code, repos, terminals, audits, novel tasks.
 
+**Op-authoring fires on STRUCTURE, not vocabulary (mid-turn).** Growing a *sense* keys on
+vocabulary novelty — the right signal for naming a perceptual gap. Authoring an *op* must NOT:
+it keys on **structural-computation need**, detected on the input + your thought (`op_need.py`),
+so a turn that performs a real computation (rank/count/correlate/graph over ≥2 operands) is
+flagged even when its words are familiar, and a turn that is merely lexically novel is not.
+Three layers trip it (any one fires): **Computational-Shape Sensing** (a registered sense whose
+op flags operation-shaped text), a **computed-insufficiency** check (a bare term-presence op
+that ignored quantities/relations it could compute), and your **own declaration** —
+`recall.py turn … --computed-need "<the op you needed>"` — the honest backstop the words can
+never suppress. When it trips mid-turn, author the richer op *this* turn so it runs in the
+seal's `run_all`.
+
 **Model-authored faculties are PROPOSE-then-ACTIVATE — autonomous coding, human gate, the
 skill never runs them on its own.** When you hit a gap, you may *write the op yourself* and
 commit it as a proposal — the **full code body is stored as inert text** in
@@ -326,6 +340,50 @@ and seals only the single highest-truth path while the rejected forks fall away.
 may instead perform this fork-score-collapse reasoning directly within your own
 inference and seal the winner via `poq.py`; the script is the scaffold, your reasoning
 is the cognition.
+
+**Search over compositions (pipeline mode).** The same MCTS can search for a useful
+*pipeline of faculties* instead of a synthesis of perspectives: each path is a candidate
+circuit, scored by PoQ **blended with its measured composition-yield** (the search actually
+builds the candidate's combinator and runs it, rewarding faculties that genuinely agree on
+signal over redundant or non-interacting lenses). The winner collapses into a Change-2
+composite spec, is registered to `composites.json`, and seals as a `pipeline` ring:
+```
+python3 chronosynaptic.py pipeline "<what to compute>" --seal \
+    [--seed-from-gap "<text>"]   # seed from a greedy max-COVERAGE faculty selection
+```
+`--seed-from-gap` seeds the search with complementary faculties (greedy max-coverage over the
+gap's matched-token SETS), not the redundant raw `top_activated` count. The wake-sleep loop
+then closes: `dream` abstracts any wiring that keeps winning (≥ `CT_ABSTRACT_AT`, default 2)
+into a named `Abstracted:` library composite.
+
+## Composability — faculties as circuits
+
+Faculties are not just parallel lenses; they **wire into circuits**. Three layers, all in the
+no-exec SAFE lane (every op is assembled from the audited primitive menu — nothing
+model-authored runs here):
+
+- **Data-flow (`run_all` is a DAG).** A composite faculty declares `inputs: [faculty, ...]`;
+  `modality_ops.run_all` topo-sorts the fired set plus those inputs and runs atoms first, then
+  hands each composite the `computed`-so-far dict. A composite-free turn is byte-identical to
+  the old flat sweep; cycles are dropped fail-open, never raised.
+- **Combinators (the connector menu).** `build_op` assembles composites from existing ops:
+  `pipe` (thread A→B→…, each stage's signals become the next op's context), `intersect` (the
+  signal two faculties AGREE on), `filter_by {keep, when}` (emit `keep`'s output only where
+  `when` is truthy), `map_over {over, field, apply}` (apply a primitive across a structured
+  collection). Unknown operands return `None` — safe by construction.
+- **Composites as DATA.** A wiring is persisted as JSON in per-user, gitignored
+  `registry/composites.json` and rides the existing `extra_ops` channel into `run_all`, so it
+  fires every turn with no caller change. Author one — no human gate needed, because nothing
+  executes outside the audited menu:
+  ```
+  python3 cambium.py compose "<Name>" --kind sense|modality --primitive filter_by \
+      --keep "<Faculty A>" --when "<Faculty B>"      # seals a `composite` ring (name is positional)
+  ```
+  (Contrast `propose-op`/`autoexec`, which DO run model code and so keep the human/ENV gate.)
+
+This is the connective tissue of the DreamCoder mapping: **Search** (`chronosynaptic pipeline`)
+proposes circuits, **Library** (`composites.json`) banks them, **Abstraction** (`dream`) promotes
+the recurring ones — wake-sleep over your own faculties.
 
 ## Recall & self-labeling (relevance realization) — reasoning across a chain bigger than context
 
@@ -888,8 +946,9 @@ python3 immune.py status                                # safe height, quarantin
 |------|---------------------------|
 | `timechain.py` | roots/rings — ledger, blockspace, sealing, verification |
 | `poq.py` | the conscience — six-dimension audit gate |
-| `cambium.py` | growth — sprout/fuse/promote faculties |
-| `modality_ops.py` | frames→mechanisms — executable faculty ops (e.g. Richness Scoring → a depth score); the shared depth metric behind PoQ's under-effort signal and the audit depth governor |
+| `cambium.py` | growth — sprout/fuse/promote faculties; `compose` a composite; greedy max-coverage seed |
+| `modality_ops.py` | frames→mechanisms — executable faculty ops (e.g. Richness Scoring → a depth score); the shared depth metric behind PoQ's under-effort signal and the audit depth governor; **DAG `run_all` + combinator menu** (pipe/intersect/filter_by/map_over) for composite circuits |
+| `op_need.py` | op-write trigger — fires faculty-op authoring on structural-computation need (input + thought), decoupled from vocabulary growth |
 | `audit.py` | exhaustive-review governor — review-coverage + depth ledger over an ingested Continuum chain (open/next/record/progress/validate/report) |
 | `chronosynaptic.py` | foresight — single-pass parallel-self MCTS |
 | `continuum.py` | endurance — long-horizon tasking via data-height blocks with full state refresh |
@@ -909,26 +968,27 @@ python3 immune.py status                                # safe height, quarantin
 | `guard.py` | microscope — span-level grounding; FORCE_UNCERTAINTY names the fabricated clause |
 | `lens.py` | the representation learner — trainable projection over the frozen embedder, sealed operators |
 | `extractor.py` | the extractor learner — distilled labeler, confidence routing, teach pairs, falling annotation cost |
-| `dream.py` | consolidation — the offline cadence: verify, mine, train, adopt-or-refuse, seal |
+| `dream.py` | consolidation — the offline cadence: verify, mine, train, adopt-or-refuse, **abstract recurring pipelines into named composites**, seal |
 | `dormancy.py` | rest — manually pause/resume the loop for simple tasks (the chain stays intact) |
 | `enforce.py` | adherence spine — the brain behind the hooks; makes the per-turn loop non-bypassable (fail-open, dormancy-aware, bounded) |
 | `*_hook.sh` | Claude Code hooks — SessionStart / UserPromptSubmit / Stop / SubagentStop wrappers that wire enforcement into the harness |
 | `agents/cypher-tempre-agent.md` | a subagent definition that wears the skill (runs the loop, seals before returning) |
-| `registry/modalities.json` | branches — 21 executable reasoning modalities |
-| `registry/senses.json` | leaves — 21 executable perceptual senses (plus per-user growth) |
+| `registry/modalities.json` | branches — executable reasoning modalities (21 base + fork growth) |
+| `registry/senses.json` | leaves — executable perceptual senses (22 base incl. Computational-Shape Sensing + per-user growth) |
 | `registry/emergent.json` | Dream Cache — emergent faculties awaiting promotion |
+| `registry/composites.json` | composite circuits — per-user, gitignored wirings (Change-2 data; fires every turn via the DAG) |
 | `chain/rings.jsonl` | the Timechain itself |
 | `chain/blockspace/` | content-addressed store for any file type |
 
 ```
 timechain.py   init | seal | verify | log | show <id> | stat
 poq.py         audit "<thought>" | seal "<thought>"   (+ --coherence/--relevance/… 0-255)
-cambium.py     sense "<input>" | grow "<input>" | emergent
-chronosynaptic.py  think "<query>" [--seal] | collapse-notes notes.json [--seal]
+cambium.py     sense "<input>" | grow "<input>" | emergent | compose --primitive … (author a composite circuit)
+chronosynaptic.py  think "<query>" [--seal] | collapse-notes notes.json [--seal] | pipeline "<query>" [--seal] [--seed-from-gap …]
 continuum.py       open | ingest | walk | resume | validate   (long-horizon tasks; --changed-only; redaction)
 task.py            attach | complete | inspect                 (link separate task chains into identity; pass project root, not chain/)
 recall.py          turn | index | fetch | seal | label | grep | retrieve | gather | track | endpoints | evidence | answer | verify-source
-                   (turn = the whole loop in one call: verify -> screen -> recall -> seal, always leaves a ring)
+                   (turn = the whole loop in one call: verify -> screen -> recall -> seal, always leaves a ring; --computed-need declares a structural op need)
 almanac.py         resolve "<text>" --asked-on "<stamp>" | between <a> <b>   (deixis -> date windows)
 embed.py           sim | vec                                   (embeddings: hashing default | st|openai|voyage)
 consensus.py       init | attest | verify                       (quorum tamper-proofing)

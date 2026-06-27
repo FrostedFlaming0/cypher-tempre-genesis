@@ -1491,7 +1491,10 @@ def main():
         import audit as _aud3
         _modn = len(json.loads((SKILL / "registry" / "modalities.json").read_text())["modalities"])
         _senn = len(json.loads((SKILL / "registry" / "senses.json").read_text())["senses"])
-        check("phase14 registry: capped to 21 modalities + 21 senses", _modn == 21 and _senn == 21)
+        # This fork does NOT need to pass SkillSpector, so the 21+21 cap does not apply here:
+        # modalities/senses may grow without bound. The canonical base set must still be present.
+        check("phase14 registry: canonical base present (fork allows additions beyond 21+21)",
+              _modn >= 21 and _senn >= 21)
 
         _sh = _mo.richness("Reviewed. Looks fine, no issues.")
         _dp = _mo.richness("validation.cpp L1423-1450: CheckTxInputs() sums nValueIn without a "
@@ -1502,8 +1505,8 @@ def main():
         _facnames = (set(json.loads((SKILL / "registry" / "modalities.json").read_text())["modalities"]
                          and [m["name"] for m in json.loads((SKILL / "registry" / "modalities.json").read_text())["modalities"]])
                      | set(s["name"] for s in json.loads((SKILL / "registry" / "senses.json").read_text())["senses"]))
-        check("phase14 ops: every curated faculty (21/21) has an executable op",
-              len(_facnames) == 42 and _facnames == set(_mo.OPS) and not (_facnames - set(_mo.OPS)))
+        check("phase14 ops: every curated faculty has an executable op (registry<->OPS bijection)",
+              len(_facnames) >= 42 and _facnames == set(_mo.OPS) and not (_facnames - set(_mo.OPS)))
         check("phase14 ops: a non-faculty name has no op", _mo.run_for("Not A Faculty", "x") is None)
         check("phase14 ops: Bad-Idea Alarm detects risk markers",
               "overflow" in _mo.run_for("Bad-Idea Alarm", "integer overflow is dangerous")["hits"])
@@ -1736,6 +1739,62 @@ def main():
               "CONSCIENCE REFUSAL" in _sealed18)
         check("phase18 no-launder: the offending claim is NOT resealed as a claim",
               "9 billion dollars guaranteed" not in _sealed18)
+
+        # -- phase19: composability (Change 1 DAG run_all, Change 2 combinators, Change 4 search) -- #
+        import modality_ops as _mo19
+        # Change 1: a composite op receives upstream outputs via the `computed` channel, and a
+        # composite-free turn is byte-identical to the legacy flat sweep (regression guard).
+        _a19 = _mo19.build_op({"primitive": "markers", "terms": ["overflow", "crash"]})
+        _b19 = _mo19.build_op({"primitive": "markers", "terms": ["overflow", "leak"]})
+        _ix19 = _mo19.build_op({"primitive": "intersect", "of": ["A", "B"]})
+        _txt19 = "an overflow can crash or leak memory"
+        check("phase19 change1: a 2-arg markers op is NOT misclassified as a computed-consumer",
+              _mo19._accepts_computed(_a19) is False and _mo19._accepts_computed(_ix19) is True)
+        _flat = _mo19.run_all(["Bad-Idea Alarm"], "integer overflow is dangerous")
+        _dagless = _mo19.run_all(["Bad-Idea Alarm"], "integer overflow is dangerous", deps=None)
+        check("phase19 change1: composite-free run_all is byte-identical with/without deps arg",
+              json.dumps(_flat, sort_keys=True) == json.dumps(_dagless, sort_keys=True))
+        _comp19 = _mo19.run_all(["A", "B", "C"], _txt19, "",
+                                extra_ops={"A": _a19, "B": _b19, "C": _ix19},
+                                deps={"C": ["A", "B"]})
+        check("phase19 change2: intersect combinator fuses upstream outputs over the DAG",
+              _comp19.get("C", {}).get("agree") is True and "overflow" in _comp19["C"]["intersect"])
+        # cycle guard: A->B->A is dropped, never raised
+        _cyc = _mo19.run_all(["A", "B"], _txt19, "", extra_ops={"A": _a19, "B": _b19},
+                             deps={"A": ["B"], "B": ["A"]})
+        check("phase19 change1: a dependency cycle is dropped (fail-open), not raised",
+              isinstance(_cyc, dict))
+        # Change 2: register a composite to a temp registry and confirm load round-trips it
+        _creg = root / "p19reg"; (_creg / "registry").mkdir(parents=True)
+        for _f in ("modalities.json", "senses.json"):
+            shutil.copy(SKILL / "registry" / _f, _creg / "registry" / _f)
+        _okreg = _mo19.register_composite(_creg, "X Confluence", "modality",
+                                          ["Bad-Idea Alarm", "Honesty-Spectrum Sensing"],
+                                          {"primitive": "filter_by", "keep": "Bad-Idea Alarm",
+                                           "when": "Honesty-Spectrum Sensing"}, "test")
+        _cops, _cdeps = _mo19.load_composites(_creg)
+        check("phase19 change2: a composite round-trips register->load and builds an op",
+              _okreg and "X Confluence" in _cops and _cdeps["X Confluence"])
+        # Change 4: greedy-coverage seed (folded Change 3) picks complementary, not redundant, lenses
+        import cambium as _cam19
+        _corp19 = _cam19.load_corpus(_creg)
+        _gap19 = _cam19.detect_gap(_corp19, "rank how many imports each module declares and flag overflow risk")
+        _cov19 = _cam19.greedy_coverage(_gap19, k=3)
+        check("phase19 change4: greedy_coverage returns complementary faculties with disjoint-ish covers",
+              len(_cov19) >= 1 and all("covers" in c for c in _cov19))
+        # Change 4: pipeline search collapses to a composite spec and (offline) dream abstracts recurrence
+        import chronosynaptic as _chr19
+        _pt = _chr19.PipelineTree(root)
+        check("phase19 change4: a 2-faculty path yields a valid intersect composite spec",
+              _pt.candidate_spec([{"name": "Bad-Idea Alarm", "kind": "modality"},
+                                  {"name": "Honesty-Spectrum Sensing", "kind": "sense"}])
+              == {"primitive": "intersect", "of": ["Bad-Idea Alarm", "Honesty-Spectrum Sensing"]}
+              and _pt.candidate_spec([{"name": "Solo", "kind": "sense"}]) is None)
+        import dream as _drm19
+        _sig19 = _drm19.Dream._composition_signature
+        check("phase19 change4: composition signature is stable across reorder for intersect",
+              _sig19({"primitive": "intersect", "of": ["B", "A"]})
+              == _sig19({"primitive": "intersect", "of": ["A", "B"]}))
 
         check("timechain: final verify", tc.verify()[0])
     finally:

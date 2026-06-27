@@ -593,6 +593,7 @@ class Recall:
         self.tc = Timechain(chain_root)
         self._registry_root = registry_root or Path(__file__).resolve().parent
         self._grown_ops = None        # lazy: local executable ops for Cambium-grown faculties
+        self._composites = None       # lazy: (ops, deps) for Change-2 composite faculties
         self.corpus = load_corpus(registry_root or Path(__file__).resolve().parent)
         self.telemetry = telem.Telemetry(chain_root)
         self.policy = policymod.load_policy(registry_root)
@@ -664,8 +665,19 @@ class Recall:
             import modality_ops
             if self._grown_ops is None:    # Cambium-grown faculties carry local coded ops too
                 self._grown_ops = modality_ops.load_grown_ops(self._registry_root)
+            if self._composites is None:   # Change-2 composite faculties (ops + DAG deps)
+                self._composites = modality_ops.load_composites(self._registry_root)
+            comp_ops, comp_deps = self._composites
             fired = [f["name"] for f in senses] + [m["name"] for m in mods]
-            computed = modality_ops.run_all(fired, content, context, extra_ops=self._grown_ops)
+            # Composite faculties (Change 2) are deliberately authored, so each runs every
+            # turn: the Change-1 dependency DAG pulls in its input faculties' ops to COMPUTE
+            # on the text (independent of whether the lexical labeler tagged them) and the
+            # composite combines those outputs. A composite op that errors is dropped fail-open.
+            active_comps = [n for n in comp_deps if comp_ops.get(n)]
+            extra = dict(self._grown_ops or {})
+            extra.update(comp_ops)
+            computed = modality_ops.run_all(fired + active_comps, content, context,
+                                            extra_ops=extra, deps=comp_deps or None)
             if computed:
                 lab["computed"] = computed
         except Exception:
@@ -2168,55 +2180,51 @@ def cmd_turn(args):
                             if g.get("action") in ("born", "promoted") and g.get("faculty")})
             if names:
                 print("grew faculties to cover the gap: " + ", ".join(names))
-            _maybe_prompt_autoexec(grown, names)
+            _maybe_prompt_autoexec(grown, names, input_text=args.input or "",
+                                   thought=args.summary or "",
+                                   computed_need=getattr(args, "computed_need", None))
         except Exception:
             pass
 
 
-def _maybe_prompt_autoexec(grown, names):
-    """Structural autoexec trigger. When the experimental arbitrary-code toggle is on and
-    this turn filled a SUBSTANTIAL gap with bare primitive (term-presence) ops, surface an
-    AUTHOR-OP prompt. The loop only TRIGGERS — naming the uncovered terms and the freshly
-    grown faculties; the model judges whether a markers op is too weak and, if so, authors a
-    richer op via `cambium.py autoexec` THIS turn. No code is auto-written: arbitrary op logic
-    can only originate from the model, so the loop automates the WHEN, never the authoring.
-    Silent when the toggle is off, when CT_AUTOEXEC_PROMPT=0, or below CT_AUTOEXEC_PROMPT_AT
-    dissonance. Fail-open: never raises into the turn."""
+def _maybe_prompt_autoexec(grown, names, input_text="", thought="", computed_need=None):
+    """Mid-turn op-write trigger — gated on STRUCTURAL NEED, not vocabulary novelty.
+
+    The old trigger fired whenever fill_gap grew a faculty for a high-dissonance gap, i.e.
+    on novel WORDS in the sealed summary — so it fired on familiar-content turns that merely
+    used new vocabulary and missed turns that performed a real computation. This version
+    DECOUPLES the op-prompt from fill_gap's vocabulary growth: it runs the three-layer
+    op_need detector over the turn's (input + thought), and prompts only when there is a
+    genuine OPERATION (Layer 1), dropped quantitative/relational signal (Layer 2), or a
+    model-declared computed-need (Layer 3). fill_gap still grows senses on vocabulary; the
+    op-prompt now keys on structure. The model authors the op via `cambium.py autoexec`.
+
+    Silent when the toggle is off, when CT_AUTOEXEC_PROMPT=0, or when no layer trips.
+    Fail-open: never raises into the turn."""
     try:
         import os as _os
         if _os.environ.get("CT_AUTOEXEC_PROMPT", "1").lower() in ("0", "false", "no", "off"):
             return
         import modality_ops
-        if not modality_ops.autoexec_enabled() or not names:
+        if not modality_ops.autoexec_enabled():
             return
-        # Default the prompt threshold to the growth floor itself: if a gap was worth
-        # growing a faculty for, it is worth considering whether that faculty needs a
-        # richer op. They stay coupled unless CT_AUTOEXEC_PROMPT_AT overrides.
-        try:
-            import cambium as _cambium
-            _floor = int(_cambium.DISSONANCE_FLOOR)
-        except Exception:
-            _floor = 150
-        at = int(_os.environ.get("CT_AUTOEXEC_PROMPT_AT", str(_floor)))
-        best = None
-        for g in (grown or []):
-            gap = g.get("gap") or {}
-            d = gap.get("dissonance")
-            if isinstance(d, (int, float)) and (best is None or d > (best.get("dissonance") or -1)):
-                best = gap
-        if not best or (best.get("dissonance") or 0) < at:
+        import op_need as _op_need
+        need = _op_need.op_need(input_text, thought, computed_need=computed_need)
+        if not need.get("fire"):
             return
-        uncovered = [t for t in (best.get("uncovered") or []) if t][:10]
-        print(f"AUTHOR-OP: substantial gap (dissonance {best.get('dissonance')}, "
-              f"threshold {at}) filled with primitive term-presence ops only.")
-        if uncovered:
-            print("  uncovered gap terms: " + ", ".join(uncovered))
-        print("  faculties grown (bare markers ops): " + ", ".join(names))
-        print("  -> If a term-presence op cannot capture this gap (it needs relational, "
-              "quantitative, or structural computation), AUTHOR a richer op THIS turn:")
+        print("AUTHOR-OP: genuine structural-computation need detected this turn "
+              "(operation / dropped structured signal / declared need).")
+        for reason in need.get("reasons", []):
+            print("  - " + reason)
+        if names:
+            print("  faculties grown this turn (bare markers ops): " + ", ".join(names))
+        shape = (need.get("L1") or {}).get("shape")
+        hint = f" (operation: {shape})" if shape else ""
+        print(f"  -> A term-presence op cannot perform this computation{hint}. AUTHOR a "
+              "richer op THIS turn, then re-seal so it runs in this turn's run_all:")
         print("     python3 cambium.py autoexec \"<Faculty Name>\" --kind sense|modality \\")
         print("        --code-file <op.py> --function \"<what it computes>\" --seed-terms <terms>")
-        print("  (Judgment call: skip when the primitive op already captures the gap — don't "
+        print("  (Judgment call: skip only if an existing op already computes this — don't "
               "bloat autoexec_ops.json. Silence with CT_AUTOEXEC_PROMPT=0.)")
     except Exception:
         pass
@@ -2534,6 +2542,11 @@ def build_parser():
         pt.add_argument(f"--{d}", type=int, default=None)
     pt.add_argument("--used-rings", nargs="*", type=int, default=None)
     pt.add_argument("--at-risk", nargs="*", default=None)
+    pt.add_argument("--computed-need", default=None,
+                    help="op-write trigger Layer 3 (self-declaration seam): describe a "
+                         "structural/quantitative/relational computation this turn required "
+                         "that a term-presence op cannot perform — fires the AUTHOR-OP prompt "
+                         "deterministically so you can author the op this turn")
     pt.set_defaults(func=cmd_turn)
 
     ps = sub.add_parser("seal", parents=[common], help="self-label then PoQ-gate-seal a block")

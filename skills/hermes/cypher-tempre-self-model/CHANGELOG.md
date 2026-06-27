@@ -6,6 +6,81 @@ Changes maintained in the **FrostedFlaming0** fork, layered on top of the upstre
 cyberphysicsai releases listed below. These are not part of upstream's `vX.Y.Z`
 versioning; some are deliberately experimental and ship disabled by default.
 
+### Composability (faculties as circuits) + structural op-write trigger — 2026-06-27
+
+Faculties were isolated parallel lenses: every fired op read the raw input independently and
+no op could see another's output. This release makes them **composable** — they wire into
+circuits — and replaces the op-authoring trigger so it fires on genuine *structural-computation
+need* (mid-turn) instead of vocabulary novelty. Built as four coordinated changes (the
+composability proposal's 1 + 2 + 4; change 3 was dropped after we proved its signal crude —
+see Notes) plus the op-trigger asymmetry fix. Engine work is in the **no-exec SAFE lane**:
+every op is still assembled from the audited primitive menu — nothing model-authored runs here.
+
+#### Added
+- **Data-flow between ops — `modality_ops.run_all` is now a DAG (Change 1).** The op contract
+  widened to `op(text, context, computed=None)`; a composite faculty declares `inputs:
+  [faculty, ...]` and receives the `computed`-so-far dict. Atoms run first; cycles are dropped
+  fail-open (never raised). A composite-free turn is **byte-identical** to the old flat sweep
+  (regression-guarded in selftest phase19). `_invoke`/`_accepts_computed` bridge old 2-arg ops
+  and new 3-arg composites in one `run_all`.
+- **Combinator menu in `build_op` (Change 2).** Four connectors over the data-flow channel:
+  `pipe` (thread A→B→…, each stage's signals become the next op's context), `intersect` (the
+  signal two faculties agree on), `filter_by {keep, when}` (emit `keep` only where `when` is
+  truthy), `map_over {over, field, apply}` (apply a primitive across a structured collection).
+  Unknown operands return `None` — safe by construction.
+- **Composites as DATA — `registry/composites.json` (Change 2).** A wiring persists as JSON
+  (per-user, gitignored) and rides the existing `extra_ops` channel into `run_all`, firing every
+  turn with no caller change. New `cambium.py compose` authors one and seals a `composite` ring —
+  **no human gate**, because nothing executes outside the audited menu.
+- **Search over compositions — `chronosynaptic.py pipeline` (Change 4).** The single-pass MCTS
+  can search candidate *pipelines* of faculties: each path is scored by PoQ **blended with
+  measured composition-yield** (it builds the candidate's combinator and runs it, rewarding
+  faculties that genuinely agree over redundant lenses). The winner collapses into a Change-2
+  composite spec, registers to `composites.json`, and seals a `pipeline` ring. `--seed-from-gap`
+  seeds from a greedy max-COVERAGE faculty selection (`cambium.greedy_coverage`) — complementary
+  lenses, not the redundant `top_activated` count (the folded, corrected change 3).
+- **Dream abstraction — `dream.abstract_pipelines` (Change 4).** Any wiring that recurs ≥
+  `CT_ABSTRACT_AT` (default 2) across `pipeline`/`composite` rings is promoted into a named
+  `Abstracted:` library composite. High-water-marked and idempotent. Closes the wake-sleep loop:
+  search → compose → abstract.
+- **Structural AUTHOR-OP trigger — `op_need.py` (supersedes the 2026-06-25 trigger below).**
+  Op-authoring now keys on **structural-computation need**, detected on the input + the model's
+  thought, decoupled from the vocabulary signal that grows a *sense*. Three layers, any one
+  fires: **Layer 1** *Computational-Shape Sensing* (a new registered sense whose op flags
+  operation-shaped text — rank/count/correlate/graph over ≥2 operands), **Layer 2** a
+  computed-insufficiency check (a bare term-presence op that dropped quantities/relations it
+  could compute), **Layer 3** the model's own `recall.py turn … --computed-need "<need>"`
+  declaration. The prompt now names the specific dropped structure, not novel summary words, and
+  surfaces mid-turn so an authored op runs in the same seal's `run_all`.
+
+#### Changed
+- **Computational-Shape Sensing added as a base sense (22 senses).** This intentionally exceeds
+  the documented 21+21 faculty cap. The cap exists so the *upstream* skill passes SkillSpector;
+  the fork does not need to, so it is free to grow base faculties. Selftest's cap assertion was
+  relaxed to a registry↔OPS **bijection** invariant (every curated faculty has an op, and vice
+  versa).
+
+#### Fixed
+- **`_accepts_computed` arity bug (latent, surfaced by Change 1).** It classified a
+  computed-consumer by raw arity (`pos >= 3`), which misread the standard markers idiom
+  `lambda t, c="", _rx=rx: …` (a 3rd *default* param closing over its regex) as wanting the
+  data-flow channel — so any grown markers op used as a DAG input would have received `computed`
+  as its regex and broken. Now keys on a parameter literally **named `computed`** (or `*args`).
+  Verified against a live user's 244 grown ops: zero misclassified.
+
+#### Notes
+- **Change 3 dropped, intent folded into Change 4.** `detect_gap.top_activated` ranks by raw
+  matched-token count and discards the matched sets, so it cannot tell complementary faculties
+  from redundant ones (stopword-biased; proven in review). Composition-first growth would have
+  stacked redundant lenses — the reversion risk we set out to avoid. Its reuse-before-invent
+  intent lives on as the greedy max-coverage *seed* for the pipeline search.
+- **Honest limitation.** `intersect` over heterogeneous base ops often yields empty — they emit
+  non-overlapping signal vocabularies — so text-only composition value is real but modest. The
+  larger payoff needs an execution surface over structured (e.g. grid/problem) data, which this
+  release does not add.
+- **Scope.** Engine changes apply to all five bundles (claude/codex/hermes/nanoclaw/openclaw);
+  per-user `composites.json` is gitignored like `grown_ops.json`. Full selftest: 279 PASS / 0 FAIL.
+
 ### Experimental — structural AUTHOR-OP trigger for the arbitrary-code faculty path — 2026-06-25
 
 Builds on the arbitrary-code faculty entry below. That feature made authoring an op
