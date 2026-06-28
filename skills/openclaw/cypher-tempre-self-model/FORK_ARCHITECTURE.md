@@ -31,7 +31,7 @@ same as upstream's — the genesis covenant, the PoQ gate on every seal, the imm
 | 5 | **Full faculty frame-set imported** (192 faculties; frames first-class; registry↔OPS now one-directional) | 2026-06-27 | **on** (data only) | `registry/*.json`, `tests/selftest.py` |
 | 4 | **Composability — faculties as circuits** (DAG `run_all`, combinator menu, composites-as-data, pipeline search, dream abstraction) | 2026-06-27 | **on** (no-exec SAFE lane) | `modality_ops`, `recall`, `cambium`, `chronosynaptic`, `dream` |
 | 3 | **Structural AUTHOR-OP trigger** (`op_need.py` — fires op-authoring on computation need, not vocabulary) | 2026-06-27 | **on** (prompt only; no code auto-runs) | `op_need` (new), `recall`, `modality_ops` |
-| 2 | **Autonomous arbitrary-code faculty** (`cambium.py autoexec` — author + auto-activate an op in a sandboxed namespace) | 2026-06-25 | **off** — env-gated `CT_EXPERIMENTAL_AUTOEXEC` | `cambium`, `modality_ops` |
+| 2 | **Autonomous arbitrary-code faculty** (`cambium.py autoexec` — author + auto-activate an op; trusted by default, optional isolated subprocess mode) | 2026-06-25 (armed by default 2026-06-28) | **on** by default — gated `CT_AUTOEXEC` (alias `CT_EXPERIMENTAL_AUTOEXEC`) | `cambium`, `modality_ops` |
 | 1 | **Clarified Formula of Experience** (covenant glyph = dynamic structured-thinking slots, not arithmetic) | 2026-06-24 | on (doc) | genesis covenant |
 
 Changes 3 and 4 landed together as the composability build; change 3 **supersedes** an earlier
@@ -105,16 +105,18 @@ computation in familiar words. The fork decouples them: `op_need.py` keys op-aut
 The prompt now names the *specific dropped structure* and surfaces **mid-turn**, so an authored
 op runs in the same seal's `run_all`.
 
-## Change 2 — Autonomous arbitrary-code faculty (off by default)
+## Change 2 — Autonomous arbitrary-code faculty (armed by default)
 
-The one mechanism the shipped skill otherwise refuses: `cambium.py autoexec` lets the agent
-author an op, **auto-activate it with no human review**, and compute on its birth turn. It is
-**off unless `CT_EXPERIMENTAL_AUTOEXEC` is set** — an environment variable, so injected *input*
-can never switch it on — and the op runs in a **restricted namespace** (safe builtins + `re` +
-a curated `mo` text-primitive helper; no `os`/`open`/`__import__`/`eval`/`exec`) under a
-wall-clock timeout. Honest threat model: the sandbox is a robustness *speed-bump*, not a vault;
-it is meaningful against accidents and casual misuse — the realistic threat when the agent is
-the author. Contrast the always-on, gated `propose-op` path, where model code stays inert text
+The one mechanism the base skill otherwise refuses: `cambium.py autoexec` lets the agent
+author an op, **auto-activate it with no human review**, and compute on its birth turn. On this
+fork it is **on by default** (disable with `CT_AUTOEXEC=0`; `CT_EXPERIMENTAL_AUTOEXEC` is a
+back-compat alias) — an environment variable, so injected *input* can switch it neither on nor
+off. Default execution policy is `CT_AUTOEXEC_MODE=trusted`: the op runs in-process with normal
+Python capability, because this fork treats agent-authored ops as local extensions. For
+higher-risk settings, `CT_AUTOEXEC_MODE=isolated` runs the op in a short-lived child process
+with timeout, sanitized env, and best-effort POSIX resource limits. The optional
+`CT_AUTOEXEC_RESTRICTED_BUILTINS=1` speed-bump is accident hardening only, not a security
+boundary. Contrast the always-on, gated `propose-op` path, where model code stays inert text
 until a human reviews and places it.
 
 ## Change 1 — Clarified Formula of Experience
@@ -219,8 +221,10 @@ and it is the capability the fork adds.
   which includes *reportage* numbers ("8 files, 244 ops") that are not a reusable computation.
   It now keys on the right *kind* of signal (structure, not vocabulary), but the model still
   exercises the judgment call of whether an op is actually warranted.
-- **Autonomous arbitrary-code execution is a deliberate capability, not a hardened one.** It is
-  off by default and env-gated; when on, its sandbox is a speed-bump, not a guarantee.
+- **Autonomous arbitrary-code execution is a deliberate capability.** On this fork it is **on by
+  default** and env-gated (disable with `CT_AUTOEXEC=0`). Default `trusted` mode is full local
+  Python capability; use `CT_AUTOEXEC_MODE=isolated` or disable autoexec when running headless,
+  multi-user, or on untrusted input.
 
 ## File map of the fork's additions
 

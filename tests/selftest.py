@@ -1551,37 +1551,51 @@ def main():
         check("phase14 audit depth: require_depth passes once every block is deeply reviewed", _okd2)
         _aud3._clear_active(droot)
 
-        # -- phase15: model-authored growth is PROPOSE-then-ACTIVATE, no UNGATED auto-exec (v3.11) -- #
-        # No *ungated* dynamic execution of authored code in the shipped skill: build_op only
-        # assembles from the audited primitive menu; arbitrary code is proposed to emergent
-        # (dormant) and only runs after a human places it in the per-user active_ops.py. The
-        # ONE intentional exception is the experimental op compiler in
-        # modality_ops._compile_autoexec_op — reachable only when CT_EXPERIMENTAL_AUTOEXEC is
-        # set, and compiled into a restricted sandboxed namespace tagged "<autoexec-op>".
+        # -- phase15: model-authored growth + default-on autoexec policy -------- #
+        # build_op still assembles only from the audited primitive menu; arbitrary code
+        # enters the live path only through the explicit autoexec registry. On this fork
+        # autoexec is intentionally ON by default. The execution policy is explicit:
+        # trusted in-process by default, optional subprocess isolation via CT_AUTOEXEC_MODE.
         import pathlib as _pl, re as _re
         _mo_src = (_pl.Path(SKILL) / "modality_ops.py").read_text()
         _src = _mo_src + "\n" + (_pl.Path(SKILL) / "cambium.py").read_text()
-        # Every exec/eval/compile in shipped source must be the single gated experimental
-        # op-compiler line (vacuously satisfied if the experimental feature is absent).
+        # Every exec/eval/compile in shipped source must be tied to the autoexec compiler
+        # or its isolated child bootstrap.
         _exec_hits = [_src[_src.rfind("\n", 0, _m.start()) + 1: _src.find("\n", _m.start())].strip()
                       for _m in _re.finditer(r"(?<![\w.])(?:exec|eval|compile)\s*\(", _src)]
-        check("phase15 no-exec: no UNGATED dynamic execution of authored code "
-              "(only the gated experimental op compiler)",
-              all('"<autoexec-op>"' in _h for _h in _exec_hits))
-        # That experimental exec must be gated by construction — the env toggle and the
-        # restricted-builtins sandbox are both present in source.
-        check("phase15 autoexec gate: the experimental op path is env-gated + sandboxed in source",
-              "CT_EXPERIMENTAL_AUTOEXEC" in _mo_src and "_safe_builtins" in _mo_src)
-        # Functional gate: with the toggle OFF, no authored op registers or loads, env-independent.
-        _saved_ae = os.environ.pop("CT_EXPERIMENTAL_AUTOEXEC", None)
+        check("phase15 autoexec source: dynamic execution is localized to the autoexec path",
+              all('"<autoexec-op>"' in _h or "_autoexec_child_code()" in _h for _h in _exec_hits))
+        check("phase15 autoexec policy: default-on trusted mode and isolated mode are documented in source",
+              "CT_AUTOEXEC_MODE" in _mo_src and "trusted" in _mo_src and "isolated" in _mo_src)
+        # Functional gate: unset => enabled; CT_AUTOEXEC=0 disables and takes precedence over
+        # the legacy CT_EXPERIMENTAL_AUTOEXEC alias.
+        _saved_auto = os.environ.pop("CT_AUTOEXEC", None)
+        _saved_exp = os.environ.pop("CT_EXPERIMENTAL_AUTOEXEC", None)
+        _saved_mode = os.environ.pop("CT_AUTOEXEC_MODE", None)
         try:
-            check("phase15 autoexec gate: toggle OFF -> register/load refuse authored ops",
+            check("phase15 autoexec gate: unset toggles -> enabled by default in trusted mode",
+                  _mo.autoexec_enabled() is True and _mo.autoexec_mode() == "trusted")
+            os.environ["CT_EXPERIMENTAL_AUTOEXEC"] = "1"
+            os.environ["CT_AUTOEXEC"] = "0"
+            check("phase15 autoexec gate: CT_AUTOEXEC=0 disables and overrides legacy alias",
                   _mo.autoexec_enabled() is False
-                  and _mo.register_autoexec_op(SKILL, "X", "def op(t,c=''): return {}") is False
-                  and _mo.load_autoexec_ops(SKILL) == {})
+                  and _mo.register_autoexec_op(SKILL, "X", "def op(t,c=''): return {}") is False)
+            os.environ["CT_AUTOEXEC"] = "1"
+            os.environ["CT_AUTOEXEC_MODE"] = "isolated"
+            _icode = "def op(text, context=''):\n    return {'echo': text, 'ctx': context}\n"
+            _iop = _mo._isolated_autoexec_op(_icode)
+            check("phase15 autoexec isolated: subprocess wrapper runs a normal authored op",
+                  _mo.autoexec_mode() == "isolated" and _iop is not None
+                  and _iop("hello", "world") == {"echo": "hello", "ctx": "world"})
         finally:
-            if _saved_ae is not None:
-                os.environ["CT_EXPERIMENTAL_AUTOEXEC"] = _saved_ae
+            for _k in ("CT_AUTOEXEC", "CT_EXPERIMENTAL_AUTOEXEC", "CT_AUTOEXEC_MODE"):
+                os.environ.pop(_k, None)
+            if _saved_auto is not None:
+                os.environ["CT_AUTOEXEC"] = _saved_auto
+            if _saved_exp is not None:
+                os.environ["CT_EXPERIMENTAL_AUTOEXEC"] = _saved_exp
+            if _saved_mode is not None:
+                os.environ["CT_AUTOEXEC_MODE"] = _saved_mode
         check("phase15 build_op: authored + unknown specs build to nothing (no dynamic exec)",
               _mo.build_op({"primitive": "authored", "code": "def op(t,c=''): return {}"}) is None
               and _mo.build_op({"primitive": "nope"}) is None
@@ -1631,6 +1645,23 @@ def main():
                   (_mo.run_for("Cryovolcanic Sensing", "cryovolcanic cryovolcanic") or {}).get("count") == 2)
         finally:
             _mo._ACTIVE_OPS.clear(); _mo._ACTIVE_OPS.update(_saved)
+
+        # autoexec repeats reuse the existing grown faculty id instead of recording a phantom
+        # promoted_to_id in emergent.json.
+        _aecode = "def op(text, context=''):\n    return {'ok': True}\n"
+        _ae1, _ = cambium.autoexec(root, "Repeat Probe", _aecode, kind="sense",
+                                   registry_root=root)
+        _ae2, _ = cambium.autoexec(root, "Repeat Probe", _aecode, kind="sense",
+                                   registry_root=root)
+        _grown_ae = json.loads((root / "registry" / "grown.json").read_text())
+        _em_ae = json.loads((root / "registry" / "emergent.json").read_text())
+        _gid_ae = [x["id"] for x in _grown_ae.get("senses", []) if x.get("name") == "Repeat Probe"]
+        _eid_ae = [x.get("promoted_to_id") for x in _em_ae.get("faculties", [])
+                   if x.get("name") == "Repeat Probe"]
+        check("phase15 autoexec: repeated activation reuses the existing grown faculty id",
+              _ae1["promoted_to_id"] == _ae2["promoted_to_id"]
+              and _gid_ae == [_ae1["promoted_to_id"]]
+              and _eid_ae == [_ae1["promoted_to_id"]])
 
         # eager growth: the per-turn loop autonomously fills a gap (a sense AND a modality),
         # into the LOCAL (temp) registry — never SKILL. Default PROMOTE_AT=1.

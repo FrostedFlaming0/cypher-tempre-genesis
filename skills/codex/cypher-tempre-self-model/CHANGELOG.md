@@ -6,6 +6,52 @@ Changes maintained in the **FrostedFlaming0** fork, layered on top of the upstre
 cyberphysicsai releases listed below. These are not part of upstream's `vX.Y.Z`
 versioning; some are deliberately experimental and ship disabled by default.
 
+### Autoexec execution policy split — 2026-06-28
+
+Autoexec remains **armed by default**, but the execution contract is now explicit and honest:
+`CT_AUTOEXEC_MODE=trusted` (default) runs agent-authored ops in-process with normal Python
+capability, while `CT_AUTOEXEC_MODE=isolated` runs each op in a short-lived child process with
+timeout, sanitized env, and best-effort POSIX resource limits. The old in-process restricted
+builtins path is retained only as optional accident hardening via
+`CT_AUTOEXEC_RESTRICTED_BUILTINS=1` (legacy `CT_AUTOEXEC_SANDBOX` alias), not as a security
+boundary.
+
+#### Changed
+- Added `modality_ops.autoexec_mode()` and isolated subprocess execution for
+  `registry/autoexec_ops.json` entries.
+- Kept `trusted` as the default so arbitrary Python ops remain fully capable local extensions.
+- Updated `cambium.py autoexec` CLI/help output to report the active execution mode.
+- Updated selftests for default-on autoexec, `CT_AUTOEXEC=0` precedence, isolated-mode execution,
+  and repeated activation behavior.
+
+#### Fixed
+- Re-running `cambium.py autoexec` for an existing grown faculty now reuses the existing
+  `grown.json` id instead of recording a phantom `promoted_to_id` in `emergent.json`.
+
+### Autonomous arbitrary-code auto-activation promoted to ON by default — 2026-06-28
+
+The fork's defining capability — `cambium.py autoexec` (author + auto-activate a
+model-authored op with no human review, computing on its birth turn) — is now **armed by
+default** rather than opt-in. Choosing this fork (whose stated purpose is autonomous
+arbitrary-code faculty auto-activation) is itself the opt-in; shipping the headline feature
+dormant undercut that. See the execution-policy note above for the current trusted/isolated
+mode split.
+
+#### Changed
+- `modality_ops.autoexec_enabled()` now defaults **on**; disable explicitly with
+  `CT_AUTOEXEC=0` (or `0`/`false`/`no`/`off`).
+- **Renamed** the master switch to `CT_AUTOEXEC`; `CT_EXPERIMENTAL_AUTOEXEC` is kept as a
+  back-compat alias (honored only when `CT_AUTOEXEC` is unset; `CT_AUTOEXEC` takes precedence).
+- Renamed the README section *"Experimental features & toggles"* → *"Advanced / autonomy
+  features"*; the risk disclosure is kept and sharpened (now flags higher risk when run
+  headless, multi-user, or against untrusted input).
+- Updated `cambium.py` autoexec docstrings, the refusal message, and CLI help to match.
+
+#### Unchanged
+- `CT_AUTOEXEC_TIMEOUT` (default `2`s) remains the per-op wall-clock limit.
+- No new authoring surface: ops still run only from `registry/autoexec_ops.json` and are still
+  deliberately authored by the model.
+
 ### Full faculty frame-set imported (192 faculties); frames are first-class — 2026-06-27
 
 Imported the **entire timechain-agent faculty set** — 84 modalities + 107 senses — into the

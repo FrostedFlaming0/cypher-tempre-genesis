@@ -98,40 +98,47 @@ memory:
 > behavior rather than trusting the status line. Verified against Hermes docs as of June 2026
 > (`hermes-agent.nousresearch.com/docs/user-guide/features/memory`).
 
-## Experimental features & toggles
+## Advanced / autonomy features
 
-These features are **off by default** and controlled by environment variables, so nothing
-in a prompt or in chain input can switch them on — only your own shell can.
+This fork ships with autonomous code-execution **armed by default**. The feature is
+controlled by environment variables — never by a prompt or chain input, only your own shell —
+so a hostile instruction can switch it neither on nor off.
 
-### Autonomous arbitrary-code faculty auto-activation
+### Autonomous arbitrary-code faculty auto-activation — ARMED BY DEFAULT
 
-When enabled, the agent can author an op and **auto-activate it with no human review**, so
-it computes on the very turn it is born (`cambium.py autoexec`). This crosses the one
-boundary the skill otherwise refuses — dynamic execution of model-authored code — so it is
-env-gated and documented as experimental. See the `FrostedFlaming0 Fork` entry in
-`CHANGELOG.md`.
+The agent can author an op and **auto-activate it with no human review**, so it computes on
+the very turn it is born (`cambium.py autoexec`). This crosses the one boundary the *base*
+skill refuses — dynamic execution of model-authored code — and is the defining capability of
+this fork, so it is **on by default**. See the `FrostedFlaming0 Fork` entry in `CHANGELOG.md`.
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `CT_EXPERIMENTAL_AUTOEXEC` | unset (**off**) | Master switch. Set to `1` (or any value other than `0`/`false`/`no`/`off`) to enable auto-activation; unset it or set `0` to disable. |
-| `CT_AUTOEXEC_SANDBOX` | `1` (**on**) | Run auto-activated ops in a restricted namespace (safe builtins + `re` + curated `mo` text helpers only; no `os`/`open`/`__import__`/`eval`/`exec`). Set `0` to run with full builtins — not recommended. |
-| `CT_AUTOEXEC_TIMEOUT` | `2` | Wall-clock seconds (SIGALRM) before a single op is aborted. |
+| `CT_AUTOEXEC` | unset (**on**) | Master switch — **armed by default**. Set to `0`/`false`/`no`/`off` to disable; any other value (or unset) leaves it on. |
+| `CT_EXPERIMENTAL_AUTOEXEC` | unset | **Back-compat alias** for `CT_AUTOEXEC`, honored only when `CT_AUTOEXEC` is unset. Prefer `CT_AUTOEXEC`. |
+| `CT_AUTOEXEC_MODE` | `trusted` | Execution policy. `trusted` runs in-process with normal Python capability. `isolated` runs each op in a short-lived child process with timeout, sanitized env, and best-effort POSIX resource limits. |
+| `CT_AUTOEXEC_RESTRICTED_BUILTINS` | unset (**off**) | Optional in-process accident hardening: restrict builtins to a small allow-list plus `re` and curated `mo` helpers. This is **not** a security boundary. Legacy `CT_AUTOEXEC_SANDBOX` is honored as an alias. |
+| `CT_AUTOEXEC_TIMEOUT` | `2` | Wall-clock seconds before a single op is aborted. In `trusted` mode this uses SIGALRM when available; in `isolated` mode it also caps the child process. |
+| `CT_AUTOEXEC_MEMORY_MB` | `512` | `isolated` mode only: best-effort address-space limit for the child process. |
+| `CT_AUTOEXEC_FILE_MB` | `1` | `isolated` mode only: best-effort output file-size limit for the child process. |
 
 ```bash
-# turn it ON for a session
-export CT_EXPERIMENTAL_AUTOEXEC=1
+# it is ON by default — nothing to do to enable
 
-# turn it OFF again (either form works)
-unset CT_EXPERIMENTAL_AUTOEXEC
-export CT_EXPERIMENTAL_AUTOEXEC=0
+# turn it OFF for a session
+export CT_AUTOEXEC=0
+
+# run authored ops through the child-process isolation path
+export CT_AUTOEXEC_MODE=isolated
 ```
 
-When off, `registry/autoexec_ops.json` is ignored, `cambium.py autoexec` refuses, and the
-skill behaves exactly as the shipped base — no dynamic execution.
+When disabled, `registry/autoexec_ops.json` is ignored, `cambium.py autoexec` refuses, and
+the skill behaves exactly as the base — no dynamic execution.
 
-**Honest threat model:** the restricted namespace + timeout are a robustness and *speed-bump*
-layer, not a vault. Keep this off unless you are deliberately experimenting and accept that
-the agent is executing code it wrote itself.
+**Honest threat model (read this — it is on by default):** auto-activated ops run as a
+trusted local extension by default. That preserves the agent's ability to write useful ops,
+including normal Python imports and helper logic. `CT_AUTOEXEC_RESTRICTED_BUILTINS=1` is only
+accident hardening, **not a vault**. If you run this fork headless, multi-user, or against
+untrusted input, prefer `CT_AUTOEXEC_MODE=isolated` or set `CT_AUTOEXEC=0`.
 
 ## Data retention & third-party transmission
 

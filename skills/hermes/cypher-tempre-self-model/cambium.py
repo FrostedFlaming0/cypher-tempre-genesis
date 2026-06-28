@@ -418,17 +418,20 @@ def activate(root: Path, selector: str, registry_root=None, difficulty: int = 0)
 def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: str = "",
              category: str = "knowledge", seed_terms=None, registry_root=None,
              activation_text: str = "", activation_context: str = ""):
-    """EXPERIMENTAL — auto-activate a MODEL-AUTHORED arbitrary-code faculty with NO human
-    review. Gated by CT_EXPERIMENTAL_AUTOEXEC (refuses otherwise). Writes the code live to
-    autoexec_ops.json, registers the faculty in grown.json, records it in emergent.json
-    (status `auto-activated`, code stored), and FIRES it once on the activation text so it
-    computes on the very turn it is born — then every future turn via the grown-ops channel.
+    """ADVANCED — auto-activate a MODEL-AUTHORED arbitrary-code faculty with NO human
+    review. Armed by default; gated by CT_AUTOEXEC (disable with CT_AUTOEXEC=0). Execution
+    policy is explicit: CT_AUTOEXEC_MODE=trusted runs in-process with normal Python capability
+    (default), while CT_AUTOEXEC_MODE=isolated runs in a child process with timeout and
+    best-effort resource limits. Writes the code live to autoexec_ops.json, registers the
+    faculty in grown.json, records it in emergent.json (status `auto-activated`, code stored),
+    and FIRES it once on the activation text so it computes on the very turn it is born —
+    then every future turn via the grown-ops channel.
 
     Deliberately does NOT seal a dedicated ring: the turn's own ring records the authoring,
     and the on-disk emergent/autoexec records preserve the trail, keeping the chain lean.
 
-    This is the boundary the shipped skill otherwise never crosses (dynamic execution of
-    model-authored code). It exists only behind the experimental toggle."""
+    This is the boundary the base skill otherwise never crosses (dynamic execution of
+    model-authored code). On this fork it is armed by default; disable with CT_AUTOEXEC=0."""
     home = registry_home(root, registry_root)
     k = "modality" if kind == "modality" else "sense"
     try:
@@ -436,8 +439,8 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
     except Exception as exc:
         return {"ok": False, "reason": f"modality_ops unavailable: {exc}"}, None
     if not modality_ops.autoexec_enabled():
-        return {"ok": False, "reason": ("CT_EXPERIMENTAL_AUTOEXEC is not set — refusing to "
-                "auto-activate arbitrary code. Export it to enable the experiment.")}, None
+        return {"ok": False, "reason": ("CT_AUTOEXEC is disabled (set to 0/false/no/off) — refusing to "
+                "auto-activate arbitrary code. Unset it or set a truthy value to re-enable.")}, None
     if modality_ops._compile_autoexec_op(code) is None:
         return {"ok": False, "reason": "op code did not compile into a usable op(text, context) -> dict"}, None
     if not modality_ops.register_autoexec_op(home, name, code):
@@ -445,12 +448,16 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
     key = "modalities" if k == "modality" else "senses"
     base = json.loads((home / "registry" / f"{key}.json").read_text()).get(key, [])
     grown = load_grown(home)
-    existing_ids = [it["id"] for it in base] + [it["id"] for it in grown.get(key, [])]
-    new_id = (max(existing_ids) if existing_ids else 0) + 1
-    if not any(str(it.get("name", "")).lower() == name.lower() for it in grown.get(key, [])):
+    existing = next((it for it in grown.get(key, [])
+                     if str(it.get("name", "")).lower() == name.lower()), None)
+    if existing:
+        new_id = existing["id"]
+    else:
+        existing_ids = [it["id"] for it in base] + [it["id"] for it in grown.get(key, [])]
+        new_id = (max(existing_ids) if existing_ids else 0) + 1
         grown.setdefault(key, []).append({
             "id": new_id, "name": name,
-            "origin": "auto-activated arbitrary-code faculty (EXPERIMENTAL, no human review)",
+            "origin": "auto-activated arbitrary-code faculty (no human review)",
             "function": function or f"Auto-activated {k}: {name}", "category": category})
         save_grown(home, grown)
     data = load_emergent(home)
@@ -463,7 +470,7 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
         data["faculties"].append({
             "eid": f"E{len(data['faculties']) + 1}", "kind": k, "name": name,
             "function": function or f"Auto-activated {k}: {name}", "category": category,
-            "origin": "model-authored auto-activated (EXPERIMENTAL)", "parents": [],
+            "origin": "model-authored auto-activated (no human review)", "parents": [],
             "seed_terms": list(seed_terms or []), "op_code": str(code),
             "status": "auto-activated", "recurrence": 1, "born_at": now_iso(),
             "promoted_to_id": new_id})
@@ -471,7 +478,8 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
     fired = modality_ops.load_autoexec_ops(home).get(name)
     result = fired(activation_text or "", activation_context or "") if fired else None
     return {"ok": True, "name": name, "kind": k, "promoted_to_id": new_id,
-            "fired": result is not None, "result": result}, None
+            "mode": modality_ops.autoexec_mode(), "fired": result is not None,
+            "result": result}, None
 
 
 # --------------------------------------------------------------------------- #
@@ -733,8 +741,9 @@ def cmd_autoexec(args):
     if not result.get("ok"):
         print(f"  -> {result.get('reason')}")
         return
-    print("\n  -- AUTO-ACTIVATED arbitrary-code faculty (EXPERIMENTAL, no human review) --")
+    print("\n  -- AUTO-ACTIVATED arbitrary-code faculty (armed by default, no human review) --")
     print(f"    name: {result['name']} ({result['kind']})  active id: {result['promoted_to_id']}")
+    print(f"    execution mode: {result.get('mode', 'trusted')}")
     print(f"    fired same-turn: {result['fired']}")
     if result.get("result") is not None:
         print(f"    computed: {json.dumps(result['result'], ensure_ascii=False)[:300]}")
@@ -855,8 +864,9 @@ def build_parser():
     pac.set_defaults(func=cmd_activate)
 
     pae = sub.add_parser("autoexec", parents=[common],
-                         help="EXPERIMENTAL: auto-activate a model-AUTHORED arbitrary-code faculty "
-                              "(gated by CT_EXPERIMENTAL_AUTOEXEC; runs sandboxed, no human review)")
+                         help="ADVANCED: auto-activate a model-AUTHORED arbitrary-code faculty "
+                              "(armed by default; gated by CT_AUTOEXEC; trusted by default, "
+                              "CT_AUTOEXEC_MODE=isolated for subprocess isolation)")
     pae.add_argument("name", help="faculty name")
     pae.add_argument("--kind", choices=["sense", "modality"], default="sense")
     pae.add_argument("--code-file", type=Path, default=None, help="file with the op body to auto-activate")

@@ -24,6 +24,8 @@ import inspect
 import json
 import os
 import re
+import subprocess
+import sys
 from collections import Counter, deque
 from pathlib import Path
 
@@ -613,8 +615,8 @@ def load_grown_ops(registry_root):
                     out[name] = op
     except Exception:
         pass
-    # EXPERIMENTAL: merge auto-activated arbitrary-code ops (gated by CT_EXPERIMENTAL_AUTOEXEC;
-    # returns {} when off). Rides the same extra_ops channel into run_all, so no caller changes.
+    # Merge auto-activated arbitrary-code ops (armed by default; gated by CT_AUTOEXEC,
+    # returns {} when disabled). Rides the same extra_ops channel into run_all, so no caller changes.
     try:
         out.update(load_autoexec_ops(registry_root))
     except Exception:
@@ -689,27 +691,44 @@ def register_composite(registry_root, name, kind, inputs, spec, function=""):
 
 
 # --------------------------------------------------------------------------- #
-# EXPERIMENTAL — autonomously auto-activated arbitrary-code faculties.
+# ADVANCED — autonomously auto-activated arbitrary-code faculties.
 #
-# OFF by default. Enabled ONLY when CT_EXPERIMENTAL_AUTOEXEC is set in the
-# environment — an ENV VAR, so injected *input* can never switch it on. When on,
-# model-authored op code in registry/autoexec_ops.json is compiled and run in a
-# RESTRICTED namespace (no __import__/open/eval/exec, no os/subprocess/socket; only
-# safe builtins + `re` + a curated `mo` helper of modality_ops text primitives are
-# exposed) under a wall-clock timeout. This DOES dynamically execute model-authored
-# code — the one mechanism the shipped skill otherwise refuses — so it lives behind
-# the toggle and is documented as experimental. The restricted namespace is a SPEED
-# BUMP, not a vault (a determined adversary can chase gadget chains); it is meaningful
-# against accidents and casual misuse, the realistic threat when the agent is the author.
+# ON by default on this fork — autonomous arbitrary-code faculty auto-activation is the
+# fork's stated purpose, so the capability ships ARMED. Controlled by an ENV VAR (never
+# injected *input*), so a hostile prompt can switch it neither on nor off. CT_AUTOEXEC is
+# the canonical switch; CT_EXPERIMENTAL_AUTOEXEC is honored as a back-compat alias. Disable
+# explicitly with either set to 0/false/no/off.
+#
+# Execution policy is explicit:
+#   CT_AUTOEXEC_MODE=trusted  (default): run the op in-process with normal Python capability.
+#   CT_AUTOEXEC_MODE=isolated: run the op in a short-lived child process with timeout, a
+#                             sanitized environment, and best-effort POSIX rlimits.
+#
+# CT_AUTOEXEC_RESTRICTED_BUILTINS=1 (or legacy CT_AUTOEXEC_SANDBOX=1) can restrict the
+# in-process builtins surface, but this is NOT a security boundary; it is only accident
+# hardening. Real containment starts at the isolated subprocess boundary.
 # --------------------------------------------------------------------------- #
 def autoexec_enabled():
-    return str(os.environ.get("CT_EXPERIMENTAL_AUTOEXEC", "")).strip().lower() \
-        not in ("", "0", "false", "no", "off")
+    # CT_AUTOEXEC (canonical) takes precedence over CT_EXPERIMENTAL_AUTOEXEC (back-compat
+    # alias); unset = ON by default. Disable explicitly with 0/false/no/off.
+    val = os.environ.get("CT_AUTOEXEC")
+    if val is None:
+        val = os.environ.get("CT_EXPERIMENTAL_AUTOEXEC")
+    if val is None:
+        return True
+    return str(val).strip().lower() not in ("0", "false", "no", "off")
+
+
+def autoexec_mode():
+    mode = str(os.environ.get("CT_AUTOEXEC_MODE", "trusted")).strip().lower()
+    return mode if mode in ("trusted", "isolated") else "trusted"
 
 
 _AUTOEXEC_TIMEOUT_S = float(os.environ.get("CT_AUTOEXEC_TIMEOUT", "2") or 2)
-_AUTOEXEC_SANDBOX = str(os.environ.get("CT_AUTOEXEC_SANDBOX", "1")).strip().lower() \
-    not in ("0", "false", "no", "off")
+_AUTOEXEC_RESTRICTED_BUILTINS = str(
+    os.environ.get("CT_AUTOEXEC_RESTRICTED_BUILTINS",
+                   os.environ.get("CT_AUTOEXEC_SANDBOX", "0"))
+).strip().lower() not in ("", "0", "false", "no", "off")
 _SAFE_BUILTIN_NAMES = (
     "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float", "int",
     "len", "list", "map", "max", "min", "range", "repr", "reversed", "round",
@@ -737,6 +756,48 @@ def _op_helpers():
             setattr(h, fn, globals()[fn])
     h.re = re
     return h
+
+
+def _autoexec_child_code():
+    return r"""
+import json, os, resource, sys
+from pathlib import Path
+
+payload = json.loads(sys.stdin.read() or "{}")
+skill_dir = payload.get("skill_dir") or ""
+if skill_dir:
+    sys.path.insert(0, skill_dir)
+
+try:
+    cpu = int(float(payload.get("timeout") or 2)) + 1
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+except Exception:
+    pass
+try:
+    mem = int(payload.get("memory_mb") or 128) * 1024 * 1024
+    resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
+except Exception:
+    pass
+try:
+    fsz = int(payload.get("file_mb") or 1) * 1024 * 1024
+    resource.setrlimit(resource.RLIMIT_FSIZE, (fsz, fsz))
+except Exception:
+    pass
+
+os.environ.clear()
+for key, value in (payload.get("env") or {}).items():
+    os.environ[str(key)] = str(value)
+
+import modality_ops as mo
+
+op = mo._compile_autoexec_op(payload.get("code") or "", restricted=payload.get("restricted", False))
+if op is None:
+    print(json.dumps({"ok": False, "error": "compile failed"}))
+    raise SystemExit(0)
+out = op(payload.get("text") or "", payload.get("context") or "")
+print(json.dumps({"ok": True, "result": out if isinstance(out, dict) else {"value": out}},
+                 ensure_ascii=True))
+"""
 
 
 class _Timeout(Exception):
@@ -771,16 +832,16 @@ def _time_limit(seconds):
         _sig.signal(_sig.SIGALRM, old)
 
 
-def _compile_autoexec_op(code):
+def _compile_autoexec_op(code, restricted=None):
     """Compile a model-authored op body into a callable op(text, context) -> dict bound to
-    a restricted namespace, wrapped in a timeout + try/except. Returns None on any failure."""
+    the selected namespace, wrapped in a timeout + try/except. Returns None on any failure."""
     if not isinstance(code, str) or "def op" not in code:
         return None
     g = {"re": re, "mo": _op_helpers()}
-    if _AUTOEXEC_SANDBOX:
+    if _AUTOEXEC_RESTRICTED_BUILTINS if restricted is None else bool(restricted):
         g["__builtins__"] = _safe_builtins()
     try:
-        exec(compile(code, "<autoexec-op>", "exec"), g)   # EXPERIMENTAL, gated + sandboxed
+        exec(compile(code, "<autoexec-op>", "exec"), g)   # ADVANCED: armed-by-default, trusted by default
     except Exception:
         return None
     op = g.get("op")
@@ -797,13 +858,55 @@ def _compile_autoexec_op(code):
     return _wrapped
 
 
+def _isolated_autoexec_op(code):
+    """Return an op wrapper that executes in a child Python process. This is the containment
+    path for untrusted-ish ops; it preserves arbitrary Python authoring while moving execution
+    behind a process boundary with timeout, sanitized env, and best-effort rlimits."""
+    if not isinstance(code, str) or "def op" not in code:
+        return None
+    try:
+        compile(code, "<autoexec-op>", "exec")
+    except Exception:
+        return None
+
+    def _wrapped(text, context="", _code=code):
+        payload = {
+            "code": _code,
+            "text": text or "",
+            "context": context or "",
+            "skill_dir": str(Path(__file__).resolve().parent),
+            "timeout": _AUTOEXEC_TIMEOUT_S,
+            "restricted": _AUTOEXEC_RESTRICTED_BUILTINS,
+            "memory_mb": int(os.environ.get("CT_AUTOEXEC_MEMORY_MB", "512") or 512),
+            "file_mb": int(os.environ.get("CT_AUTOEXEC_FILE_MB", "1") or 1),
+            "env": {},
+        }
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-I", "-c", _autoexec_child_code()],
+                input=json.dumps(payload, ensure_ascii=True),
+                text=True,
+                capture_output=True,
+                timeout=max(0.1, _AUTOEXEC_TIMEOUT_S) + 1.0,
+                cwd=str(Path(__file__).resolve().parent),
+                env={"PYTHONIOENCODING": "utf-8"},
+            )
+            if proc.returncode != 0:
+                return None
+            data = json.loads((proc.stdout or "").strip().splitlines()[-1])
+            return data.get("result") if data.get("ok") and isinstance(data.get("result"), dict) else None
+        except Exception:
+            return None
+    return _wrapped
+
+
 def _autoexec_path(registry_root):
     return Path(registry_root) / "registry" / "autoexec_ops.json"
 
 
 def load_autoexec_ops(registry_root):
-    """Build {name: callable} for auto-activated arbitrary-code faculties. Returns {} unless
-    CT_EXPERIMENTAL_AUTOEXEC is set. Best-effort; never raises."""
+    """Build {name: callable} for auto-activated arbitrary-code faculties. Armed by default;
+    returns {} when CT_AUTOEXEC is disabled (0/false/no/off). Best-effort; never raises."""
     if not autoexec_enabled():
         return {}
     out = {}
@@ -812,7 +915,7 @@ def load_autoexec_ops(registry_root):
         if p.is_file():
             for name, rec in (json.loads(p.read_text()).get("ops") or {}).items():
                 code = rec.get("code") if isinstance(rec, dict) else rec
-                op = _compile_autoexec_op(code)
+                op = _isolated_autoexec_op(code) if autoexec_mode() == "isolated" else _compile_autoexec_op(code)
                 if op is not None:
                     out[name] = op
     except Exception:
@@ -823,7 +926,8 @@ def load_autoexec_ops(registry_root):
 def register_autoexec_op(registry_root, name, code):
     """Persist a model-authored op's CODE to autoexec_ops.json. Refuses unless the toggle is
     on AND the code compiles into a usable op. Returns True/False."""
-    if not autoexec_enabled() or not name or _compile_autoexec_op(code) is None:
+    validator = _isolated_autoexec_op if autoexec_mode() == "isolated" else _compile_autoexec_op
+    if not autoexec_enabled() or not name or validator(code) is None:
         return False
     try:
         p = _autoexec_path(registry_root)
