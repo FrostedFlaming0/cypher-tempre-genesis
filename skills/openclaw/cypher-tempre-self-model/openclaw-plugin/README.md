@@ -9,8 +9,8 @@ the `enforce.py`, `dormancy.py`, and `recall.py` files from the installed
 
 | OpenClaw hook | Cypher Tempre action |
 |---|---|
-| `session_start` | `enforce.py session-start` |
-| `before_prompt_build` | `enforce.py mark` and prompt reminder injection |
+| `session_start` | `enforce.py session-start`; stores the Layer 1 rehydration context for the next prompt |
+| `before_prompt_build` | `enforce.py user-prompt`; appends pending SessionStart context plus per-prompt guidance / first-prompt Layer 2 recall |
 | `before_agent_finalize` | `enforce.py stop-check`; returns `action: "revise"` when no ring was sealed |
 | `subagent_ended` | Read-only diagnostic comparing `.enforce.json` baseline to the chain head |
 | `agent_end` | Clears the plugin's in-memory run marker |
@@ -18,6 +18,13 @@ the `enforce.py`, `dormancy.py`, and `recall.py` files from the installed
 `before_agent_finalize` is the Stop-equivalent hook: it runs when OpenClaw is
 about to accept a natural final answer, and can request one more bounded model
 pass so the agent seals before finalizing.
+
+Rehydration is forwarded through `before_prompt_build` because OpenClaw's
+`session_start` output is not itself model-visible. The plugin stores the
+`SessionStart` `additionalContext` in memory and appends it once on the next prompt.
+It then runs `enforce.py user-prompt`, which records the turn baseline and appends the
+current guidance plus bounded Layer 2 prompt recall when applicable. If hook JSON cannot
+be parsed, the plugin falls back to the older hardcoded reminder.
 
 `subagent_ended` is diagnostic in the current OpenClaw plugin surface: it records
 and logs whether the subagent advanced the chain after the turn-start baseline,
@@ -73,3 +80,14 @@ Optional config:
 - `maxFinalizeAttempts`: maximum extra passes requested for one unsealed turn,
   default `3`.
 - `injectReminder`: set `false` to turn off reminder injection.
+
+Rehydration environment knobs:
+
+- `CT_PROMPT_RECALL_TOP_K`: prompt-relevant rings to inject on the first prompt,
+  default `5`.
+- `CT_PROMPT_RECALL_SCAN_LIMIT`: tail window scanned for prompt recall, default
+  `2000`.
+- `CT_PROMPT_RECALL_MAX_CHARS`: max Layer 2 context characters, default `1200`.
+- `CT_PROMPT_RECALL=0`: disable Layer 2 prompt recall.
+- `CT_PROMPT_RECALL_EVERY_TURN=1`: inject Layer 2 on every prompt. Use only if the
+  host provides fresh context every turn; otherwise prompt memory will accumulate.

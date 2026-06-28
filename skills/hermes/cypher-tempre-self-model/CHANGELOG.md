@@ -6,6 +6,29 @@ Changes maintained in the **FrostedFlaming0** fork, layered on top of the upstre
 cyberphysicsai releases listed below. These are not part of upstream's `vX.Y.Z`
 versioning; some are deliberately experimental and ship disabled by default.
 
+### Hook rehydration layers — 2026-06-28
+
+Fresh hosted-agent sessions now receive actual Timechain memory before the first answer, not
+just an "ACTIVE" banner. `SessionStart` injects a compact recent-memory digest of sealed
+`turn` rings, and the first `UserPromptSubmit` of a session can inject prompt-relevant `turn`
+rings. Both paths whitelist `ring_type == "turn"` so internal bookkeeping rings with summaries
+do not pollute the prompt.
+
+#### Changed
+- `enforce.py session-start` now appends Layer 1 recent-tail rehydration to the hook context
+  envelope.
+- `enforce.py user-prompt` now records turn-start state and can append Layer 2 prompt-specific
+  recall on the first prompt of a session. Later prompts skip Layer 2 by default to avoid
+  duplicate memory in hosted agents that retain transcript context.
+- Added bounded Layer 2 knobs: `CT_PROMPT_RECALL_TOP_K`, `CT_PROMPT_RECALL_SCAN_LIMIT`,
+  `CT_PROMPT_RECALL_MAX_CHARS`, `CT_PROMPT_RECALL=0`, and
+  `CT_PROMPT_RECALL_EVERY_TURN=1` for fresh-context runtimes.
+- OpenClaw's native plugin now forwards `SessionStart` / `UserPromptSubmit` `additionalContext`
+  into `before_prompt_build` instead of only logging it. Hook event JSON is supplied through
+  both stdin and `CT_OPENCLAW_HOOK_EVENT` for SDK compatibility.
+- Selftests cover prompt recall injection, bookkeeping exclusion, and once-per-session Layer 2
+  behavior.
+
 ### Autoexec execution policy split — 2026-06-28
 
 Autoexec remains **armed by default**, but the execution contract is now explicit and honest:

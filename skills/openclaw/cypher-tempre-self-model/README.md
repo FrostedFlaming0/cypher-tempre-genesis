@@ -29,6 +29,12 @@ uses typed OpenClaw plugin hooks: `before_prompt_build` marks the turn, and
 `before_agent_finalize` requests one more model pass if `enforce.py stop-check`
 finds that no ring was sealed.
 
+The plugin also forwards rehydration context into the model prompt. `session_start`
+produces Layer 1 recent `turn`-ring memory, which the plugin stores and appends once
+from `before_prompt_build`; `before_prompt_build` then runs `enforce.py user-prompt`
+to add per-turn guidance and first-prompt Layer 2 relevant-ring recall when available.
+See `openclaw-plugin/README.md` for the environment knobs and fallback behavior.
+
 ```bash
 openclaw plugins install ~/.openclaw/workspace/skills/cypher-tempre-self-model/openclaw-plugin
 openclaw config set 'plugins.entries.cypher-tempre-enforcement.hooks.allowConversationAccess' true --strict-json

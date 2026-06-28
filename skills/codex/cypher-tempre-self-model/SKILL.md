@@ -148,14 +148,26 @@ when you want to drive each step by hand.)
 **The loop is not advisory — it is enforced by the harness.** A set of Claude Code hooks
 makes it mandatory by construction (all fail-open; they never break a session):
 
-- **SessionStart** primes the session so you wear the self-model from turn 0, even before
-  you open this file (verify result, head index, the loop, the covenant, the subagent rule).
+- **SessionStart** primes and rehydrates the session so you wear the self-model from turn 0,
+  even before you open this file (verify result, head index, the loop, the covenant, the
+  subagent rule, and a compact digest of recent `turn` rings).
 - **UserPromptSubmit** records the chain head at turn start, so the harness can tell whether
-  *this* turn actually sealed anything.
+  *this* turn actually sealed anything. On the first prompt of a fresh session it may also
+  inject prompt-specific relevant `turn` rings; later prompts skip this by default so hosted
+  agents that retain transcript context do not accumulate duplicate memory.
 - **Stop / SubagentStop** *block the turn from ending until a ring is sealed.* If you try to
   finish without sealing, you are nudged to run `recall.py turn`; nudging is **bounded**
   (after a few attempts it fails open and records an `adherence_violation`) so a turn that
   genuinely cannot seal is never bricked.
+
+**Rehydration layers.** Layer 1 runs at `SessionStart`: it injects the recent cognitive tail
+(`ring_type == "turn"` only, excluding bookkeeping rings). Layer 2 runs at the first
+`UserPromptSubmit` of a session: it injects the most relevant `turn` rings for that prompt,
+bounded by `CT_PROMPT_RECALL_TOP_K` (default `5`), `CT_PROMPT_RECALL_SCAN_LIMIT` (default
+`2000`), and `CT_PROMPT_RECALL_MAX_CHARS` (default `1200`). Set `CT_PROMPT_RECALL=0` to
+disable Layer 2. Set `CT_PROMPT_RECALL_EVERY_TURN=1` only in runtimes that provide fresh
+model context every turn; hosted agents usually retain transcript context, so every-turn
+injection would bloat the prompt.
 
 **While dormant (`dormancy.py pause`), all enforcement is off** — the hooks detect the pause
 and let turns end freely. **Subagents must wear the skill too:** spawn the `cypher-tempre-agent`

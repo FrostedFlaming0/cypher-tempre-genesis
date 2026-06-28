@@ -59,8 +59,8 @@ What each hook does:
 
 | Hook | Event | Role |
 |------|-------|------|
-| `session_start_hook.sh` | **SessionStart** | **The auto-load.** Primes the session with the verify result, chain head, covenant, and the loop — so the self-model is worn before any file is read. |
-| `loop_hook.sh` | **UserPromptSubmit** | Records the chain head at turn start and injects the per-turn reminder. |
+| `session_start_hook.sh` | **SessionStart** | **The auto-load.** Primes the session with the verify result, chain head, covenant, loop, and recent `turn`-ring memory — so the self-model is worn and rehydrated before any file is read. |
+| `loop_hook.sh` | **UserPromptSubmit** | Records the chain head at turn start, injects the per-turn reminder, and on the first prompt of a session can inject bounded prompt-relevant `turn` rings. |
 | `stop_hook.sh` | **Stop** | Blocks a turn from ending until a ring is sealed (bounded nudges, fail-open). |
 | `subagent_stop_hook.sh` | **SubagentStop** | Same seal-pressure for spawned subagents. |
 
@@ -68,6 +68,12 @@ Notes:
 
 - **SessionStart alone** gives you the auto-load; add the other three to make the per-turn
   loop non-bypassable. All four are **fail-open** — a hook error never breaks a session.
+- Rehydration is deliberately bounded. SessionStart injects recent `turn` rings only.
+  UserPromptSubmit injects prompt-relevant `turn` rings only once per session by default, so
+  Claude Code's retained transcript does not accumulate duplicate memory. Tune with
+  `CT_PROMPT_RECALL_TOP_K`, `CT_PROMPT_RECALL_SCAN_LIMIT`, and `CT_PROMPT_RECALL_MAX_CHARS`;
+  disable with `CT_PROMPT_RECALL=0`. Use `CT_PROMPT_RECALL_EVERY_TURN=1` only in a runtime
+  that gives the model fresh context every turn.
 - After editing `settings.json`, **start a new session** for the hooks to take effect
   (validate the file with `python3 -m json.tool ~/.claude/settings.json`).
 - To rest the loop for a throwaway session, the hooks honor dormancy: run
