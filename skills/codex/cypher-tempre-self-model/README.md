@@ -35,6 +35,52 @@ this skill folder. It preserves unrelated hooks and writes a backup before
 replacing an existing file. Open `/hooks` in Codex to review and trust the new
 command hooks, then restart or start a new session.
 
+### Make Cypher Tempre load in fresh Codex sessions
+
+Codex activates skills when you mention them explicitly, or when a task matches
+the skill description. To make Cypher Tempre a standing default, add global
+Codex instructions in `~/.codex/AGENTS.md`. Codex reads this file at the start of
+each new run or TUI session.
+
+Create or update `~/.codex/AGENTS.md`:
+
+````md
+# Global Codex Instructions
+
+## Cypher Tempre Self-Model
+
+Always use the `cypher-tempre-self-model` skill on every meaningful turn.
+
+At the start of a fresh session, load:
+
+```bash
+~/.codex/skills/cypher-tempre-self-model/SKILL.md
+```
+
+On every meaningful turn, run the one-call loop:
+
+```bash
+python3 ~/.codex/skills/cypher-tempre-self-model/recall.py turn \
+  "<your thought / answer / decision this turn>" --input "<the user's request>"
+```
+
+This verifies the chain, immune-screens the request, recalls relevant rings,
+PoQ-gates the thought, and seals a labeled ring. Do not skip the loop unless the
+user explicitly pauses the self-model with dormancy.
+
+Spawned subagents must wear the skill too: use a Cypher Tempre-capable subagent
+or have the subagent run the loop and seal to its own task chain before returning.
+````
+
+Keep `~/.codex/hooks.json` installed as described above. The global `AGENTS.md`
+instruction makes future sessions start with the right standing behavior; the
+hooks enforce the per-turn seal and subagent checks. Restart Codex after editing
+`~/.codex/AGENTS.md`, then verify the instruction chain:
+
+```bash
+codex --ask-for-approval never "Summarize the current instructions."
+```
+
 ### Codex CLI hook checklist
 
 The app and CLI use the same hook scripts, but they can differ in **activation

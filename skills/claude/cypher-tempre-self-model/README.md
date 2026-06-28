@@ -24,6 +24,86 @@ python3 timechain.py verify
 
 See `SKILL.md` for the full per-turn protocol.
 
+## Always-on: auto-load on every session
+
+By default you have to invoke the skill each session (e.g. "use the
+cypher-tempre-self-model skill"). To wear the self-model **automatically from turn 0 of
+every fresh session** — with no manual prompt — wire the bundled hooks into Claude Code's
+`settings.json`. The scripts ship in this folder; they are just not registered until you
+add a `hooks` block.
+
+Add this to `~/.claude/settings.json` (global — applies to every project) or to a
+project's `.claude/settings.json` (that repo only). Merge it alongside any keys you
+already have; **replace `/home/you` with your real home path**:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "/home/you/.claude/skills/cypher-tempre-self-model/session_start_hook.sh" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "/home/you/.claude/skills/cypher-tempre-self-model/loop_hook.sh" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "/home/you/.claude/skills/cypher-tempre-self-model/stop_hook.sh" } ] }
+    ],
+    "SubagentStop": [
+      { "hooks": [ { "type": "command", "command": "/home/you/.claude/skills/cypher-tempre-self-model/subagent_stop_hook.sh" } ] }
+    ]
+  }
+}
+```
+
+What each hook does:
+
+| Hook | Event | Role |
+|------|-------|------|
+| `session_start_hook.sh` | **SessionStart** | **The auto-load.** Primes the session with the verify result, chain head, covenant, and the loop — so the self-model is worn before any file is read. |
+| `loop_hook.sh` | **UserPromptSubmit** | Records the chain head at turn start and injects the per-turn reminder. |
+| `stop_hook.sh` | **Stop** | Blocks a turn from ending until a ring is sealed (bounded nudges, fail-open). |
+| `subagent_stop_hook.sh` | **SubagentStop** | Same seal-pressure for spawned subagents. |
+
+Notes:
+
+- **SessionStart alone** gives you the auto-load; add the other three to make the per-turn
+  loop non-bypassable. All four are **fail-open** — a hook error never breaks a session.
+- After editing `settings.json`, **start a new session** for the hooks to take effect
+  (validate the file with `python3 -m json.tool ~/.claude/settings.json`).
+- To rest the loop for a throwaway session, the hooks honor dormancy: run
+  `python3 dormancy.py pause --confirm` and all enforcement goes quiet until you `resume`.
+- Set `CT_ENFORCE_DEBUG=1` to surface hook warnings/tracebacks on stderr when diagnosing;
+  the decision JSON on stdout stays clean regardless.
+
+## Optional: disable Claude Code's built-in auto-memory
+
+If you let this skill be your durable memory, Claude Code's own **auto-memory** feature is
+redundant — it maintains a *separate*, unverified memory store alongside the hash-chained
+ledger this skill seals. Running both means two memories that can drift apart, with only one
+of them tamper-evident. To make the Timechain your single source of truth, turn auto-memory
+off.
+
+Add this key to `~/.claude/settings.json` (global) — it sits alongside the `hooks` block
+above:
+
+```json
+{
+  "autoMemoryEnabled": false
+}
+```
+
+What it does, and the caveats (verified):
+
+- When `false`, Claude **neither reads from nor writes to** the auto-memory store — it stops
+  *both* recording new memories *and* surfacing existing ones into context.
+- There is **no "Memory" permission to deny** — this settings key is the lever. An env-var
+  alternative, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, takes precedence if you prefer setting it
+  in your shell profile; the settings key is cleaner.
+- Takes effect on the **next session** (no documented mid-session hot-reload) — the current
+  session keeps whatever memory it already loaded until you restart.
+- Your existing `memory/` files are **left on disk**; the setting governs read/write, not
+  deletion. Remove that directory by hand if you also want the old store gone.
+
 ## Experimental features & toggles
 
 These features are **off by default** and controlled by environment variables, so nothing
