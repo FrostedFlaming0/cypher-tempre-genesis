@@ -85,6 +85,50 @@ at `openclaw/enforcement-watchdog.sh`.
 
 See `SKILL.md` for the full per-turn protocol.
 
+## Always-on: auto-load on every session
+
+OpenClaw **snapshots the eligible skills when a session starts** and reuses that list for
+every turn, so marking this skill as a default makes it load automatically on each fresh
+session — no per-turn action needed. Any one of these suffices:
+
+- **Skill frontmatter (per-skill):** in this bundle's `SKILL.md` frontmatter set
+  `metadata.openclaw.always: true` — OpenClaw then always includes the skill and
+  skips all other gates.
+- **Default-skills allowlist:** add the skill to `agents.defaults.skills` (baseline for all
+  agents) or to a specific agent via `agents.list[].skills`.
+- **Explicit enable:** `skills.entries.cypher-tempre-self-model.enabled: true`.
+
+```bash
+openclaw config set 'skills.entries.cypher-tempre-self-model.enabled' true --strict-json
+openclaw gateway restart
+```
+
+Because the list is snapshotted at session start, changes take effect on the **next**
+session. This is separate from the enforcement plugin above: the always-on setting makes the
+skill *load*; the plugin makes the per-turn seal *non-bypassable*.
+
+> Verified against OpenClaw docs as of June 2026 (`docs.openclaw.ai/tools/skills`); confirm
+> the keys against your installed version.
+
+## Optional: disable OpenClaw's built-in memory
+
+If this skill is your durable memory, OpenClaw's own memory recall is redundant — running
+both means two stores that can drift apart, with only one tamper-evident. To make the
+Timechain your single source of truth, turn OpenClaw memory search off in `openclaw.json`:
+
+```json
+{ "agents": { "defaults": { "memorySearch": { "enabled": false } } } }
+```
+
+- Middle ground: keep memory but drop vector embeddings with
+  `agents.defaults.memorySearch.provider: "none"` (FTS-only recall).
+- Active memory is a separate plugin-owned feature; if you use it, disable it under
+  `plugins.entries.active-memory` as documented by your OpenClaw version.
+
+Restart the gateway after editing (`openclaw gateway restart`).
+
+> Verified against OpenClaw docs as of June 2026 (`docs.openclaw.ai/reference/memory-config`);
+> confirm the keys against your installed version.
 
 ## Experimental features & toggles
 

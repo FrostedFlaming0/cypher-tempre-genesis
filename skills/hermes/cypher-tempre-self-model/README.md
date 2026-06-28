@@ -47,6 +47,56 @@ terminal/cron helper is available at `hermes/enforcement-watchdog.sh`.
 
 See `SKILL.md` for the full per-turn protocol.
 
+## Always-on: auto-load on every session
+
+Hermes loads named skills into the session prompt before the first turn, and every skill in
+`~/.hermes/skills/` is auto-registered as a slash command — but by default a skill activates
+on explicit mention or a matching task, not on every session. To make this skill a standing
+default, use the **`on_session_start` plugin hook**:
+
+1. Drop a plugin into `~/.hermes/plugins/` (no forking required) that registers an
+   `on_session_start` callback:
+
+   ```python
+   # ~/.hermes/plugins/cypher_tempre_autoload/plugin.py
+   def prime_cypher_tempre(session_id: str, **kwargs):
+       # Load / activate the cypher-tempre-self-model skill for this session.
+       # Keep this implementation aligned with your installed Hermes plugin API.
+       ...
+
+   def register(ctx):
+       ctx.register_hook("on_session_start", prime_cypher_tempre)
+   ```
+
+2. Softer alternatives (no plugin): reference the skill in your **`SOUL.md`**
+   personality/identity file, or group it into a **bundle** you load at session start
+   (`hermes bundles create cypher --skill cypher-tempre-self-model`).
+
+The `on_session_start` hook is also the natural place to run the per-turn `enforce.py mark`
+from the enforcement section above.
+
+> Verified against Hermes docs as of June 2026 (`hermes-agent.nousresearch.com/docs`);
+> confirm the exact hook signature against your installed version.
+
+## Optional: disable Hermes's built-in memory
+
+If this skill is your durable memory, turn Hermes's persistent memory off in
+`~/.hermes/config.yaml`:
+
+```yaml
+memory:
+  memory_enabled: false
+```
+
+- To **gate writes** instead of disabling entirely, set `memory.write_approval: true`
+  (approve each save).
+- For external memory providers, `hermes memory off` disables the external provider and
+  `hermes memory status` reports what's active.
+
+> Known quirk — verify on your version: `hermes memory status` has been reported to still
+> say "Built-in: always active" even after the built-in store is disabled, so confirm actual
+> behavior rather than trusting the status line. Verified against Hermes docs as of June 2026
+> (`hermes-agent.nousresearch.com/docs/user-guide/features/memory`).
 
 ## Experimental features & toggles
 

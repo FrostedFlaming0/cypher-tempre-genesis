@@ -24,6 +24,57 @@ python3 timechain.py verify
 
 See `SKILL.md` for the full per-turn protocol.
 
+## Always-on: auto-load on every session
+
+NanoClaw has two skill surfaces:
+
+- **Host skills** in `.claude/skills/` are Claude Code workflows that you invoke as slash
+  commands from the NanoClaw checkout. As of this writing, NanoClaw does **not** document a
+  dedicated always-on frontmatter field or session-start hook for these host workflows.
+- **Container skills** in `container/skills/` are mounted read-only into agent containers at
+  `/app/skills`. These are controlled per agent group by the container config `skills`
+  field: `"all"` or a pinned list of skill names.
+
+For a container/runtime skill, make sure the relevant group includes it in `skills`. The
+default is `"all"`, so newly added container skills are picked up on the next container
+spawn; if the group pins a list, add this skill name to that list. Restart the group to
+force a respawn:
+
+```bash
+ncl groups config get --id <group-id>
+ncl groups restart --id <group-id>
+```
+
+For behavior that must happen on every meaningful turn, also add a standing instruction to
+the agent group's `CLAUDE.md`:
+
+1. In the relevant agent group's `CLAUDE.md` (e.g. `groups/<group>/CLAUDE.md`), add a line
+   such as: *"Always use the `cypher-tempre-self-model` skill on every meaningful turn — run
+   its `recall.py turn` loop and seal a ring before finishing."*
+2. Or run `/customize` and tell the agent to always wear the skill.
+
+The container `skills` field controls availability. The `CLAUDE.md` instruction controls the
+agent's default behavior; by itself, it is a strong nudge rather than platform enforcement.
+If a future NanoClaw version adds a real always-on host-skill mechanism, prefer it.
+
+> Based on the public NanoClaw docs/README as of June 2026. Verify against
+> `reference/container-config.md`, `extend/overview.md`, or the source for your version.
+
+## Optional: disable NanoClaw's built-in memory
+
+NanoClaw's memory is **file-based**: per-group `CLAUDE.md` files that the Claude Agent SDK
+auto-loads into the system prompt — `groups/global/CLAUDE.md` (shared across groups) and
+`groups/<folder>/CLAUDE.md` (per group). Conversation history is stored separately in
+`store/messages.db` and JSONL transcripts under `data/sessions/<folder>/.claude/`.
+
+There is **no documented dedicated disable switch**. The practical approach is to keep the
+`CLAUDE.md` memory files empty and instruct the agent not to write to them — which *minimizes*
+memory rather than turning the subsystem off. Since the Timechain ledger is your durable
+memory here, an empty `CLAUDE.md` (plus the always-on instruction above) keeps the two from
+competing.
+
+> Based on the public NanoClaw docs as of June 2026; no dedicated memory-off toggle was
+> documented. Verify against the source for your version.
 
 ## Experimental features & toggles
 
