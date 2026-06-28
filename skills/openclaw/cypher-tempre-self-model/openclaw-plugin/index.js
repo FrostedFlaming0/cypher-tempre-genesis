@@ -8,6 +8,7 @@ import { runPluginCommandWithTimeout } from "openclaw/plugin-sdk/run-command";
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
 const COMMON_SKILL_ROOT = "~/.openclaw/workspace/skills/cypher-tempre-self-model";
 const markedRuns = new Set();
+const sessionStartContexts = new Map();
 
 function expandHome(input) {
   if (!input || typeof input !== "string") {
@@ -81,7 +82,7 @@ function commandContext(event, api) {
   };
 }
 
-async function runPython(ctx, scriptName, args = []) {
+async function runPython(ctx, scriptName, args = [], stdin = "") {
   const scriptPath = resolve(ctx.skillRoot, scriptName);
   if (!existsSync(scriptPath)) {
     return {
@@ -97,9 +98,11 @@ async function runPython(ctx, scriptName, args = []) {
       argv: [ctx.pythonBin, scriptPath, ...args, "--root", ctx.chainRoot],
       cwd: ctx.skillRoot,
       timeoutMs: ctx.timeoutMs,
+      stdin,
       env: {
         ...process.env,
         CT_ENFORCE_ROOT: ctx.chainRoot,
+        CT_OPENCLAW_HOOK_EVENT: stdin,
       },
     });
 
@@ -119,8 +122,9 @@ async function runPython(ctx, scriptName, args = []) {
   }
 }
 
-async function runEnforce(ctx, command) {
-  return runPython(ctx, "enforce.py", [command]);
+async function runEnforce(ctx, command, event = undefined) {
+  const stdin = event === undefined ? "" : JSON.stringify(event || {});
+  return runPython(ctx, "enforce.py", [command], stdin);
 }
 
 async function isDormant(ctx) {
@@ -140,6 +144,23 @@ function turnKey(event, ctx) {
   );
 }
 
+function sessionKey(event, ctx) {
+  return String(
+    ctx?.sessionKey ||
+    event?.sessionKey ||
+    event?.context?.sessionKey ||
+    ctx?.runId ||
+    event?.runId ||
+    event?.context?.runId ||
+    "",
+  );
+}
+
+function contextMapKey(event, hookCtx, commandCtx) {
+  const key = sessionKey(event, hookCtx);
+  return key || commandCtx.chainRoot;
+}
+
 function reminder(ctx, dormant) {
   if (dormant) {
     return `[Cypher Tempre] DORMANT: the self-model loop is paused. Resume with: python3 ${resolve(ctx.skillRoot, "dormancy.py")} resume`;
@@ -152,6 +173,26 @@ function reminder(ctx, dormant) {
     "Loop:",
     "verify -> immune-screen -> recall relevant rings -> reason via modalities/senses -> PoQ-gate -> seal a labeled ring.",
   ].join(" ");
+}
+
+function parseAdditionalContext(stdout, expectedEventName = "") {
+  const text = String(stdout || "").trim();
+  if (!text) {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(text);
+    const out = parsed?.hookSpecificOutput;
+    if (!out || typeof out.additionalContext !== "string") {
+      return "";
+    }
+    if (expectedEventName && out.hookEventName && out.hookEventName !== expectedEventName) {
+      return "";
+    }
+    return out.additionalContext.trim();
+  } catch {
+    return "";
+  }
 }
 
 function parseBlockReason(stdout) {
@@ -221,9 +262,14 @@ function register(api) {
     "session_start",
     async (event, hookCtx) => {
       const ctx = commandContext(event, api);
-      const result = await runEnforce(ctx, "session-start");
+      const result = await runEnforce(ctx, "session-start", event);
       if (!result.ok && result.stderr) {
         api.logger?.warn?.(`[cypher-tempre] session-start failed open: ${result.stderr}`);
+        return;
+      }
+      const context = parseAdditionalContext(result.stdout, "SessionStart");
+      if (context) {
+        sessionStartContexts.set(contextMapKey(event, hookCtx, ctx), context);
       } else if (result.stdout.trim()) {
         api.logger?.info?.(result.stdout.trim());
       }
@@ -236,21 +282,37 @@ function register(api) {
     async (event, hookCtx) => {
       const ctx = commandContext(event, api);
       const key = turnKey(event, hookCtx);
-      if (!key || !markedRuns.has(key)) {
-        const result = await runEnforce(ctx, "mark");
-        if (result.ok && key) {
-          markedRuns.add(key);
-        } else if (!result.ok && result.stderr) {
-          api.logger?.warn?.(`[cypher-tempre] mark failed open: ${result.stderr}`);
-        }
+      const result = await runEnforce(ctx, "user-prompt", event);
+      if (result.ok && key) {
+        markedRuns.add(key);
+      } else if (!result.ok && result.stderr) {
+        api.logger?.warn?.(`[cypher-tempre] user-prompt failed open: ${result.stderr}`);
       }
 
       if (ctx.config.injectReminder === false) {
         return;
       }
 
+      const chunks = [];
+      const mapKey = contextMapKey(event, hookCtx, ctx);
+      const startupContext = sessionStartContexts.get(mapKey);
+      if (startupContext) {
+        chunks.push(startupContext);
+        sessionStartContexts.delete(mapKey);
+      }
+
+      const promptContext = result.ok
+        ? parseAdditionalContext(result.stdout, "UserPromptSubmit")
+        : "";
+      if (promptContext) {
+        chunks.push(promptContext);
+      }
+      if (!chunks.length) {
+        chunks.push(reminder(ctx, await isDormant(ctx)));
+      }
+
       return {
-        appendSystemContext: reminder(ctx, await isDormant(ctx)),
+        appendSystemContext: chunks.join("\n\n"),
       };
     },
     { priority: 100, timeoutMs: 30000 },

@@ -10,7 +10,7 @@ Claude Code hooks that make the loop mandatory by construction:
   UserPromptSubmit -> `enforce.py mark`          (record turn start: head index, reset nudges)
   Stop             -> `enforce.py stop-check`    (HARD: block turn end until a ring is sealed)
   SubagentStop     -> `enforce.py subagent-check`(block subagent return until it sealed)
-  SessionStart     -> `enforce.py session-start` (prime: verify + recall + covenant)
+  SessionStart     -> `enforce.py session-start` (prime + rehydrate: verify + covenant + recent rings)
 
 Design guarantees:
   * FAIL-OPEN ALWAYS. A hook must never break the user's session; any internal
@@ -33,6 +33,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 MAX_NUDGES = int(os.environ.get("CT_ENFORCE_MAX_NUDGES", "3"))
+PROMPT_RECALL_TOP_K = int(os.environ.get("CT_PROMPT_RECALL_TOP_K", "5"))
+PROMPT_RECALL_SCAN_LIMIT = int(os.environ.get("CT_PROMPT_RECALL_SCAN_LIMIT", "2000"))
+PROMPT_RECALL_MAX_CHARS = int(os.environ.get("CT_PROMPT_RECALL_MAX_CHARS", "1200"))
 
 
 def _env_enabled(name):
@@ -145,14 +148,25 @@ def _emit(root, event_type, data):
 def _read_stdin():
     try:
         if sys.stdin is None:
-            return {}
-        try:
-            if sys.stdin.isatty():
-                return {}
-        except Exception:
-            pass
-        raw = sys.stdin.read()
-        return json.loads(raw) if raw.strip() else {}
+            raw = ""
+        else:
+            try:
+                if sys.stdin.isatty():
+                    raw = ""
+                else:
+                    raw = sys.stdin.read()
+            except Exception:
+                raw = ""
+        if raw.strip():
+            return json.loads(raw)
+        # Some native plugin SDKs do not expose stdin for hook commands. This
+        # named env fallback is intentionally narrow: hook event JSON only, never
+        # arbitrary environment scanning.
+        for key in ("CT_HOOK_EVENT_JSON", "CT_OPENCLAW_HOOK_EVENT"):
+            raw = os.environ.get(key, "")
+            if raw.strip():
+                return json.loads(raw)
+        return {}
     except Exception:
         return {}
 
@@ -359,6 +373,96 @@ def _wants_exhaustive_audit(prompt):
         return False
 
 
+def _event_prompt(data):
+    """Best-effort prompt extraction across hook hosts."""
+    if not isinstance(data, dict):
+        return ""
+    for key in ("prompt", "input", "userPrompt", "user_prompt", "message", "text"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+def _prompt_rehydration_block(root, prompt, k=None):
+    """Build prompt-specific memory for UserPromptSubmit.
+
+    SessionStart rehydrates RECENCY. This rehydrates RELEVANCE at the first
+    prompt of a fresh session: before the model answers, surface the most
+    relevant sealed cognitive turns even if they are older than the startup tail.
+    Bounded and fail-open: `turn` rings only, cheap lexical/faculty scoring,
+    capped output, no sealing. The state it returns lets Stop later distinguish
+    true pre-answer recall from late-only sealing.
+    """
+    if not _env_enabled("CT_PROMPT_RECALL") and os.environ.get("CT_PROMPT_RECALL") is not None:
+        return "", {"status": "disabled", "ids": []}
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return "", {"status": "empty", "ids": []}
+    k = k if k is not None else PROMPT_RECALL_TOP_K
+    try:
+        from poq import tokens, jaccard
+        import recall
+        import timechain
+        tc = timechain.Timechain(root)
+        rings = tc.tail_rings(PROMPT_RECALL_SCAN_LIMIT)
+        rec = recall.Recall(root, registry_root=HERE)
+        qlab = rec.label(prompt)
+        qtok = set(tokens(prompt))
+        qkw = set(qlab.get("keywords") or [])
+        qent = set(qlab.get("entities") or [])
+        qsenses = {x.get("id") for x in (qlab.get("senses") or [])}
+        qmods = {x.get("id") for x in (qlab.get("modalities") or [])}
+        scored = []
+        for r in rings:
+            if r.get("ring_type") != "turn":
+                continue
+            payload = r.get("payload") or {}
+            summary = payload.get("summary")
+            if not summary:
+                continue
+            lab = payload.get("labels") or {}
+            text = recall.block_text(r)
+            rtok = set(tokens(text))
+            rkw = set(lab.get("keywords") or [])
+            rent = set(lab.get("entities") or [])
+            rsenses = {x.get("id") for x in (lab.get("senses") or [])}
+            rmods = {x.get("id") for x in (lab.get("modalities") or [])}
+            score = (
+                4.0 * jaccard(qtok, rtok)
+                + 3.0 * jaccard(qkw, rkw)
+                + 4.0 * jaccard(qent, rent)
+                + 0.6 * len(qsenses & rsenses)
+                + 0.6 * len(qmods & rmods)
+            )
+            if score > 0.0:
+                scored.append((score, r, str(summary)))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        chosen = scored[:max(0, k)]
+        if not chosen:
+            return "", {"status": "empty", "ids": []}
+        lines, used = [], 0
+        ids = []
+        for score, r, summary in chosen:
+            s = " ".join(summary.split())
+            if len(s) > 180:
+                s = s[:177] + "..."
+            line = f"  #{r.get('index')} score~{score:.2f}: {s}"
+            if used + len(line) > PROMPT_RECALL_MAX_CHARS:
+                break
+            lines.append(line)
+            used += len(line) + 1
+            ids.append(r.get("index"))
+        if not lines:
+            return "", {"status": "empty", "ids": []}
+        text = ("Relevant memory for this prompt (Layer 2 rehydration — read these "
+                "BEFORE you answer; use `timechain.py show <index>` for any in full):\n"
+                + "\n".join(lines))
+        return text, {"status": "injected", "ids": ids}
+    except Exception as e:
+        return "", {"status": "failed", "ids": [], "error": e.__class__.__name__}
+
+
 def cmd_user_prompt(data):
     """UserPromptSubmit: record turn-start (mark) AND emit the per-turn reminder as a
     proper hook-JSON context envelope. This is what loop_hook.sh wires now — emitting
@@ -385,6 +489,25 @@ def cmd_user_prompt(data):
                      "governor will not let the turn end until you make real review progress; retrieval/"
                      "grep is triage only; do NOT write a 'Final Report' before audit.py 'report --final' "
                      "passes; run your fork perspectives per batch; expect audit.py 'challenge' spot-checks.")
+        st = _load_state(root)
+        # Hosted agents retain transcript context. Injecting relevant rings on
+        # every UserPromptSubmit duplicates memory across the live transcript and
+        # creates exactly the bloat the Timechain wrapper avoids with fresh
+        # prompts. Default: once per session. Fresh-context runtimes can opt into
+        # every-turn injection with CT_PROMPT_RECALL_EVERY_TURN=1.
+        prompt_recall_already_used = bool(st.get("prompt_recall_used"))
+        prompt_recall_every_turn = _env_enabled("CT_PROMPT_RECALL_EVERY_TURN")
+        if prompt_recall_every_turn or not prompt_recall_already_used:
+            recall_text, recall_state = _prompt_rehydration_block(root, _event_prompt(data))
+            st["prompt_recall_used"] = True
+        else:
+            recall_text = ""
+            recall_state = {"status": "skipped-session-already-rehydrated", "ids": []}
+        st["turn_prompt_recall"] = recall_state
+        _save_state(root, st)
+        _emit(root, "adherence_prompt_recall", recall_state)
+        if recall_text:
+            text += "\n\n" + recall_text
     _emit_stdout(_context_json("UserPromptSubmit", text))
 
 
@@ -545,9 +668,49 @@ def cmd_subagent_check(data):
     cmd_stop_check(data)
 
 
+def _rehydration_block(root, k=7):
+    """Build a compact recent-memory digest so the session is genuinely REHYDRATED
+    (not merely primed) at turn 0. The SessionStart prime alone only told the model
+    it *wears* the self-model; it never surfaced actual memory, so recall used to land
+    only at seal time — after the answer. Embedding the last few sealed cognitive turns
+    here puts real memory in context before the model reasons, closing that gap on every
+    host that injects this envelope. Bounded and fail-open: a tail read, filtered to
+    cognitive turns (rings carrying a payload summary, not promotion/birth rings),
+    truncated; any error returns "" so it can never break session start.
+
+    WHITELIST, not "any ring with a summary": only ring_type == 'turn' counts — the
+    user-facing cognitive turns (decisions, task state, conclusions). Mechanical rings
+    (faculty/promotion/synthesis/genesis) carry no summary and were already excluded, but
+    internal-bookkeeping types DO carry summaries — telemetry-digest, operator, task_link,
+    dream — and would otherwise pollute the tail. A whitelist also stays clean as new
+    bookkeeping ring types are added later."""
+    try:
+        import timechain
+        # bounded tail — never materialize a large chain just to find the last k turns
+        rings = timechain.Timechain(root).tail_rings(200)
+    except Exception:
+        return ""
+    cog = [r for r in rings
+           if r.get("ring_type") == "turn"
+           and isinstance(r.get("payload"), dict) and r["payload"].get("summary")]
+    if not cog:
+        return ""
+    lines = []
+    for r in cog[-k:]:
+        s = " ".join(str(r["payload"]["summary"]).split())
+        if len(s) > 140:
+            s = s[:137] + "..."
+        lines.append(f"  #{r.get('index')}: {s}")
+    return ("Recent memory (rehydrated — your last sealed cognitive turns; read these "
+            "BEFORE you reason, and `timechain.py show <index>` for any in full):\n"
+            + "\n".join(lines))
+
+
 def cmd_session_start(data):
-    """SessionStart: prime the session so it WEARS the skill from turn 0, even if
-    the model never reads SKILL.md. Output becomes startup context."""
+    """SessionStart: prime AND rehydrate the session so it WEARS the skill from turn 0,
+    even if the model never reads SKILL.md. Output becomes startup context: the ACTIVE
+    banner (verify + loop + covenant) plus a digest of recent sealed turns so memory is
+    in context before the first answer, not only at seal time."""
     root = _root_from(data)
     if _dormant(root):
         _emit_stdout(_context_json("SessionStart",
@@ -558,6 +721,7 @@ def cmd_session_start(data):
     # capture an initial marker so the first Stop is enforceable
     st = _load_state(root)
     st.setdefault("turn_head", head)
+    st["prompt_recall_used"] = False
     st["nudges"] = 0
     _save_state(root, st)
     _emit(root, "adherence_session_start", {"head": head})
@@ -568,8 +732,7 @@ def cmd_session_start(data):
         verify_line = f"chain verifies: {'PASS' if ok else 'FAIL — investigate before sealing'}; "
     except Exception:
         pass
-    _emit_stdout(_context_json(
-        "SessionStart",
+    banner = (
         "[Cypher Tempre] ACTIVE — you wear a Timechain self-model. " + verify_line +
         f"head at ring {head}. "
         "EVERY meaningful turn runs the loop (enforced): verify -> immune-screen -> recall "
@@ -578,7 +741,11 @@ def cmd_session_start(data):
         "SKILL.md / AGENTS.md). "
         "Covenant: accurate, coherent, persistent, honest, thorough; never assert beyond grounding; "
         "size/horizon are never refusal reasons. Spawned subagents must wear the skill too "
-        "(use the cypher-tempre-agent type or forge their own chain and seal)."))
+        "(use the cypher-tempre-agent type or forge their own chain and seal).")
+    rehydration = _rehydration_block(root)
+    if rehydration:
+        banner += "\n\n" + rehydration
+    _emit_stdout(_context_json("SessionStart", banner))
 
 
 def cmd_codex_notify(argv):

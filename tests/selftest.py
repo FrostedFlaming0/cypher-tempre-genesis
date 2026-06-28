@@ -21,7 +21,7 @@ from pathlib import Path
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "claude" / "cypher-tempre-self-model"
 sys.path.insert(0, str(SKILL))
 
-import timechain, poq, cambium, chronosynaptic, continuum, recall, consensus, immune, embed, hippocampus, dormancy, telemetry, bench, policy, learner, faculties, guard, replay, lens, dream, extractor, task
+import timechain, poq, cambium, chronosynaptic, continuum, recall, consensus, immune, embed, hippocampus, dormancy, telemetry, bench, policy, learner, faculties, guard, replay, lens, dream, extractor, task, enforce
 
 _ok = True
 
@@ -205,6 +205,39 @@ def main():
               test_hit["blocks"] and test_hit["blocks"][0]["location"]["path_role"] == "test")
         source_check = rec.verify_source(code_root, carto["blocks"][0]["index"])
         check("recall: source validation verifies current file", source_check["verdict"] == "verified")
+
+        tc.seal("telemetry-digest", {"summary": "wallet alpha prompt recall bookkeeping noise"})
+        older_turn = tc.seal("turn", {"summary": "wallet alpha prompt recall should find this older cognitive decision"})
+        for i in range(12):
+            tc.seal("turn", {"summary": f"unrelated filler turn {i} with no wallet topic"})
+        pr_text, pr_state = enforce._prompt_rehydration_block(root, "wallet alpha prompt recall", k=3)
+        check("enforce: prompt-specific rehydration injects relevant turn memory",
+              pr_state["status"] == "injected" and older_turn["index"] in pr_state["ids"])
+        check("enforce: prompt-specific rehydration excludes bookkeeping summaries",
+              "telemetry-digest" not in pr_text and "bookkeeping noise" not in pr_text)
+        e_root = root / "prompt-recall-once"
+        copy_base_registry(e_root)
+        e_tc = timechain.Timechain(e_root)
+        e_tc.genesis(name="prompt-recall-once")
+        e_tc.seal("turn", {"summary": "wallet alpha once per session prompt recall target"})
+        prev_root = os.environ.get("CT_ENFORCE_ROOT")
+        try:
+            os.environ["CT_ENFORCE_ROOT"] = str(e_root)
+            enforce._STDOUT.clear()
+            enforce.cmd_session_start({})
+            enforce.cmd_user_prompt({"prompt": "wallet alpha prompt recall"})
+            once_state = enforce._load_state(e_root).get("turn_prompt_recall") or {}
+            enforce.cmd_user_prompt({"prompt": "wallet alpha prompt recall"})
+            twice_state = enforce._load_state(e_root).get("turn_prompt_recall") or {}
+            enforce._STDOUT.clear()
+        finally:
+            if prev_root is None:
+                os.environ.pop("CT_ENFORCE_ROOT", None)
+            else:
+                os.environ["CT_ENFORCE_ROOT"] = prev_root
+        check("enforce: prompt-specific rehydration defaults to once per session",
+              once_state.get("status") == "injected"
+              and twice_state.get("status") == "skipped-session-already-rehydrated")
 
         # 6. Embed — morphology beats unrelated
         e = embed.get_embedder("hashing")
