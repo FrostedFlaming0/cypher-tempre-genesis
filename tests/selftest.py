@@ -2002,6 +2002,16 @@ def main():
             check("phase20 enforce: the obligation is bounded — budget exhaustion fails open and drops it",
                   "AUTHOR-OP" not in _out20c
                   and "op_need_pending" not in enforce._load_state(_g20))
+            # a declared skip resolves a pending obligation UNCONDITIONALLY — even when the
+            # re-run's text does not re-fire op_need (the first-live-use regression).
+            enforce.mark_op_need(_g20, "test: skip without re-fire")
+            import argparse as _ap20
+            _args20 = _ap20.Namespace(input="plain words", summary="plain words only",
+                                      skip_op_reason="existing op already computes this",
+                                      computed_need=None)
+            recall._op_need_check(_g20, _g20, _args20, {}, [])
+            check("phase20 enforce: --skip-op-reason clears the obligation even without a re-fire",
+                  "op_need_pending" not in enforce._load_state(_g20))
         finally:
             if _prev_er is None:
                 os.environ.pop("CT_ENFORCE_ROOT", None)

@@ -2311,7 +2311,7 @@ def _fired_bare_markers(root, reg, labels, grown_names):
 def _emit_op_need(root, need, skipped=None):
     try:
         telem.record(str(root), "op_need",
-                     {"fired": True,
+                     {"fired": bool(need.get("fire")),
                       "layers": [k for k in ("L1", "L2", "L3")
                                  if (need.get(k) or {}).get("fired")],
                       "skipped": bool(skipped), "skip_reason": (skipped or "")[:200]})
@@ -2339,17 +2339,20 @@ def _op_need_check(root, reg, args, labels, grown_names):
         need = _op_need.op_need(args.input or "", args.summary or "",
                                 faculty_terms=terms,
                                 computed_need=getattr(args, "computed_need", None))
-        if not need.get("fire"):
-            return
         skip = (getattr(args, "skip_op_reason", None) or "").strip()
         if skip:
-            print(f"AUTHOR-OP: structural need detected but SKIPPED by declaration: {skip}")
+            # A declared skip resolves the obligation UNCONDITIONALLY — including one left
+            # pending by an earlier seal this turn whose need does not re-fire on this
+            # re-run's text (otherwise the skip path could never clear it).
+            print(f"AUTHOR-OP obligation SKIPPED by declaration: {skip}")
             _emit_op_need(root, need, skipped=skip)
             try:
                 import enforce
                 enforce.clear_op_need(root, "skip declared: " + skip)
             except Exception:
                 pass
+            return
+        if not need.get("fire"):
             return
         print("AUTHOR-OP: genuine structural-computation need detected this turn "
               "(operation / dropped structured signal / declared need).")
