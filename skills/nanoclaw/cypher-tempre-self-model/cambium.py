@@ -442,7 +442,9 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
         wrapper still contains failures); an explicit BLOCK fails closed.
       * every activation SEALS an `autoexec` ring (name, kind, mode, code sha256) — the
         chain records what code entered the execution surface, so the ascent stays
-        auditable. Clearing any pending AUTHOR-OP obligation is part of activation.
+        auditable. Activation is ATOMIC on this ring: if it cannot seal, the registry
+        writes are rolled back, the op never fires, and the call refuses (ok=False).
+        Clearing any pending AUTHOR-OP obligation is part of a SUCCESSFUL activation only.
 
     This is the boundary the base skill otherwise never crosses (dynamic execution of
     model-authored code). On this fork it is armed by default; disable with CT_AUTOEXEC=0."""
@@ -465,8 +467,18 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
                 "injected/covenant-violating code into the every-turn execution surface")}, None
     except Exception:
         pass
-    if modality_ops._compile_autoexec_op(code) is None:
+    # In isolated mode the parent must never RUN the op: _isolated_autoexec_op only
+    # syntax-checks here, so even the op file's top-level code runs nowhere but the child
+    # (register_autoexec_op selects the same mode-aware validator).
+    validator = (modality_ops._isolated_autoexec_op if modality_ops.autoexec_mode() == "isolated"
+                 else modality_ops._compile_autoexec_op)
+    if validator(code) is None:
         return {"ok": False, "reason": "op code did not compile into a usable op(text, context) -> dict"}, None
+    # Snapshot the registries so a failed audit seal rolls the whole activation back:
+    # no op enters the every-turn execution surface without its sealed ring.
+    reg_snapshots = {p: (p.read_bytes() if p.is_file() else None)
+                     for p in (home / "registry" / f for f in
+                               ("autoexec_ops.json", "grown.json", "emergent.json"))}
     if not modality_ops.register_autoexec_op(home, name, code):
         return {"ok": False, "reason": "failed to persist op code to autoexec_ops.json"}, None
     key = "modalities" if k == "modality" else "senses"
@@ -499,12 +511,10 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
             "status": "auto-activated", "recurrence": 1, "born_at": now_iso(),
             "promoted_to_id": new_id})
     save_emergent(home, data)
-    fired = modality_ops.load_autoexec_ops(home).get(name)
-    result = fired(activation_text or "", activation_context or "") if fired else None
     # Seal the activation: the chain must record what code entered the execution surface.
     import hashlib
     code_hash = hashlib.sha256(str(code).encode("utf-8", "replace")).hexdigest()
-    ring = None
+    ring, seal_err = None, None
     try:
         tc = Timechain(root)
         payload = {"event": "autoexec_activation", "name": name, "kind": k,
@@ -518,8 +528,27 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
         ring = tc.seal("autoexec", payload,
                        poq={"coherence": 215, "relevance": 210, "novelty": 205,
                             "consistency": 215, "depth": 205, "covenant": 235})
-    except Exception:
-        ring = None
+    except Exception as exc:
+        seal_err = exc
+    if ring is None:
+        # Activation is atomic on the audit ring: unwind every registry write, leave any
+        # pending AUTHOR-OP obligation open, and refuse — unaudited code must never enter
+        # the every-turn execution surface.
+        for p, blob in reg_snapshots.items():
+            try:
+                if blob is None:
+                    p.unlink(missing_ok=True)
+                else:
+                    p.write_bytes(blob)
+            except Exception:
+                pass
+        return {"ok": False, "reason": (
+            "activation aborted: the autoexec audit ring could not seal"
+            + (f" ({seal_err})" if seal_err else "")
+            + " — registry changes rolled back; the op was not activated")}, None
+    # The op fires only once its ring is sealed: activation without audit never executes.
+    fired = modality_ops.load_autoexec_ops(home).get(name)
+    result = fired(activation_text or "", activation_context or "") if fired else None
     # Authoring the op resolves this turn's AUTHOR-OP obligation.
     try:
         import enforce

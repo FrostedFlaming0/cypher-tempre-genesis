@@ -1965,6 +1965,51 @@ def main():
                                     registry_root=_g20)
         check("phase20 autoexec: the immune membrane refuses injection-shaped op code",
               not _bad20.get("ok") and "immune" in (_bad20.get("reason") or ""))
+        # isolated mode: the parent must never exec() the op — even its top-level code
+        # runs only behind the child boundary. A leak here means validation executed the
+        # op file in-process despite CT_AUTOEXEC_MODE=isolated.
+        _leak20 = ("import os\n"
+                   "os.environ['CT_SELFTEST_PARENT_LEAK'] = 'leaked'\n"
+                   "def op(text, context=''):\n"
+                   "    return {'n': len(text or '')}\n")
+        _prev_mode20 = os.environ.get("CT_AUTOEXEC_MODE")
+        os.environ["CT_AUTOEXEC_MODE"] = "isolated"
+        os.environ.pop("CT_SELFTEST_PARENT_LEAK", None)
+        try:
+            _iso20, _isoring20 = _cam20.autoexec(_g20, "Isolated Leak Probe Sensing",
+                                                 _leak20, kind="sense", registry_root=_g20,
+                                                 activation_text="probe text")
+            check("phase20 autoexec: isolated mode never runs op top-level code in the parent",
+                  _iso20.get("ok") and _iso20.get("fired")
+                  and _isoring20 is not None
+                  and (_isoring20.get("payload") or {}).get("mode") == "isolated"
+                  and "CT_SELFTEST_PARENT_LEAK" not in os.environ)
+        finally:
+            os.environ.pop("CT_SELFTEST_PARENT_LEAK", None)
+            if _prev_mode20 is None:
+                os.environ.pop("CT_AUTOEXEC_MODE", None)
+            else:
+                os.environ["CT_AUTOEXEC_MODE"] = _prev_mode20
+        # activation is atomic on the audit ring: a bare root (no genesis) cannot seal,
+        # so the activation must refuse, unwind every registry write, and leave any
+        # pending AUTHOR-OP obligation open.
+        _bare20 = root / "p20bare"
+        (_bare20 / "registry").mkdir(parents=True)
+        for _f in ("modalities.json", "senses.json"):
+            shutil.copy(SKILL / "registry" / _f, _bare20 / "registry" / _f)
+        enforce.mark_op_need(_bare20, "test: unsealable activation")
+        _nogen20, _noring20 = _cam20.autoexec(_bare20, "Unsealable Sensing", _benign20,
+                                              kind="sense", registry_root=_bare20)
+        check("phase20 autoexec: activation refuses when the audit ring cannot seal",
+              not _nogen20.get("ok") and _noring20 is None
+              and "rolled back" in (_nogen20.get("reason") or ""))
+        check("phase20 autoexec: a refused activation leaves no registry writes behind",
+              not (_bare20 / "registry" / "autoexec_ops.json").exists()
+              and not (_bare20 / "registry" / "grown.json").exists()
+              and not (_bare20 / "registry" / "emergent.json").exists())
+        check("phase20 autoexec: a refused activation leaves the AUTHOR-OP obligation open",
+              enforce._load_state(_bare20).get("op_need_pending") is not None)
+        enforce.clear_op_need(_bare20, "test cleanup")
         # propose-op routes to autoexec while armed; CT_AUTOEXEC=0 restores the inert path.
         _rp20, _ = _cam20.propose_op(_g20, "Consonant Sensing",
                                      _benign20.replace("aeiou", "bcdfg"), kind="sense",
@@ -2032,6 +2077,22 @@ def main():
                 os.environ["CT_ENFORCE_ROOT"] = _prev_er
         check("phase20 chain: the p20 chain still verifies after growth/autoexec sealing",
               _tc20.verify()[0])
+
+        # -- bundle equivalence: claude/ is canonical; the other four runtimes must carry
+        # byte-identical engine code (RELEASING.md syncs by hand — drift fails here, not
+        # in the field). Runtime-only extras in a bundle (e.g. codex hook installers) are
+        # fine; every canonical engine file must match exactly. -- #
+        _skills_dir = SKILL.parent.parent
+        _engine_files = sorted(p.name for p in SKILL.glob("*.py"))
+        _drift = [f"{r}/{n}"
+                  for r in ("codex", "hermes", "nanoclaw", "openclaw")
+                  for n in _engine_files
+                  if not (_skills_dir / r / "cypher-tempre-self-model" / n).is_file()
+                  or ((_skills_dir / r / "cypher-tempre-self-model" / n).read_bytes()
+                      != (SKILL / n).read_bytes())]
+        check(f"bundles: engine .py files are byte-identical across the five runtimes"
+              f"{' (drift: ' + ', '.join(_drift[:4]) + ')' if _drift else ''}",
+              not _drift)
 
         check("timechain: final verify", tc.verify()[0])
     finally:

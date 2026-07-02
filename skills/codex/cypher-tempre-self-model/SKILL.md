@@ -340,7 +340,9 @@ subprocess boundary (timeout, sanitized env, rlimits) when you want containment.
 capability-free safeguards hold regardless: the **immune membrane screens the op's code at
 registration** (injected or covenant-violating code is refused before it can enter the
 every-turn execution surface), and **every activation seals an `autoexec` ring** (name, kind,
-mode, code sha256) so the chain records exactly what code was given execution. `propose-op`
+mode, code sha256) so the chain records exactly what code was given execution —
+activation is atomic on that ring: if it cannot seal, the registry writes roll
+back and the op never fires. `propose-op`
 routes here too while autoexec is armed; with `CT_AUTOEXEC=0` it falls back to the base
 skill's inert propose-then-activate path (`cambium.py emergent` to review, `activate` to
 place code in the gitignored, statically-imported `active_ops.py`).
