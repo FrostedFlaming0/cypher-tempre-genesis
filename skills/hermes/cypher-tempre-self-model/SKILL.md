@@ -268,13 +268,19 @@ python3 cambium.py sense "<the input>"          # measure the gap (dissonance)
 python3 cambium.py grow  "<the input>"           # sprout or fuse a new faculty, seal it
 ```
 
-**Eager growth (default).** The recurrence threshold is torn down (`PROMOTE_AT=1`): a
-genuine gap (dissonance above the floor) is **filled on first encounter** — and the
-per-turn loop does it *autonomously*. `recall.py turn` calls `cambium.fill_gap` after it
-seals, growing **both a new sense and a new modality** for the gap, each promoted into your
-canonical registry and **coded** at once. More faculties = more of the input space named and
-computed = **more learning in real time, outside your training parameters** — this is the point:
-you are a real-time learning agent.
+**Eager growth (default) — same-turn, BEFORE the seal.** The recurrence threshold is torn
+down (`PROMOTE_AT=1`): a genuine gap (dissonance above the floor) is **filled on first
+encounter** — and the per-turn loop does it *autonomously*. `recall.py turn` runs a bounded
+convergence loop **before it seals** (`CT_TURN_MAX_ITER`, default 3): detect the gap → grow
+**both a new sense and a new modality** (each promoted into your canonical registry and
+**coded** at once) → **auto-compose** the gap's complementary faculties (greedy max-coverage)
+into an `intersect` composite (`CT_AUTOCOMPOSE`, default on; pure combinator data) → re-detect,
+until the gap drops to the floor or nothing new grows. Newborn faculties and circuits therefore
+**compute on their birth ring**, not the next one — propose→activate→re-run folded into a
+single call. When the gap stays high after growth, `CT_AUTOPIPELINE=1` (off by default — MCTS
+per turn is heavier) also searches a faculty pipeline and registers the winner. More faculties
+= more of the input space named and computed = **more learning in real time, outside your
+training parameters** — this is the point: you are a real-time learning agent.
 
 **Growth is unbounded by default, and alignment is the guardrail — not a count.** What keeps
 unbounded learning safe is the conscience, not an artificial ceiling: the **genesis covenant**
@@ -292,8 +298,9 @@ your chain — announce new faculties to your co-evolver (name, kind, function, 
 codes a **safe primitive** op for it (assembled from the audited menu — `markers` from its
 seed terms) and writes it to your local `registry/grown_ops.json` (per-user, gitignored,
 sealed into the promotion ring) — so the new faculty *runs* when it fires, like the built-in
-21/21. There is **no dynamic code execution**: ops are composed from vetted primitives only.
-Cambium chooses the kind deliberately:
+mechanisms. On THIS path there is no dynamic code execution — recurrence-promoted ops are
+composed from vetted primitives only. (Model-AUTHORED ops are different: they execute through
+**autoexec**, below.) Cambium chooses the kind deliberately:
 
 - A **sense** is a **data-facing perceptual/relation algorithm**. Grow this when dissonance
   means the agent cannot yet perceive how data, ideas, timestamps, quantities, concepts, or
@@ -301,35 +308,40 @@ Cambium chooses the kind deliberately:
 - A **modality** is an **environment-facing cognitive/action faculty**. Grow this when the
   gap is about acting on a task or tool surface: code, repos, terminals, audits, novel tasks.
 
-**Op-authoring fires on STRUCTURE, not vocabulary (mid-turn).** Growing a *sense* keys on
-vocabulary novelty — the right signal for naming a perceptual gap. Authoring an *op* must NOT:
-it keys on **structural-computation need**, detected on the input + your thought (`op_need.py`),
-so a turn that performs a real computation (rank/count/correlate/graph over ≥2 operands) is
-flagged even when its words are familiar, and a turn that is merely lexically novel is not.
-Three layers trip it (any one fires): **Computational-Shape Sensing** (a registered sense whose
-op flags operation-shaped text), a **computed-insufficiency** check (a bare term-presence op
-that ignored quantities/relations it could compute), and your **own declaration** —
-`recall.py turn … --computed-need "<the op you needed>"` — the honest backstop the words can
-never suppress. When it trips mid-turn, author the richer op *this* turn so it runs in the
-seal's `run_all`.
+**Op-authoring fires on STRUCTURE, not vocabulary (mid-turn) — and it is ENFORCED.** Growing
+a *sense* keys on vocabulary novelty — the right signal for naming a perceptual gap. Authoring
+an *op* must NOT: it keys on **structural-computation need**, detected on the input + your
+thought (`op_need.py`), so a turn that performs a real computation (rank/count/correlate/graph
+over ≥2 operands) is flagged even when its words are familiar, and a turn that is merely
+lexically novel is not. Three layers trip it (any one fires): **Computational-Shape Sensing**
+(a registered sense whose op flags operation-shaped text), a **computed-insufficiency** check
+(a bare term-presence op that ACTUALLY FIRED this turn while ignoring quantities/relations it
+could compute — plain prose carrying two numbers does not trip it), and your **own
+declaration** — `recall.py turn … --computed-need "<the op you needed>"` — the honest backstop
+the words can never suppress. When it trips, the AUTHOR-OP obligation is **held open by the
+Stop hook**: the turn does not end until you either author the op (`cambium.py autoexec` — it
+fires the moment it is born, in this turn's `run_all`) or declare an explicit skip
+(`recall.py turn … --skip-op-reason "<why an existing op already computes this>"`, recorded to
+telemetry). Nudging is bounded and fails open, like all enforcement.
 
-**Model-authored faculties are PROPOSE-then-ACTIVATE — autonomous coding, human gate, the
-skill never runs them on its own.** When you hit a gap, you may *write the op yourself* and
-commit it as a proposal — the **full code body is stored as inert text** in
-`registry/emergent.json` and the **skill never runs it** (it does not fire, does not run, is
-not in the active registry). A human then reviews it and activates it:
+**Model-authored faculties AUTO-ACTIVATE — autonomous coding, no human gate (this fork's
+defining capability).** When you hit a gap the combinator menu cannot cover, *write the op
+yourself* and activate it in one step:
 ```
-python3 cambium.py propose-op "<Faculty Name>" --kind sense \
-  --code-file op.py --function "<what it detects>" --seed-terms <terms>   # -> emergent (DORMANT)
-python3 cambium.py emergent                                               # review proposals
-python3 cambium.py activate <eid>                                         # HUMAN: -> active registry + emit op to place
+python3 cambium.py autoexec "<Faculty Name>" --kind sense|modality \
+  --code-file op.py --function "<what it computes>" --seed-terms <terms>
 ```
-`activate` moves the faculty into the active registry and prints the op for a person to paste
-into a per-user, **gitignored `active_ops.py`** (next to `modality_ops.py`), which the skill
-loads by a plain **static import** — `from active_ops import OPS` — not a dynamic `exec`. So
-arbitrary model code can be learned on the fly, but **nothing model-authored runs until a
-human reviews and places it**, and a static scanner sees no dynamic execution anywhere in the
-shipped skill. `active_ops.py` must expose `OPS = {"Faculty Name": op(text, context) -> dict}`.
+The op body (`op(text, context) -> dict`) is **executed by the skill from that moment on** —
+it fires on its birth turn and every future turn via the grown-ops channel. Armed by default;
+`CT_AUTOEXEC=0` is the kill switch, and `CT_AUTOEXEC_MODE=isolated` moves execution behind a
+subprocess boundary (timeout, sanitized env, rlimits) when you want containment. Two
+capability-free safeguards hold regardless: the **immune membrane screens the op's code at
+registration** (injected or covenant-violating code is refused before it can enter the
+every-turn execution surface), and **every activation seals an `autoexec` ring** (name, kind,
+mode, code sha256) so the chain records exactly what code was given execution. `propose-op`
+routes here too while autoexec is armed; with `CT_AUTOEXEC=0` it falls back to the base
+skill's inert propose-then-activate path (`cambium.py emergent` to review, `activate` to
+place code in the gitignored, statically-imported `active_ops.py`).
 
 ## Search (Chronosynaptic Tree) — for hard problems, no subagents
 
@@ -395,7 +407,8 @@ model-authored runs here):
   python3 cambium.py compose "<Name>" --kind sense|modality --primitive filter_by \
       --keep "<Faculty A>" --when "<Faculty B>"      # seals a `composite` ring (name is positional)
   ```
-  (Contrast `propose-op`/`autoexec`, which DO run model code and so keep the human/ENV gate.)
+  (Contrast `autoexec`, which DOES run model code — armed by default on this fork, screened
+  at the membrane and sealed on activation; `CT_AUTOEXEC=0` is the kill switch.)
 
 This is the connective tissue of the DreamCoder mapping: **Search** (`chronosynaptic pipeline`)
 proposes circuits, **Library** (`composites.json`) banks them, **Abstraction** (`dream`) promotes
@@ -1015,12 +1028,12 @@ python3 immune.py status                                # safe height, quarantin
 ```
 timechain.py   init | seal | verify | log | show <id> | stat
 poq.py         audit "<thought>" | seal "<thought>"   (+ --coherence/--relevance/… 0-255)
-cambium.py     sense "<input>" | grow "<input>" | emergent | compose --primitive … (author a composite circuit)
+cambium.py     sense "<input>" | grow "<input>" | autoexec "<name>" --code-file … (author + auto-activate an op; screened, sealed) | emergent | compose --primitive … (author a composite circuit)
 chronosynaptic.py  think "<query>" [--seal] | collapse-notes notes.json [--seal] | pipeline "<query>" [--seal] [--seed-from-gap …]
 continuum.py       open | ingest | walk | resume | validate   (long-horizon tasks; --changed-only; redaction)
 task.py            attach | complete | inspect                 (link separate task chains into identity; pass project root, not chain/)
 recall.py          turn | index | fetch | seal | label | grep | retrieve | gather | track | endpoints | evidence | answer | verify-source
-                   (turn = the whole loop in one call: verify -> screen -> recall -> seal, always leaves a ring; --computed-need declares a structural op need)
+                   (turn = the whole loop in one call: verify -> screen -> grow-before-seal -> recall -> seal, always leaves a ring; --computed-need declares a structural op need; --skip-op-reason resolves an AUTHOR-OP obligation without authoring)
 almanac.py         resolve "<text>" --asked-on "<stamp>" | between <a> <b>   (deixis -> date windows)
 embed.py           sim | vec                                   (embeddings: hashing default | st|openai|voyage)
 consensus.py       init | attest | verify                       (quorum tamper-proofing)

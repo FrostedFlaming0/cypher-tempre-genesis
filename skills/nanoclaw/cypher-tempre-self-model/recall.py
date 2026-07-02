@@ -2150,7 +2150,15 @@ def cmd_turn(args):
             print("recalled: nothing relevant (new ground — reason from base judgment).")
     except Exception:
         blocks = []
-    # 5. PoQ-gate-seal the thought; ALWAYS leave a ring.
+    # 5. Same-turn eager growth — BEFORE the seal, so newborn faculties and composites
+    # compute on their birth ring instead of the next one. Bounded convergence loop
+    # (CT_TURN_MAX_ITER); CT_AUTOGROW=0 disables entirely.
+    grown_names, composed_names, _gap = _turn_growth(root, reg, probe, args.context or "")
+    if grown_names:
+        print("grew faculties to cover the gap: " + ", ".join(grown_names))
+    if composed_names:
+        print("auto-composed circuits: " + ", ".join(composed_names))
+    # 6. PoQ-gate-seal the thought; ALWAYS leave a ring.
     _dims = ["coherence", "relevance", "novelty", "consistency", "depth", "covenant"]
     _a = vars(args)
     scores = {d: _a[d] for d in _dims if _a.get(d) is not None} or None
@@ -2167,65 +2175,203 @@ def cmd_turn(args):
     else:
         print("not sealed — reseal uncertainty-led before finishing (the loop must leave a ring).")
     _emit_loop_ran(root, verdict.get("decision", "?"), resealed=reseal)
-    # 6. Eager autonomous growth: if this turn revealed a gap the faculties don't cover,
-    # fill it — grow a coded sense AND modality (deduped). Tunable via CT_AUTOGROW=0.
-    # Only in the deliberate per-turn loop, never in bulk Continuum ingest (label()).
-    import os as _os
-    if _os.environ.get("CT_AUTOGROW", "1").lower() not in ("0", "false", "no", "off"):
-        try:
-            import cambium
-            grown = cambium.fill_gap(root, probe, context=args.context or "",
-                                     both=True, registry_root=reg)
-            names = sorted({g["faculty"]["name"] for g in grown
-                            if g.get("action") in ("born", "promoted") and g.get("faculty")})
-            if names:
-                print("grew faculties to cover the gap: " + ", ".join(names))
-            _maybe_prompt_autoexec(grown, names, input_text=args.input or "",
-                                   thought=args.summary or "",
-                                   computed_need=getattr(args, "computed_need", None))
-        except Exception:
-            pass
+    # 7. Op-write trigger: a genuine structural-computation need becomes an ENFORCED
+    # AUTHOR-OP obligation (stop-check holds the turn open until the op is authored via
+    # cambium autoexec, or an explicit --skip-op-reason is declared).
+    _op_need_check(root, reg, args, labels, grown_names)
 
 
-def _maybe_prompt_autoexec(grown, names, input_text="", thought="", computed_need=None):
-    """Mid-turn op-write trigger — gated on STRUCTURAL NEED, not vocabulary novelty.
+def _env_on(name, default="1"):
+    import os
+    return os.environ.get(name, default).strip().lower() not in ("0", "false", "no", "off")
 
-    The old trigger fired whenever fill_gap grew a faculty for a high-dissonance gap, i.e.
-    on novel WORDS in the sealed summary — so it fired on familiar-content turns that merely
-    used new vocabulary and missed turns that performed a real computation. This version
-    DECOUPLES the op-prompt from fill_gap's vocabulary growth: it runs the three-layer
-    op_need detector over the turn's (input + thought), and prompts only when there is a
-    genuine OPERATION (Layer 1), dropped quantitative/relational signal (Layer 2), or a
-    model-declared computed-need (Layer 3). fill_gap still grows senses on vocabulary; the
-    op-prompt now keys on structure. The model authors the op via `cambium.py autoexec`.
 
-    Silent when the toggle is off, when CT_AUTOEXEC_PROMPT=0, or when no layer trips.
-    Fail-open: never raises into the turn."""
+def _turn_growth(root, reg, probe, context=""):
+    """Same-turn eager growth, run BEFORE the seal so newborn faculties compute on their
+    birth ring (the propose→review→activate→re-run cycle folded into one call). Bounded
+    convergence loop: detect the gap; fill it (sense + modality); CT_AUTOCOMPOSE (default
+    on) fuses the gap's complementary faculties into an `intersect` composite;
+    CT_AUTOPIPELINE (default OFF — MCTS per turn is heavier) searches a pipeline when the
+    gap stays high after growth. Stops when the gap drops to the floor, nothing new grows,
+    or CT_TURN_MAX_ITER (default 3) is reached. Fail-open: never raises into the turn.
+    Returns (grown_names, composed_names, last_gap)."""
+    grown_names, composed = [], []
+    gap = None
+    if not _env_on("CT_AUTOGROW"):
+        return grown_names, composed, gap
     try:
-        import os as _os
-        if _os.environ.get("CT_AUTOEXEC_PROMPT", "1").lower() in ("0", "false", "no", "off"):
+        import os
+        import cambium
+        home = cambium.registry_home(root, reg)
+        max_iter = max(1, int(os.environ.get("CT_TURN_MAX_ITER", "3") or 3))
+        for _ in range(max_iter):
+            gap = cambium.detect_gap(cambium.load_corpus(home), probe, context)
+            if gap["dissonance"] <= cambium.DISSONANCE_FLOOR:
+                break
+            progressed = False
+            grown = cambium.fill_gap(root, probe, context=context, both=True,
+                                     registry_root=reg)
+            fresh = sorted({g["faculty"]["name"] for g in grown
+                            if g.get("action") in ("born", "promoted") and g.get("faculty")}
+                           - set(grown_names))
+            if fresh:
+                grown_names.extend(fresh)
+                progressed = True
+            if _env_on("CT_AUTOCOMPOSE"):
+                cname = _auto_compose(root, reg, gap)
+                if cname:
+                    composed.append(cname)
+                    progressed = True
+            if not progressed:
+                break
+        if gap and gap["dissonance"] > cambium.DISSONANCE_FLOOR and _env_on("CT_AUTOPIPELINE", "0"):
+            pname = _auto_pipeline(root, probe, context, gap)
+            if pname:
+                composed.append(pname)
+    except Exception:
+        pass
+    return grown_names, composed, gap
+
+
+def _auto_compose(root, reg, gap):
+    """CT_AUTOCOMPOSE: fuse the gap's complementary faculties (greedy max-coverage over
+    matched-token SETS) into an `intersect` composite, so the fused signal computes on this
+    very ring via the composite path in run_all. Pure combinator DATA — audited menu only,
+    nothing model-authored executes here. Deduped by name: an already-banked wiring is not
+    re-registered (recurrence is dream abstraction's job). Returns the name or None."""
+    try:
+        import os
+        import cambium
+        import modality_ops
+        k = max(2, int(os.environ.get("CT_AUTOCOMPOSE_K", "3") or 3))
+        cover = cambium.greedy_coverage(gap, k=k)
+        names = [c["name"] for c in cover]
+        if len(names) < 2:
+            return None
+        cname = "Confluence: " + " ∩ ".join(names)
+        home = cambium.registry_home(root, reg)
+        existing, _deps = modality_ops.load_composites(home)
+        if cname in existing:
+            return None
+        result, _ring = cambium.compose(
+            root, cname, "sense", names, {"primitive": "intersect", "of": names},
+            function="auto-composed from this turn's gap (greedy max-coverage complement)",
+            registry_root=reg)
+        return cname if result.get("ok") else None
+    except Exception:
+        return None
+
+
+def _auto_pipeline(root, probe, context, gap):
+    """CT_AUTOPIPELINE=1: when the gap stays above the floor after growth + composition,
+    run the chronosynaptic pipeline search seeded from the gap's greedy max-coverage
+    complement and register the winner as a composite (sealed as a `pipeline` ring).
+    Heavier than _auto_compose (in-process MCTS), hence off by default."""
+    try:
+        import os
+        import cambium
+        import chronosynaptic
+        iters = max(4, int(os.environ.get("CT_AUTOPIPELINE_ITER", "12") or 12))
+        tree = chronosynaptic.PipelineTree(root, iterations=iters)
+        if len(tree.chain) == 0:
+            return None
+        seed = [s["name"] for s in cambium.greedy_coverage(gap, k=tree.forks)]
+        node = tree.search(probe, context, seed_names=seed or None)
+        result, _ring = tree.collapse_to_composite(node, probe, context,
+                                                   register=True, do_seal=True)
+        return result["name"] if result else None
+    except Exception:
+        return None
+
+
+def _fired_bare_markers(root, reg, labels, grown_names):
+    """The bare-markers faculties actually in play this turn: faculties grown this turn
+    (born with markers ops) plus any fired label whose grown op is markers-primitive.
+    This is what op_need Layer 2 keys on — computed-insufficiency needs an op that
+    actually ignored the structure, not merely numbers in prose."""
+    terms = list(grown_names or [])
+    try:
+        import json as _json
+        import cambium
+        import modality_ops
+        home = cambium.registry_home(root, reg)
+        p = modality_ops._grown_ops_path(home)
+        if p.is_file():
+            specs = _json.loads(p.read_text()).get("ops") or {}
+            marker_names = {n for n, s in specs.items()
+                            if isinstance(s, dict) and s.get("primitive") == "markers"}
+            fired = ([x.get("name") for x in (labels or {}).get("senses") or []] +
+                     [x.get("name") for x in (labels or {}).get("modalities") or []])
+            terms += [n for n in fired if n in marker_names and n not in terms]
+    except Exception:
+        pass
+    return terms
+
+
+def _emit_op_need(root, need, skipped=None):
+    try:
+        telem.record(str(root), "op_need",
+                     {"fired": True,
+                      "layers": [k for k in ("L1", "L2", "L3")
+                                 if (need.get(k) or {}).get("fired")],
+                      "skipped": bool(skipped), "skip_reason": (skipped or "")[:200]})
+    except Exception:
+        pass
+
+
+def _op_need_check(root, reg, args, labels, grown_names):
+    """The op-write trigger, ENFORCED. Runs the three-layer op_need detector over the
+    turn's (input + thought); Layer 2 is keyed to the bare-markers faculties that actually
+    fired (see _fired_bare_markers — plain prose with two numbers no longer trips it). On
+    fire it sets an AUTHOR-OP obligation in the enforcement state: stop-check holds the
+    turn open until the op is authored (`cambium.py autoexec` clears it, and the op fires
+    the moment it is born) or the model declares an explicit skip (--skip-op-reason,
+    recorded to telemetry and cleared). Silent when CT_AUTOEXEC_PROMPT=0 or autoexec is
+    disabled. Fail-open: never raises into the turn."""
+    try:
+        if not _env_on("CT_AUTOEXEC_PROMPT"):
             return
         import modality_ops
         if not modality_ops.autoexec_enabled():
             return
         import op_need as _op_need
-        need = _op_need.op_need(input_text, thought, computed_need=computed_need)
+        terms = _fired_bare_markers(root, reg, labels, grown_names)
+        need = _op_need.op_need(args.input or "", args.summary or "",
+                                faculty_terms=terms,
+                                computed_need=getattr(args, "computed_need", None))
         if not need.get("fire"):
+            return
+        skip = (getattr(args, "skip_op_reason", None) or "").strip()
+        if skip:
+            print(f"AUTHOR-OP: structural need detected but SKIPPED by declaration: {skip}")
+            _emit_op_need(root, need, skipped=skip)
+            try:
+                import enforce
+                enforce.clear_op_need(root, "skip declared: " + skip)
+            except Exception:
+                pass
             return
         print("AUTHOR-OP: genuine structural-computation need detected this turn "
               "(operation / dropped structured signal / declared need).")
         for reason in need.get("reasons", []):
             print("  - " + reason)
-        if names:
-            print("  faculties grown this turn (bare markers ops): " + ", ".join(names))
+        if grown_names:
+            print("  faculties grown this turn (bare markers ops): " + ", ".join(grown_names))
         shape = (need.get("L1") or {}).get("shape")
         hint = f" (operation: {shape})" if shape else ""
-        print(f"  -> A term-presence op cannot perform this computation{hint}. AUTHOR a "
-              "richer op THIS turn, then re-seal so it runs in this turn's run_all:")
+        print(f"  -> A term-presence op cannot perform this computation{hint}. AUTHOR the "
+              "richer op NOW — it fires the moment it is born:")
         print("     python3 cambium.py autoexec \"<Faculty Name>\" --kind sense|modality \\")
         print("        --code-file <op.py> --function \"<what it computes>\" --seed-terms <terms>")
-        print("  (Judgment call: skip only if an existing op already computes this — don't "
-              "bloat autoexec_ops.json. Silence with CT_AUTOEXEC_PROMPT=0.)")
+        _emit_op_need(root, need, skipped=None)
+        try:
+            import enforce
+            enforce.mark_op_need(root, "; ".join(need.get("reasons") or [])[:400])
+            print("  ENFORCED: the turn will not end until you author the op (autoexec "
+                  "clears the obligation) or re-run recall.py turn with "
+                  "--skip-op-reason \"<why an existing op already computes this>\".")
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -2547,6 +2693,10 @@ def build_parser():
                          "structural/quantitative/relational computation this turn required "
                          "that a term-presence op cannot perform — fires the AUTHOR-OP prompt "
                          "deterministically so you can author the op this turn")
+    pt.add_argument("--skip-op-reason", default=None,
+                    help="declare WHY this turn's AUTHOR-OP obligation is skipped (an "
+                         "existing op already computes it) — clears the enforcement marker "
+                         "and records the skip to telemetry instead of authoring an op")
     pt.set_defaults(func=cmd_turn)
 
     ps = sub.add_parser("seal", parents=[common], help="self-label then PoQ-gate-seal a block")

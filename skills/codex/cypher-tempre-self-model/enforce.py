@@ -333,6 +333,30 @@ def _context_json(event, text):
 # hook entry points
 # --------------------------------------------------------------------------- #
 
+def mark_op_need(root, detail=""):
+    """recall.py calls this when the op-write trigger fires: record the pending AUTHOR-OP
+    obligation so stop-check holds the turn open until an op is authored (cambium.autoexec
+    clears it) or an explicit skip is declared (recall.py turn --skip-op-reason)."""
+    try:
+        st = _load_state(root)
+        st["op_need_pending"] = {"detail": (detail or "")[:400]}
+        _save_state(root, st)
+        _emit(root, "adherence_op_need", {"pending": True, "detail": (detail or "")[:200]})
+    except Exception:
+        pass
+
+
+def clear_op_need(root, how=""):
+    """Resolve the AUTHOR-OP obligation (op authored, or skip declared)."""
+    try:
+        st = _load_state(root)
+        if st.pop("op_need_pending", None) is not None:
+            _save_state(root, st)
+            _emit(root, "adherence_op_need", {"pending": False, "resolved": (how or "")[:200]})
+    except Exception:
+        pass
+
+
 def cmd_mark(_data):
     """UserPromptSubmit: capture the head index at turn start and reset the
     per-turn nudge counter. Prints nothing that would disturb the prompt."""
@@ -340,6 +364,7 @@ def cmd_mark(_data):
     st = _load_state(root)
     st["turn_head"] = _head_index(root)
     st["nudges"] = 0
+    st.pop("op_need_pending", None)   # obligations never cross a turn boundary
     # Snapshot the active audit and its review cursor at turn start so stop-check
     # can tell whether THIS turn advanced it — robust even if the audit COMPLETES
     # mid-turn (which clears the pointer).
@@ -528,6 +553,31 @@ def cmd_stop_check(data):
     if start is None:
         return
     sealed_this_turn = head > start
+
+    # --- op-authoring governor: a detected structural-computation need must be answered --- #
+    # recall.py sets the obligation when op_need fires; cambium.autoexec clears it when the
+    # op is authored; recall.py turn --skip-op-reason clears it with a declared skip. Only
+    # gates a turn that DID seal (an unsealed turn falls through to the default nudge, whose
+    # remedy — run the loop — comes first). Bounded by the same nudge budget, fail-open.
+    pending = st.get("op_need_pending")
+    if pending and sealed_this_turn:
+        if _bump_or_release(root, st, "adherence_op_need_violation"):
+            detail = (pending.get("detail") or "structural-computation need")[:200]
+            reason = (
+                "[Cypher Tempre] AUTHOR-OP obligation open: this turn detected a genuine "
+                f"structural-computation need ({detail}). Author the op now — write "
+                "op(text, context) -> dict and run the skill's cambium.py autoexec "
+                "\"<Faculty Name>\" --kind sense|modality --code-file <op.py> "
+                "--function \"<what it computes>\" (the op fires the moment it is born and "
+                "the obligation clears) — or declare an explicit skip by re-running "
+                "recall.py turn with --skip-op-reason \"<why an existing op already "
+                "computes this>\".")
+            _emit_stdout(json.dumps({"decision": "block", "reason": reason}))
+            return
+        # nudge budget exhausted -> fail open; drop the stale obligation so it cannot brick.
+        st = _load_state(root)
+        st.pop("op_need_pending", None)
+        _save_state(root, st)
 
     # --- audit governor: an open, incomplete audit demands per-turn DEEP progress --- #
     # GAP 2 FIX: The old governor checked only cursor movement. A model could

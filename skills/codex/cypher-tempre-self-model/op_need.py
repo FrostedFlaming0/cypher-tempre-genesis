@@ -11,9 +11,12 @@ Three layers; the trigger fires if ANY trips:
   Layer 1 — Computational-Shape Sensing (modality_ops.comp_shape): an operation verb /
             (struct-noun + aggregate cue) over >=2 operands. STRONG verbs fire alone;
             WEAK verbs need corroboration. Keys the prompt to the operation.
-  Layer 2 — Computed-insufficiency: a bare markers faculty returns only presence while the
-            same text carries >=2 numbers or >=2 code-symbols a markers op cannot compute
-            over. Points at the specific faculty. (Entities excluded — proper-noun noise.)
+  Layer 2 — Computed-insufficiency: a bare markers faculty ACTUALLY FIRED on this turn
+            (callers pass the fired bare-markers faculties as `faculty_terms`) while the
+            same text carries >=2 numbers or >=2 code-symbols that op cannot compute over.
+            Without a fired bare-markers faculty there is no insufficiency to point at —
+            numbers in ordinary prose must not trip the trigger. (Entities excluded —
+            proper-noun noise.)
   Layer 3 — Self-declaration seam: the model passes --computed-need "<desc>"; deterministic
             fire. The seam doctrine — the model supplies the judgment the code cannot.
 
@@ -42,12 +45,22 @@ def layer1_shape(text: str) -> dict:
 
 
 def layer2_insufficiency(text: str, faculty_terms=None) -> dict:
-    """A bare markers op returns only {hits,count}. If the same text carries >=2 numbers or
-    >=2 code-symbols, a markers op cannot compute over that structure -> op-authoring-worthy.
-    Entities (capitalized prose words) are EXCLUDED to avoid proper-noun false flags."""
+    """A bare markers op returns only {hits,count}. If one ACTUALLY FIRED this turn
+    (`faculty_terms` = the fired bare-markers faculties, supplied by the caller) while the
+    same text carries >=2 numbers or >=2 code-symbols, that op ignored structure it could
+    compute over -> op-authoring-worthy, pointed at the specific faculty. With no fired
+    bare-markers faculty there is nothing that ignored the signal — plain prose carrying
+    two numbers must NOT trip the trigger (the measured 4/5 false-fire mode of the
+    unguarded version). Entities (capitalized prose words) are EXCLUDED to avoid
+    proper-noun false flags."""
     if _mo is None:
         return {"fired": False, "detail": "modality_ops unavailable"}
     try:
+        fired_markers = [t for t in (faculty_terms or [])
+                         if isinstance(t, str) and t.strip()]
+        if not fired_markers:
+            return {"fired": False,
+                    "detail": "no bare-markers faculty fired — nothing ignored the structure"}
         nums, syms = _mo.numbers(text or ""), _mo.symbols(text or "")
         dropped = []
         if len(nums) >= 2:
@@ -55,7 +68,8 @@ def layer2_insufficiency(text: str, faculty_terms=None) -> dict:
         if len(syms) >= 2:
             dropped.append(f"{len(syms)} symbols {syms[:4]}")
         return {"fired": bool(dropped),
-                "detail": ("markers emitted presence only; richer primitives found: "
+                "detail": (f"bare-markers {fired_markers[:3]} emitted presence only; "
+                           "richer primitives found: "
                            + "; ".join(dropped)) if dropped else "no structured signal dropped"}
     except Exception:
         return {"fired": False, "detail": "insufficiency error"}

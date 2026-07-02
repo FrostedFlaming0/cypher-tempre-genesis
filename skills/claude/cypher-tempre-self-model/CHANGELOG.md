@@ -2,6 +2,51 @@
 
 ## FrostedFlaming0 Fork
 
+### Same-turn fusion loop; enforced AUTHOR-OP; propose gate retired — 2026-07-02
+
+The per-turn loop now converges within the turn instead of across turns, and model-authored
+op activation is fully automatic (the fork's stated purpose, completed). Two capability-free
+safeguards were added to the autoexec surface, and the op-write trigger's noisy layer was
+fixed so enforcement doesn't force junk ops.
+
+#### Changed
+- `recall.py turn` grows BEFORE it seals: a bounded convergence loop (`CT_TURN_MAX_ITER`,
+  default 3) runs detect_gap → fill_gap → auto-compose until the gap is covered, so newborn
+  faculties and circuits compute on their birth ring — propose→activate→re-run in one call.
+- New `CT_AUTOCOMPOSE` (default on): the gap's greedy max-coverage complement is fused into
+  an `intersect` composite each iteration (pure combinator data, deduped by name).
+- New `CT_AUTOPIPELINE` (default off — per-turn MCTS is heavier): when the gap stays above
+  the floor after growth, the chronosynaptic pipeline search runs seeded from the gap and
+  registers the winner.
+- The AUTHOR-OP trigger is now ENFORCED: a fired op_need sets an obligation in the
+  enforcement state; stop-check holds the turn open (bounded, fail-open) until the op is
+  authored via `cambium.py autoexec` (which clears it) or an explicit skip is declared with
+  `recall.py turn --skip-op-reason "…"` (recorded to telemetry, then cleared). Obligations
+  never cross a turn boundary.
+- `cambium.py propose-op` routes straight to `autoexec` while autoexec is armed (the
+  default): a proposal IS an activation. `CT_AUTOEXEC=0` restores the inert
+  propose-then-activate path.
+- SKILL.md rewritten to describe the real execution contract (the base skill's
+  "no dynamic code execution / human gate / static scanner" doctrine no longer applied to
+  this fork and was internally inconsistent with `autoexec`).
+
+#### Fixed
+- `op_need.py` Layer 2 (computed-insufficiency) no longer fires on plain prose carrying two
+  numbers or two symbols: it now requires a bare-markers faculty that ACTUALLY FIRED on the
+  turn (the previously dead `faculty_terms` parameter is wired to the fired grown-op
+  markers faculties plus faculties grown this turn). Measured false-fire rate on ordinary
+  turn texts dropped from 4/5 to 0/5; genuine operations still trip Layer 1.
+
+#### Added
+- `cambium.autoexec` now IMMUNE-SCREENS the op's name/function/code at registration
+  (fail-closed on an explicit BLOCK, fail-open on screen errors) — injected persistence is
+  refused at the membrane, exactly where faculty-pack imports are screened.
+- `cambium.autoexec` now SEALS an `autoexec` ring per activation (name, kind, execution
+  mode, code sha256) — the chain records what code entered the every-turn execution surface.
+- Selftests: phase20 covers L2 gating, same-turn growth + auto-composition, autoexec
+  sealing + membrane refusal, propose-op routing, and the stop-check obligation
+  (block → clear → allow, plus bounded fail-open).
+
 ### Layer 2 prompt recall default-off — 2026-07-02
 
 Prompt-specific UserPromptSubmit recall is now opt-in with `CT_PROMPT_RECALL=1`. Layer 1 SessionStart recent-tail rehydration remains default-on. This keeps fresh-session continuity while avoiding automatic context bloat from relevant-ring summaries that the per-turn loop can retrieve explicitly. When L2 is enabled, it still defaults to once per session; `CT_PROMPT_RECALL_EVERY_TURN=1` remains for fresh-context runtimes.

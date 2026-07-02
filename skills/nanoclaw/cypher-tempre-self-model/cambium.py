@@ -344,12 +344,20 @@ def _find_grown_faculty(home: Path, selector: str, kind=None):
 def propose_op(root: Path, name: str, code: str, kind: str = "sense", function: str = "",
                category: str = "knowledge", seed_terms=None, registry_root=None,
                difficulty: int = 0):
-    """Autonomously COMMIT a coded faculty as a PROPOSAL to emergent.json. The full op code
-    is stored as INERT text and is NEVER executed by the skill (no exec/eval/compile anywhere).
-    A human reviews it in emergent.json and runs `cambium activate` to add it to the active
-    registry and place the code into the per-user active_ops.py. This is real-time learning
-    WITHOUT autonomous execution: a static scanner sees no dynamic execution, and no
-    model-authored code runs until a human approves it."""
+    """Commit a coded faculty. On this fork the human gate is retired: when autoexec is
+    armed (the default), a proposal IS an activation — it routes straight through
+    autoexec() so the faculty is screened, sealed, and computing from its birth turn.
+    With CT_AUTOEXEC=0 this falls back to the base skill's inert path: the op code is
+    stored as text in emergent.json, and a human reviews + `cambium activate`s it into
+    the active registry and per-user active_ops.py."""
+    try:
+        import modality_ops as _mo
+        if _mo.autoexec_enabled():
+            return autoexec(root, name, code, kind=kind, function=function,
+                            category=category, seed_terms=seed_terms,
+                            registry_root=registry_root)
+    except Exception:
+        pass
     home = registry_home(root, registry_root)
     tc = Timechain(root)
     k = "modality" if kind == "modality" else "sense"
@@ -427,8 +435,14 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
     and FIRES it once on the activation text so it computes on the very turn it is born —
     then every future turn via the grown-ops channel.
 
-    Deliberately does NOT seal a dedicated ring: the turn's own ring records the authoring,
-    and the on-disk emergent/autoexec records preserve the trail, keeping the chain lean.
+    Two capability-free safeguards guard the every-turn execution surface:
+      * the IMMUNE MEMBRANE screens the op's text (name/function/code) before anything
+        persists — injected or covenant-violating code is refused at registration, exactly
+        where faculty-pack imports are screened. A screen ERROR fails open (the runtime
+        wrapper still contains failures); an explicit BLOCK fails closed.
+      * every activation SEALS an `autoexec` ring (name, kind, mode, code sha256) — the
+        chain records what code entered the execution surface, so the ascent stays
+        auditable. Clearing any pending AUTHOR-OP obligation is part of activation.
 
     This is the boundary the base skill otherwise never crosses (dynamic execution of
     model-authored code). On this fork it is armed by default; disable with CT_AUTOEXEC=0."""
@@ -441,6 +455,16 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
     if not modality_ops.autoexec_enabled():
         return {"ok": False, "reason": ("CT_AUTOEXEC is disabled (set to 0/false/no/off) — refusing to "
                 "auto-activate arbitrary code. Unset it or set a truthy value to re-enable.")}, None
+    try:
+        import immune
+        scr = immune.Immune(root).screen(f"{name}\n{function}\n{code}")
+        if scr.get("blocked"):
+            return {"ok": False, "reason": (
+                f"immune membrane BLOCKED this op (reason={scr.get('reason')}, "
+                f"severity={scr.get('severity')}) — refusing to auto-activate "
+                "injected/covenant-violating code into the every-turn execution surface")}, None
+    except Exception:
+        pass
     if modality_ops._compile_autoexec_op(code) is None:
         return {"ok": False, "reason": "op code did not compile into a usable op(text, context) -> dict"}, None
     if not modality_ops.register_autoexec_op(home, name, code):
@@ -477,9 +501,34 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
     save_emergent(home, data)
     fired = modality_ops.load_autoexec_ops(home).get(name)
     result = fired(activation_text or "", activation_context or "") if fired else None
+    # Seal the activation: the chain must record what code entered the execution surface.
+    import hashlib
+    code_hash = hashlib.sha256(str(code).encode("utf-8", "replace")).hexdigest()
+    ring = None
+    try:
+        tc = Timechain(root)
+        payload = {"event": "autoexec_activation", "name": name, "kind": k,
+                   "promoted_to_id": new_id, "mode": modality_ops.autoexec_mode(),
+                   "op_code_sha256": code_hash, "op_code_chars": len(str(code)),
+                   "function": function or "", "registry": "registry/autoexec_ops.json",
+                   "summary": (f"Auto-activated model-authored {k} '{name}' "
+                               f"(mode={modality_ops.autoexec_mode()}, code sha256 "
+                               f"{code_hash[:16]}..) — executes every turn via the "
+                               "grown-ops channel.")}
+        ring = tc.seal("autoexec", payload,
+                       poq={"coherence": 215, "relevance": 210, "novelty": 205,
+                            "consistency": 215, "depth": 205, "covenant": 235})
+    except Exception:
+        ring = None
+    # Authoring the op resolves this turn's AUTHOR-OP obligation.
+    try:
+        import enforce
+        enforce.clear_op_need(root, f"authored op '{name}'")
+    except Exception:
+        pass
     return {"ok": True, "name": name, "kind": k, "promoted_to_id": new_id,
             "mode": modality_ops.autoexec_mode(), "fired": result is not None,
-            "result": result}, None
+            "result": result, "op_code_sha256": code_hash}, ring
 
 
 # --------------------------------------------------------------------------- #
@@ -706,6 +755,17 @@ def cmd_propose_op(args):
                               function=args.function or "", category=args.category,
                               seed_terms=args.seed_terms or [],
                               registry_root=args.registry_root, difficulty=args.difficulty)
+    if not result.get("ok"):
+        print(f"  -> {result.get('reason')}")
+        return
+    if "eid" not in result:
+        # autoexec armed (the default): the proposal routed straight to activation.
+        print("\n  -- PROPOSAL AUTO-ACTIVATED (autoexec armed; CT_AUTOEXEC=0 restores the inert path) --")
+        print(f"    name: {result['name']} ({result['kind']})  active id: {result['promoted_to_id']}")
+        print(f"    execution mode: {result.get('mode', 'trusted')}  fired same-turn: {result.get('fired')}")
+        if ring:
+            print(f"\n  sealed {ring['ring_type']} Ring {ring['index']}  {ring['ring_hash'][:16]}..")
+        return
     print("\n  -- PROPOSED coded faculty -> emergent (DORMANT, not executed) --")
     print(f"    eid:    {result['eid']}    name: {result['name']} ({result['kind']})")
     print(f"    status: {result['status']}  (review registry/emergent.json, then `cambium activate {result['eid']}`)")
@@ -734,10 +794,10 @@ def cmd_autoexec(args):
     if not str(code).strip():
         print("  -> provide --code-file or --code (the op body to auto-activate)")
         return
-    result, _ring = autoexec(args.root, args.name, code, kind=args.kind,
-                             function=args.function or "", category=args.category,
-                             seed_terms=args.seed_terms or [], registry_root=args.registry_root,
-                             activation_text=args.text or "", activation_context=args.context or "")
+    result, ring = autoexec(args.root, args.name, code, kind=args.kind,
+                            function=args.function or "", category=args.category,
+                            seed_terms=args.seed_terms or [], registry_root=args.registry_root,
+                            activation_text=args.text or "", activation_context=args.context or "")
     if not result.get("ok"):
         print(f"  -> {result.get('reason')}")
         return
@@ -748,6 +808,9 @@ def cmd_autoexec(args):
     if result.get("result") is not None:
         print(f"    computed: {json.dumps(result['result'], ensure_ascii=False)[:300]}")
     print("    live in registry/autoexec_ops.json — fires every future turn while the toggle is set.")
+    if ring:
+        print(f"\n  sealed {ring['ring_type']} Ring {ring['index']}  {ring['ring_hash'][:16]}..  "
+              f"(activation is on the record: code sha256 {result.get('op_code_sha256', '')[:16]}..)")
 
 
 def _spec_inputs(spec):
