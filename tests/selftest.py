@@ -1921,7 +1921,20 @@ def main():
         _tc20 = timechain.Timechain(_g20); _tc20.genesis(name="p20")
         _hot20 = ("xylotempest quandrifold memetic recursion lattice unbinds the crystalline "
                   "sorrow of forgotten photonic covenant archives beneath fractal tide harmonics")
-        _grown20, _composed20, _gap20 = recall._turn_growth(_g20, _g20, _hot20, "")
+        # the fork arms auto-pipeline by default; pin it OFF here so the growth fixture
+        # stays deterministic and fast (no in-turn MCTS), and assert the armed default
+        # (with the variable ABSENT, so a runner's own env cannot skew the check).
+        _prev_ap = os.environ.pop("CT_AUTOPIPELINE", None)
+        check("phase20 turn-growth: CT_AUTOPIPELINE is armed by default (0 disables)",
+              recall._env_on("CT_AUTOPIPELINE") is True)
+        os.environ["CT_AUTOPIPELINE"] = "0"
+        try:
+            _grown20, _composed20, _gap20 = recall._turn_growth(_g20, _g20, _hot20, "")
+        finally:
+            if _prev_ap is None:
+                os.environ.pop("CT_AUTOPIPELINE", None)
+            else:
+                os.environ["CT_AUTOPIPELINE"] = _prev_ap
         check("phase20 turn-growth: a genuine gap grows faculties before the seal",
               len(_grown20) >= 1)
         import modality_ops as _mo20

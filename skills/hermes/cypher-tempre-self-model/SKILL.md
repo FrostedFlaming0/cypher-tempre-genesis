@@ -277,8 +277,9 @@ convergence loop **before it seals** (`CT_TURN_MAX_ITER`, default 3): detect the
 into an `intersect` composite (`CT_AUTOCOMPOSE`, default on; pure combinator data) → re-detect,
 until the gap drops to the floor or nothing new grows. Newborn faculties and circuits therefore
 **compute on their birth ring**, not the next one — propose→activate→re-run folded into a
-single call. When the gap stays high after growth, `CT_AUTOPIPELINE=1` (off by default — MCTS
-per turn is heavier) also searches a faculty pipeline and registers the winner. More faculties
+single call. When the gap stays high after growth, `CT_AUTOPIPELINE` (ON by default on this
+fork; `CT_AUTOPIPELINE=0` disables — MCTS per turn is heavier) also searches a faculty
+pipeline and registers the winner. More faculties
 = more of the input space named and computed = **more learning in real time, outside your
 training parameters** — this is the point: you are a real-time learning agent.
 

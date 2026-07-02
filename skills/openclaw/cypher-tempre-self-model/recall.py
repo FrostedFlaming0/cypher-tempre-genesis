@@ -2191,7 +2191,8 @@ def _turn_growth(root, reg, probe, context=""):
     birth ring (the propose→review→activate→re-run cycle folded into one call). Bounded
     convergence loop: detect the gap; fill it (sense + modality); CT_AUTOCOMPOSE (default
     on) fuses the gap's complementary faculties into an `intersect` composite;
-    CT_AUTOPIPELINE (default OFF — MCTS per turn is heavier) searches a pipeline when the
+    CT_AUTOPIPELINE (default ON on this fork; disable with 0 — MCTS per turn is heavier)
+    searches a pipeline when the
     gap stays high after growth. Stops when the gap drops to the floor, nothing new grows,
     or CT_TURN_MAX_ITER (default 3) is reached. Fail-open: never raises into the turn.
     Returns (grown_names, composed_names, last_gap)."""
@@ -2224,7 +2225,7 @@ def _turn_growth(root, reg, probe, context=""):
                     progressed = True
             if not progressed:
                 break
-        if gap and gap["dissonance"] > cambium.DISSONANCE_FLOOR and _env_on("CT_AUTOPIPELINE", "0"):
+        if gap and gap["dissonance"] > cambium.DISSONANCE_FLOOR and _env_on("CT_AUTOPIPELINE"):
             pname = _auto_pipeline(root, probe, context, gap)
             if pname:
                 composed.append(pname)
@@ -2263,7 +2264,8 @@ def _auto_compose(root, reg, gap):
 
 
 def _auto_pipeline(root, probe, context, gap):
-    """CT_AUTOPIPELINE=1: when the gap stays above the floor after growth + composition,
+    """CT_AUTOPIPELINE (default on; 0 disables): when the gap stays above the floor after
+    growth + composition,
     run the chronosynaptic pipeline search seeded from the gap's greedy max-coverage
     complement and register the winner as a composite (sealed as a `pipeline` ring).
     Heavier than _auto_compose (in-process MCTS), hence off by default."""

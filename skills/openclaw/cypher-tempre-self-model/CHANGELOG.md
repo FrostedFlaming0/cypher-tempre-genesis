@@ -2,6 +2,15 @@
 
 ## FrostedFlaming0 Fork
 
+### CT_AUTOPIPELINE armed by default — 2026-07-02
+
+The per-turn pipeline search now runs by default when a gap stays above the dissonance
+floor after growth + composition (choosing the fork is the opt-in, matching the autoexec
+doctrine; the alternative was maintaining three per-runtime env-delivery mechanisms —
+settings.json, .bashrc, systemd drop-ins — that drift). `CT_AUTOPIPELINE=0` is the opt-out.
+`CT_AUTOPIPELINE_ITER` (default 12) still bounds the MCTS. Selftests pin
+`CT_AUTOPIPELINE=0` in growth fixtures for determinism and assert the armed default.
+
 ### Same-turn fusion loop; enforced AUTHOR-OP; propose gate retired — 2026-07-02
 
 The per-turn loop now converges within the turn instead of across turns, and model-authored
