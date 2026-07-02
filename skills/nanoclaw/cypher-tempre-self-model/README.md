@@ -57,8 +57,8 @@ The container `skills` field controls availability. The `CLAUDE.md` instruction 
 agent's default behavior; by itself, it is a strong nudge rather than platform enforcement.
 If a future NanoClaw version adds a real always-on host-skill mechanism, prefer it.
 If that mechanism also wires the bundled hook scripts, `SessionStart` injects recent
-`turn`-ring rehydration and the first `UserPromptSubmit` can inject bounded prompt-relevant
-`turn` rings. Without that hook surface, use `AGENTS.md` / `CLAUDE.md` plus explicit
+`turn`-ring rehydration. `UserPromptSubmit` can inject bounded prompt-relevant
+`turn` rings only when `CT_PROMPT_RECALL=1`. Without that hook surface, use `AGENTS.md` / `CLAUDE.md` plus explicit
 `recall.py turn` or recall commands when older context is needed.
 
 > Based on the public NanoClaw docs/README as of June 2026. Verify against

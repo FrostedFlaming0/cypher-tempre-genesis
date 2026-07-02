@@ -44,7 +44,7 @@ For custom task chains, pass the same `--root <chain>` to `enforce.py` and
 
 If a Hermes host/plugin wires the bundled hook scripts, the hook behavior matches the other
 bundles: `SessionStart` injects recent `turn`-ring rehydration, and the first
-`UserPromptSubmit` can inject bounded prompt-relevant `turn` rings. Without such host support,
+`UserPromptSubmit` can inject bounded prompt-relevant `turn` rings only when `CT_PROMPT_RECALL=1`. Without such host support,
 the agent should run explicit recall when older context is needed.
 
 For delegated Hermes work, use `hermes/cypher-tempre-agent.md`. An optional

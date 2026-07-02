@@ -36,12 +36,11 @@ replacing an existing file. Open `/hooks` in Codex to review and trust the new
 command hooks, then restart or start a new session.
 
 The hooks also rehydrate bounded memory into context. `SessionStart` injects recent
-`turn` rings so a fresh session starts with continuity. `UserPromptSubmit` can inject
-prompt-relevant `turn` rings on the first prompt of the session; later prompts skip this by
-default because Codex retains transcript context. Tune with `CT_PROMPT_RECALL_TOP_K`,
-`CT_PROMPT_RECALL_SCAN_LIMIT`, and `CT_PROMPT_RECALL_MAX_CHARS`; disable with
-`CT_PROMPT_RECALL=0`. Use `CT_PROMPT_RECALL_EVERY_TURN=1` only in a runtime that gives the
-model fresh context every turn.
+`turn` rings so a fresh session starts with continuity. `UserPromptSubmit` records turn-start state and can inject
+prompt-relevant `turn` rings only when `CT_PROMPT_RECALL=1`. Tune opt-in L2 with
+`CT_PROMPT_RECALL_TOP_K`, `CT_PROMPT_RECALL_SCAN_LIMIT`, and `CT_PROMPT_RECALL_MAX_CHARS`.
+Use `CT_PROMPT_RECALL_EVERY_TURN=1` only in a runtime that gives the model fresh context
+every turn.
 
 ### Make Cypher Tempre load in fresh Codex sessions
 

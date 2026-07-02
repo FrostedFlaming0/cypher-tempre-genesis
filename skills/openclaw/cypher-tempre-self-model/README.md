@@ -32,7 +32,7 @@ finds that no ring was sealed.
 The plugin also forwards rehydration context into the model prompt. `session_start`
 produces Layer 1 recent `turn`-ring memory, which the plugin stores and appends once
 from `before_prompt_build`; `before_prompt_build` then runs `enforce.py user-prompt`
-to add per-turn guidance and first-prompt Layer 2 relevant-ring recall when available.
+to add per-turn guidance and opt-in Layer 2 relevant-ring recall when `CT_PROMPT_RECALL=1`.
 See `openclaw-plugin/README.md` for the environment knobs and fallback behavior.
 
 ```bash

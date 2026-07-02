@@ -2,6 +2,15 @@
 
 ## FrostedFlaming0 Fork
 
+### Layer 2 prompt recall default-off — 2026-07-02
+
+Prompt-specific UserPromptSubmit recall is now opt-in with `CT_PROMPT_RECALL=1`. Layer 1 SessionStart recent-tail rehydration remains default-on. This keeps fresh-session continuity while avoiding automatic context bloat from relevant-ring summaries that the per-turn loop can retrieve explicitly. When L2 is enabled, it still defaults to once per session; `CT_PROMPT_RECALL_EVERY_TURN=1` remains for fresh-context runtimes.
+
+#### Changed
+- `enforce.py user-prompt` no longer injects Layer 2 prompt recall when `CT_PROMPT_RECALL` is unset.
+- Documentation now frames Layer 2 as an opt-in compatibility aid rather than default rehydration.
+- Selftests cover default-off behavior plus the opt-in once-per-session path.
+
 Changes maintained in the **FrostedFlaming0** fork, layered on top of the upstream
 cyberphysicsai releases listed below. These are not part of upstream's `vX.Y.Z`
 versioning; some are deliberately experimental and ship disabled by default.
@@ -10,7 +19,7 @@ versioning; some are deliberately experimental and ship disabled by default.
 
 Fresh hosted-agent sessions now receive actual Timechain memory before the first answer, not
 just an "ACTIVE" banner. `SessionStart` injects a compact recent-memory digest of sealed
-`turn` rings, and the first `UserPromptSubmit` of a session can inject prompt-relevant `turn`
+`turn` rings, and `UserPromptSubmit` can optionally inject prompt-relevant `turn`
 rings. Both paths whitelist `ring_type == "turn"` so internal bookkeeping rings with summaries
 do not pollute the prompt.
 
@@ -18,16 +27,16 @@ do not pollute the prompt.
 - `enforce.py session-start` now appends Layer 1 recent-tail rehydration to the hook context
   envelope.
 - `enforce.py user-prompt` now records turn-start state and can append Layer 2 prompt-specific
-  recall on the first prompt of a session. Later prompts skip Layer 2 by default to avoid
+  recall when `CT_PROMPT_RECALL=1`. With L2 enabled, later prompts skip it by default to avoid
   duplicate memory in hosted agents that retain transcript context.
-- Added bounded Layer 2 knobs: `CT_PROMPT_RECALL_TOP_K`, `CT_PROMPT_RECALL_SCAN_LIMIT`,
-  `CT_PROMPT_RECALL_MAX_CHARS`, `CT_PROMPT_RECALL=0`, and
+- Added bounded Layer 2 knobs: `CT_PROMPT_RECALL=1`, `CT_PROMPT_RECALL_TOP_K`,
+  `CT_PROMPT_RECALL_SCAN_LIMIT`, `CT_PROMPT_RECALL_MAX_CHARS`, and
   `CT_PROMPT_RECALL_EVERY_TURN=1` for fresh-context runtimes.
 - OpenClaw's native plugin now forwards `SessionStart` / `UserPromptSubmit` `additionalContext`
   into `before_prompt_build` instead of only logging it. Hook event JSON is supplied through
   both stdin and `CT_OPENCLAW_HOOK_EVENT` for SDK compatibility.
-- Selftests cover prompt recall injection, bookkeeping exclusion, and once-per-session Layer 2
-  behavior.
+- Selftests cover default-off behavior, opt-in prompt recall injection, bookkeeping exclusion,
+  and once-per-session Layer 2 behavior.
 
 ### Autoexec execution policy split — 2026-06-28
 

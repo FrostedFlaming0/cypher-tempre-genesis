@@ -28,7 +28,7 @@ same as upstream's — the genesis covenant, the PoQ gate on every seal, the imm
 
 | # | Change | Date | Default | Touches |
 |---|--------|------|---------|---------|
-| 6 | **Hook rehydration layers** (SessionStart recent `turn` memory; first-prompt relevant `turn` memory; OpenClaw context forwarding) | 2026-06-28 | **on**, Layer 2 once per session | `enforce`, hook wrappers, OpenClaw plugin |
+| 6 | **Hook rehydration layers** (SessionStart recent `turn` memory; opt-in prompt-relevant `turn` memory; OpenClaw context forwarding) | 2026-06-28 | **L1 on**, Layer 2 off unless `CT_PROMPT_RECALL=1` | `enforce`, hook wrappers, OpenClaw plugin |
 | 5 | **Full faculty frame-set imported** (192 faculties; frames first-class; registry↔OPS now one-directional) | 2026-06-27 | **on** (data only) | `registry/*.json`, `tests/selftest.py` |
 | 4 | **Composability — faculties as circuits** (DAG `run_all`, combinator menu, composites-as-data, pipeline search, dream abstraction) | 2026-06-27 | **on** (no-exec SAFE lane) | `modality_ops`, `recall`, `cambium`, `chronosynaptic`, `dream` |
 | 3 | **Structural AUTHOR-OP trigger** (`op_need.py` — fires op-authoring on computation need, not vocabulary) | 2026-06-27 | **on** (prompt only; no code auto-runs) | `op_need` (new), `recall`, `modality_ops` |
@@ -48,19 +48,19 @@ into two bounded layers:
   of recent sealed cognitive turns. The filter is a whitelist: `ring_type == "turn"` only, so
   telemetry digests, operator notes, dreams, task links, and other summarized bookkeeping rings
   do not leak into the model prompt.
-- **Layer 2: prompt-specific recall at first `UserPromptSubmit`.** The first prompt of a fresh
-  session can receive the most relevant older `turn` rings for that prompt. It is once-per-session
-  by default because Claude/Codex/Hermes/NanoClaw/OpenClaw generally retain transcript context;
-  injecting on every turn would duplicate memory and bloat the prompt. Fresh-context runtimes can
-  opt into every-turn Layer 2 with `CT_PROMPT_RECALL_EVERY_TURN=1`.
+- **Layer 2: opt-in prompt-specific recall at `UserPromptSubmit`.** Set `CT_PROMPT_RECALL=1`
+  to inject the most relevant older `turn` rings for the prompt. It is off by default because
+  the per-turn loop already recalls relevant rings, and hosted agents generally retain transcript
+  context. With L2 enabled, fresh-context runtimes can opt into every-turn injection with
+  `CT_PROMPT_RECALL_EVERY_TURN=1`.
 
 Layer 2 is bounded by `CT_PROMPT_RECALL_TOP_K` (default `5`),
 `CT_PROMPT_RECALL_SCAN_LIMIT` (default `2000`), and `CT_PROMPT_RECALL_MAX_CHARS` (default
-`1200`), and can be disabled with `CT_PROMPT_RECALL=0`.
+`1200`), and is enabled with `CT_PROMPT_RECALL=1`.
 
 OpenClaw needed a host-specific bridge: its `session_start` hook output was logged, not injected.
 The native plugin now stores `SessionStart` `additionalContext` and appends it once from
-`before_prompt_build`, then runs `enforce.py user-prompt` to append the per-prompt guidance and
+`before_prompt_build`, then runs `enforce.py user-prompt` to append the per-prompt guidance and, when opted in,
 Layer 2 context. If the hook JSON cannot be parsed, it falls back to the old reminder.
 
 ---

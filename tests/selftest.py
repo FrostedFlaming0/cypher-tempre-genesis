@@ -210,11 +210,23 @@ def main():
         older_turn = tc.seal("turn", {"summary": "wallet alpha prompt recall should find this older cognitive decision"})
         for i in range(12):
             tc.seal("turn", {"summary": f"unrelated filler turn {i} with no wallet topic"})
-        pr_text, pr_state = enforce._prompt_rehydration_block(root, "wallet alpha prompt recall", k=3)
-        check("enforce: prompt-specific rehydration injects relevant turn memory",
-              pr_state["status"] == "injected" and older_turn["index"] in pr_state["ids"])
-        check("enforce: prompt-specific rehydration excludes bookkeeping summaries",
-              "telemetry-digest" not in pr_text and "bookkeeping noise" not in pr_text)
+        prev_pr = os.environ.get("CT_PROMPT_RECALL")
+        try:
+            os.environ.pop("CT_PROMPT_RECALL", None)
+            pr_text, pr_state = enforce._prompt_rehydration_block(root, "wallet alpha prompt recall", k=3)
+            check("enforce: prompt-specific rehydration defaults off",
+                  pr_state["status"] == "disabled" and pr_text == "")
+            os.environ["CT_PROMPT_RECALL"] = "1"
+            pr_text, pr_state = enforce._prompt_rehydration_block(root, "wallet alpha prompt recall", k=3)
+            check("enforce: prompt-specific rehydration opt-in injects relevant turn memory",
+                  pr_state["status"] == "injected" and older_turn["index"] in pr_state["ids"])
+            check("enforce: prompt-specific rehydration excludes bookkeeping summaries",
+                  "telemetry-digest" not in pr_text and "bookkeeping noise" not in pr_text)
+        finally:
+            if prev_pr is None:
+                os.environ.pop("CT_PROMPT_RECALL", None)
+            else:
+                os.environ["CT_PROMPT_RECALL"] = prev_pr
         e_root = root / "prompt-recall-once"
         copy_base_registry(e_root)
         e_tc = timechain.Timechain(e_root)
@@ -223,6 +235,7 @@ def main():
         prev_root = os.environ.get("CT_ENFORCE_ROOT")
         try:
             os.environ["CT_ENFORCE_ROOT"] = str(e_root)
+            os.environ["CT_PROMPT_RECALL"] = "1"
             enforce._STDOUT.clear()
             enforce.cmd_session_start({})
             enforce.cmd_user_prompt({"prompt": "wallet alpha prompt recall"})
@@ -235,7 +248,11 @@ def main():
                 os.environ.pop("CT_ENFORCE_ROOT", None)
             else:
                 os.environ["CT_ENFORCE_ROOT"] = prev_root
-        check("enforce: prompt-specific rehydration defaults to once per session",
+            if prev_pr is None:
+                os.environ.pop("CT_PROMPT_RECALL", None)
+            else:
+                os.environ["CT_PROMPT_RECALL"] = prev_pr
+        check("enforce: prompt-specific rehydration opt-in defaults to once per session",
               once_state.get("status") == "injected"
               and twice_state.get("status") == "skipped-session-already-rehydrated")
 

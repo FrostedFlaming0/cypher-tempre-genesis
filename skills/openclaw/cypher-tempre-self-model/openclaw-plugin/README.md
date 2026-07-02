@@ -10,7 +10,7 @@ the `enforce.py`, `dormancy.py`, and `recall.py` files from the installed
 | OpenClaw hook | Cypher Tempre action |
 |---|---|
 | `session_start` | `enforce.py session-start`; stores the Layer 1 rehydration context for the next prompt |
-| `before_prompt_build` | `enforce.py user-prompt`; appends pending SessionStart context plus per-prompt guidance / first-prompt Layer 2 recall |
+| `before_prompt_build` | `enforce.py user-prompt`; appends pending SessionStart context plus per-prompt guidance / opt-in Layer 2 recall |
 | `before_agent_finalize` | `enforce.py stop-check`; returns `action: "revise"` when no ring was sealed |
 | `subagent_ended` | Read-only diagnostic comparing `.enforce.json` baseline to the chain head |
 | `agent_end` | Clears the plugin's in-memory run marker |
@@ -23,7 +23,7 @@ Rehydration is forwarded through `before_prompt_build` because OpenClaw's
 `session_start` output is not itself model-visible. The plugin stores the
 `SessionStart` `additionalContext` in memory and appends it once on the next prompt.
 It then runs `enforce.py user-prompt`, which records the turn baseline and appends the
-current guidance plus bounded Layer 2 prompt recall when applicable. If hook JSON cannot
+current guidance plus bounded Layer 2 prompt recall when `CT_PROMPT_RECALL=1`. If hook JSON cannot
 be parsed, the plugin falls back to the older hardcoded reminder.
 
 `subagent_ended` is diagnostic in the current OpenClaw plugin surface: it records
@@ -83,11 +83,11 @@ Optional config:
 
 Rehydration environment knobs:
 
-- `CT_PROMPT_RECALL_TOP_K`: prompt-relevant rings to inject on the first prompt,
+- `CT_PROMPT_RECALL=1`: enable opt-in Layer 2 prompt recall.
+- `CT_PROMPT_RECALL_TOP_K`: prompt-relevant rings to inject when L2 is enabled,
   default `5`.
 - `CT_PROMPT_RECALL_SCAN_LIMIT`: tail window scanned for prompt recall, default
   `2000`.
 - `CT_PROMPT_RECALL_MAX_CHARS`: max Layer 2 context characters, default `1200`.
-- `CT_PROMPT_RECALL=0`: disable Layer 2 prompt recall.
-- `CT_PROMPT_RECALL_EVERY_TURN=1`: inject Layer 2 on every prompt. Use only if the
+- `CT_PROMPT_RECALL_EVERY_TURN=1`: inject enabled Layer 2 on every prompt. Use only if the
   host provides fresh context every turn; otherwise prompt memory will accumulate.

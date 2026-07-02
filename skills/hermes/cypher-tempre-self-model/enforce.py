@@ -387,14 +387,14 @@ def _event_prompt(data):
 def _prompt_rehydration_block(root, prompt, k=None):
     """Build prompt-specific memory for UserPromptSubmit.
 
-    SessionStart rehydrates RECENCY. This rehydrates RELEVANCE at the first
-    prompt of a fresh session: before the model answers, surface the most
+    SessionStart rehydrates RECENCY. This opt-in helper rehydrates RELEVANCE
+    when CT_PROMPT_RECALL=1: before the model answers, surface the most
     relevant sealed cognitive turns even if they are older than the startup tail.
     Bounded and fail-open: `turn` rings only, cheap lexical/faculty scoring,
     capped output, no sealing. The state it returns lets Stop later distinguish
     true pre-answer recall from late-only sealing.
     """
-    if not _env_enabled("CT_PROMPT_RECALL") and os.environ.get("CT_PROMPT_RECALL") is not None:
+    if not _env_enabled("CT_PROMPT_RECALL"):
         return "", {"status": "disabled", "ids": []}
     prompt = (prompt or "").strip()
     if not prompt:
@@ -490,11 +490,10 @@ def cmd_user_prompt(data):
                      "grep is triage only; do NOT write a 'Final Report' before audit.py 'report --final' "
                      "passes; run your fork perspectives per batch; expect audit.py 'challenge' spot-checks.")
         st = _load_state(root)
-        # Hosted agents retain transcript context. Injecting relevant rings on
-        # every UserPromptSubmit duplicates memory across the live transcript and
-        # creates exactly the bloat the Timechain wrapper avoids with fresh
-        # prompts. Default: once per session. Fresh-context runtimes can opt into
-        # every-turn injection with CT_PROMPT_RECALL_EVERY_TURN=1.
+        # Prompt-specific L2 recall is opt-in because the per-turn loop
+        # already recalls relevant rings. When CT_PROMPT_RECALL=1, default
+        # cadence is once per session; fresh-context runtimes can add
+        # CT_PROMPT_RECALL_EVERY_TURN=1.
         prompt_recall_already_used = bool(st.get("prompt_recall_used"))
         prompt_recall_every_turn = _env_enabled("CT_PROMPT_RECALL_EVERY_TURN")
         if prompt_recall_every_turn or not prompt_recall_already_used:
