@@ -1721,6 +1721,23 @@ class Recall:
         extra = {"labels": labels}
         if at_risk:
             extra["at_risk"] = [str(c)[:300] for c in at_risk][:12]
+        # v3.12 auto-registration (self-audit: 1 of 1,413 rings carried an
+        # at-risk register — opt-in calibration never happens). High-assert
+        # spans with weak/no support are auto-registered as at-risk when the
+        # model didn't register anything itself. Opt-out: CT_AUTO_ATRISK=0.
+        elif _os_env_true("CT_AUTO_ATRISK", default=True):
+            try:
+                import guard as _guardmod
+                _rings = relevant_rings or []
+                if _rings:
+                    _rep = _guardmod.guard_report(summary, _rings, context or "")
+                    risky = [s["text"][:300] for s in _rep.get("spans", [])
+                             if s.get("status") == "unsupported"][:6]
+                    if risky:
+                        extra["at_risk"] = risky
+                        extra["at_risk_auto"] = True
+            except Exception:
+                pass
         verdict, ring = gate_and_seal(self.tc, summary, context, ring_type=ring_type,
                                       difficulty=difficulty, external_scores=external_scores,
                                       files=files, extra_payload=extra,
@@ -2054,6 +2071,14 @@ def _refusal_notice(verdict):
             "occurred, so the turn stays accountable. Gate reason(s): " + why)
 
 
+def _os_env_true(name, default=True):
+    import os as _os
+    v = _os.environ.get(name)
+    if v is None:
+        return default
+    return v.lower() not in ("0", "false", "no", "off")
+
+
 def _loop_seal(root, reg, ring_type, summary, context="", external_scores=None,
                used_rings=None, at_risk=None):
     """Seal that ALWAYS leaves a ring — the spine of the enforced loop. Tries an honest
@@ -2068,6 +2093,10 @@ def _loop_seal(root, reg, ring_type, summary, context="", external_scores=None,
     verdict, ring, labels = Recall(root, reg).seal(
         ring_type, summary, context=context, external_scores=external_scores,
         used_rings=used_rings, at_risk=at_risk)
+    # v3.12 gate-struggle telemetry: the first verdict is the gate's real work.
+    # Before this, only sealed SEALs reached the record, so the conscience was
+    # unmeasurable (self-audit: 1,411 rings, zero observed REVISE/REJECT).
+    _emit_gate_struggle(root, verdict, resealed=not bool(ring))
     if ring:
         return verdict, ring, labels, False
     if verdict.get("decision") == "REJECT":
@@ -2175,7 +2204,10 @@ def cmd_turn(args):
     else:
         print("not sealed — reseal uncertainty-led before finishing (the loop must leave a ring).")
     _emit_loop_ran(root, verdict.get("decision", "?"), resealed=reseal)
-    # 7. Op-write trigger: a genuine structural-computation need becomes an ENFORCED
+    # 7. v3.12 sleep reflex (upstream): cheap per-turn threshold checks; heavy
+    # maintenance (dream, index, digest) fires rarely and bounded. CT_AUTOMAINT=0 disables.
+    _auto_maintenance(root)
+    # 8. Op-write trigger: a genuine structural-computation need becomes an ENFORCED
     # AUTHOR-OP obligation (stop-check holds the turn open until the op is authored via
     # cambium autoexec, or an explicit --skip-op-reason is declared).
     _op_need_check(root, reg, args, labels, grown_names)
@@ -2205,6 +2237,15 @@ def _turn_growth(root, reg, probe, context=""):
         import cambium
         home = cambium.registry_home(root, reg)
         max_iter = max(1, int(os.environ.get("CT_TURN_MAX_ITER", "3") or 3))
+        # v3.12 salience gate (upstream), adapted to pre-seal growth: labels do not
+        # exist yet at this point, so estimate this turn's salience from the probe
+        # with the same formula the labeler applies at seal time — routine turns
+        # (heartbeats, acks) must not grow faculties from their lexical residue.
+        try:
+            os.environ["CT_TURN_SALIENCE"] = str(
+                clamp(50 + 9 * len(entities(probe)) + min(120, 3 * len(set(tokens(probe))))))
+        except Exception:
+            os.environ["CT_TURN_SALIENCE"] = "0"
         for _ in range(max_iter):
             gap = cambium.detect_gap(cambium.load_corpus(home), probe, context)
             if gap["dissonance"] <= cambium.DISSONANCE_FLOOR:
@@ -2229,6 +2270,15 @@ def _turn_growth(root, reg, probe, context=""):
             pname = _auto_pipeline(root, probe, context, gap)
             if pname:
                 composed.append(pname)
+        if grown_names or composed:
+            # v3.12 (upstream): anchor the mutated registries into the integrity
+            # perimeter immediately (idempotent — no-op when hashes are unchanged).
+            try:
+                import epochs as _epochs
+                _epochs.seal_epoch(root, reason="autogrow: " +
+                                   ", ".join(grown_names + composed)[:80])
+            except Exception:
+                pass
     except Exception:
         pass
     return grown_names, composed, gap
@@ -2377,6 +2427,87 @@ def _op_need_check(root, reg, args, labels, grown_names):
                   "--skip-op-reason \"<why an existing op already computes this>\".")
         except Exception:
             pass
+    except Exception:
+        pass
+
+
+def _auto_maintenance(root):
+    """v3.12 sleep reflex (self-audit finding #1: the whole learning membrane
+    was dormant — zero dreams, stale index, 8.7MB undigested — because every
+    training step was a manual CLI call). Cheap threshold checks each turn;
+    heavy work fires rarely and is bounded. CT_AUTOMAINT=0 disables."""
+    import os as _os
+    if _os.environ.get("CT_AUTOMAINT", "1").lower() in ("0", "false", "no", "off"):
+        return
+    try:
+        root = Path(root)
+        state_p = root / "chain" / "automaint.json"
+        st = {}
+        if state_p.exists():
+            try:
+                st = json.loads(state_p.read_text())
+            except Exception:
+                st = {}
+        head = 0
+        rings_p = root / "chain" / "rings.jsonl"
+        if rings_p.exists():
+            with rings_p.open() as fh:
+                head = sum(1 for _ in fh) - 1
+        did = []
+        # 1. hippocampus: rebuild when > 50 rings behind
+        try:
+            meta_p = root / "chain" / "hippocampus" / "meta.json"
+            ih = -1
+            if meta_p.exists():
+                m = json.loads(meta_p.read_text())
+                ih = m.get("head_index", -1)
+            if head - ih > 50:
+                import subprocess as _sp
+                _sp.run([sys.executable, str(Path(__file__).parent / "hippocampus.py"),
+                         "build", "--root", str(root)], capture_output=True, timeout=120)
+                did.append("hippocampus")
+        except Exception:
+            pass
+        # 2. dream: run when >100 rings since last auto-dream (includes digest,
+        #    growth consolidation, operator training when data suffices)
+        try:
+            # (head >= 100 guard: a young chain has nothing to consolidate —
+            # and the unbounded default made dream fire on EVERY fresh chain,
+            # which broke head-advance assertions in harness tests)
+            if head >= 100 and head - int(st.get("last_dream_head", -10**9)) > 100:
+                import subprocess as _sp
+                _sp.run([sys.executable, str(Path(__file__).parent / "dream.py"),
+                         "run", "--root", str(root)], capture_output=True, timeout=300)
+                st["last_dream_head"] = head
+                did.append("dream")
+                # dream growth mutates registries — anchor them
+                try:
+                    import epochs as _epochs
+                    _epochs.seal_epoch(root, reason="auto-dream growth")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        if did:
+            state_p.write_text(json.dumps(st))
+            try:
+                telem.record(str(root), "auto_maintenance", {"ran": did, "head": head})
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _emit_gate_struggle(root, verdict, resealed=False):
+    """Record every FIRST gate verdict — SEAL and non-SEAL alike — so verdict
+    entropy and revision rate are measurable (dream-time calibration input)."""
+    try:
+        telem.record(str(root), "gate_verdict", {
+            "decision": verdict.get("decision", "?"),
+            "brightness": verdict.get("brightness"),
+            "resealed": bool(resealed),
+            "reasons": (verdict.get("reasons") or [])[:2],
+        })
     except Exception:
         pass
 

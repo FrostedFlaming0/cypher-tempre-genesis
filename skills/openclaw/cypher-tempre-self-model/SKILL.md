@@ -127,6 +127,33 @@ Throughout the loop, **telemetry records itself**: what retrieval offered, what 
 what you sealed and on what evidence, what was later falsified (see *Telemetry & bench*).
 You do nothing extra — operating IS the annotation.
 
+## Route first — the chain answers before the model does (v3.13)
+
+Wearing the self-model is **100% and non-negotiable — and it is how you SAVE
+tokens, not spend them**. The model is the fallback, never the default. The
+first act of every turn is the routing decision:
+
+```
+python3 router.py route "<the user's request>"
+```
+
+- **REPLAY** — a sealed antecedent already answers this (score above the
+  replay threshold). Confirm it fits, `replay.py accept --ring <id>`, ground
+  your seal on that ring, and do **not** regenerate the answer. Repeat tasks
+  cost ~zero model tokens.
+- **PARTIAL** — the chain holds substantial relevant context but no full
+  antecedent. Fetch the named rings as your evidence base and reason **only
+  over the missing delta**; seal with `--used-rings`. Never re-derive what
+  the rings already hold.
+- **MODEL** — novel ground: recall is weak or cambium flags a genuine faculty
+  gap needing model reasoning. Run the full loop; growth fires to cover the
+  gap, so the NEXT occurrence routes cheaper.
+
+Every decision is telemetry (`python3 router.py stats` shows the
+model-avoidance rate). This is the economics of wearing the skill always: the
+chain gets denser, routing gets cheaper, and the model is reserved for what
+only a model can do.
+
 ## The loop in one call — and how it is enforced
 
 The whole loop runs from a single command, so there is never friction-cost to wearing the
@@ -947,6 +974,49 @@ uses reinforce, falsifications decay; sealed at-seal salience stays immutable);
 (7) **seal ONE `dream` ring** carrying the whole report. Run it when idle, after big
 task chains, or on a schedule — this is how token use trends down and hallucination
 decays, with every step of the ascent sealed.
+
+## Health — doctor, epochs, and the honest numbers (v3.12)
+
+One call surfaces every neglected maintenance surface — run it when something
+feels off, and read its one-line form in the SessionStart context every session:
+
+```
+python3 doctor.py            # imports, chain, epochs, immune, dormancy,
+                             # hippocampus, telemetry, dream recency,
+                             # faculty ecology, trained operators
+python3 doctor.py --line     # the session-start health line
+```
+
+**Registry epochs — the registries are inside the integrity perimeter.** Your
+faculties and their executable ops (`registry/*.json`) are anchored to the chain:
+every mutation (autogrow, prune, dream growth) seals an `epoch` ring carrying
+their content-hashes, and `timechain.py verify` FAILS if the live files do not
+match the last sealed epoch. If verify reports a registry mismatch you did not
+cause, treat it as compromise. If it was your own deliberate edit, re-anchor it:
+`python3 epochs.py seal --reason "<why>"`.
+
+**Growth hygiene.** Faculties must pay rent: `python3 cambium.py prune --dry-run`
+shows grown faculties that never fire (junk-named ones get no grace); dropping
+`--dry-run` demotes them back to emergent — reversible, history untouched. Routine
+low-salience turns do not grow faculties (`CT_AUTOGROW_MIN_SALIENCE`, default 170),
+and junk tokens (hex blobs, identifiers) can never name a faculty.
+
+**Auto-maintenance.** The turn loop runs its own sleep reflex (`CT_AUTOMAINT=0`
+to disable): the hippocampus rebuilds when it falls >50 rings behind, and a dream
+(digest + consolidation + operator training) fires about every 100 rings. Wearing
+the skill IS the maintenance schedule.
+
+**Honest adherence.** `telemetry.py adherence` reports both the post-nudge
+adherence rate and the pre-nudge **wear rate** (honored / all turns started).
+Quote the wear rate when judging how well the skill is actually worn; gate
+verdicts (including REVISE/FORCE_UNCERTAINTY that never seal) are logged as
+`gate_verdict` telemetry so the conscience's work is measurable.
+
+**Grounding true claims.** When the span guard calls a claim unsupported but you
+verified it directly, ground it against your actual evidence instead of arguing:
+`python3 guard.py audit "<claim>" --used-rings <ids> --evidence-file <paths>`.
+Seals auto-register unsupported high-assert spans as at-risk claims
+(`CT_AUTO_ATRISK=0` to opt out) — calibration data accrues without ceremony.
 
 ## Self-defense — the membrane is tamper-proof and self-healing
 

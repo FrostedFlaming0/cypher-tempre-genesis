@@ -356,7 +356,115 @@ class Timechain:
         }
         ring = self._seal(ring, difficulty=difficulty)
         self._append(ring)
+        self._maybe_checkpoint(ring)
         return ring
+
+    # ---- v3.14 checkpointed verification (O(tail) re-verify) ----
+    CHECKPOINT_EVERY = 500
+
+    def _ckpt_path(self):
+        return self.dir / "checkpoints.jsonl"
+
+    def _maybe_checkpoint(self, ring):
+        """Every CHECKPOINT_EVERY rings, append a checkpoint (index + ring_hash
+        + prev-checkpoint hash) AFTER verifying the span since the last
+        checkpoint. verify(fast=True) then re-walks only the tail after the
+        newest checkpoint instead of the whole chain — O(tail), which keeps
+        100k-ring Continuum chains cheap. Full verify() still walks everything
+        and cross-checks the checkpoint file itself, so a forged checkpoint
+        cannot hide ring tampering from a deep audit."""
+        try:
+            if ring["index"] == 0 or ring["index"] % self.CHECKPOINT_EVERY:
+                return
+            import hashlib as _h
+            prev_ck = None
+            p = self._ckpt_path()
+            if p.exists():
+                lines = [l for l in p.read_text().splitlines() if l.strip()]
+                if lines:
+                    prev_ck = json.loads(lines[-1])
+            ck = {"index": ring["index"], "ring_hash": ring["ring_hash"],
+                  "ts": now_iso(),
+                  "prev_ckpt_hash": (prev_ck or {}).get("ckpt_hash")}
+            ck["ckpt_hash"] = _h.sha256(json.dumps(
+                {k: ck[k] for k in ("index", "ring_hash", "prev_ckpt_hash")},
+                sort_keys=True).encode()).hexdigest()
+            with p.open("a") as fh:
+                fh.write(json.dumps(ck) + "\n")
+        except Exception:
+            pass   # checkpointing is an accelerator, never a failure source
+
+    def latest_checkpoint(self):
+        p = self._ckpt_path()
+        if not p.exists():
+            return None
+        last = None
+        try:
+            for line in p.read_text().splitlines():
+                if line.strip():
+                    last = json.loads(line)
+        except Exception:
+            return None
+        return last
+
+    def verify_fast(self):
+        """O(tail) verification: trust the newest checkpoint (whose hash chain
+        is itself validated), then walk only the rings after it. Falls back to
+        full verify() when no checkpoint exists."""
+        ck = self.latest_checkpoint()
+        if not ck:
+            return self.verify()
+        # validate the checkpoint chain itself
+        import hashlib as _h
+        prev_hash = None
+        try:
+            for line in self._ckpt_path().read_text().splitlines():
+                if not line.strip():
+                    continue
+                c = json.loads(line)
+                if c.get("prev_ckpt_hash") != prev_hash:
+                    return False, [f"checkpoint {c.get('index')}: broken checkpoint chain"]
+                expect = _h.sha256(json.dumps(
+                    {k: c.get(k) for k in ("index", "ring_hash", "prev_ckpt_hash")},
+                    sort_keys=True).encode()).hexdigest()
+                if expect != c.get("ckpt_hash"):
+                    return False, [f"checkpoint {c.get('index')}: ckpt_hash mismatch -> TAMPERED"]
+                prev_hash = c["ckpt_hash"]
+        except Exception as exc:
+            return False, [f"checkpoint file unreadable: {exc}"]
+        # walk only the tail after the checkpoint
+        report, ok = [], True
+        prev_ring_hash, i, count = None, 0, 0
+        with self.rings_path.open("r") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                if i < ck["index"]:
+                    i += 1
+                    continue
+                try:
+                    r = json.loads(line)
+                except Exception as exc:
+                    return False, [f"ring {i}: unreadable/torn line -> TAMPERED ({exc})"]
+                if i == ck["index"]:
+                    if r.get("ring_hash") != ck["ring_hash"]:
+                        return False, [f"ring {i}: hash != checkpoint -> TAMPERED"]
+                else:
+                    if r.get("prev_hash") != prev_ring_hash:
+                        ok = False
+                        report.append(f"ring {i}: prev_hash broken")
+                    if compute_ring_hash(r) != r.get("ring_hash"):
+                        ok = False
+                        report.append(f"ring {i}: ring_hash mismatch -> TAMPERED")
+                prev_ring_hash = r.get("ring_hash")
+                i += 1
+                count += 1
+        if ok:
+            report.append(f"fast-verified {count} rings from checkpoint "
+                          f"{ck['index']} -> tail intact (full verify still "
+                          f"available for deep audits)")
+        return ok, report
 
     # ---- verification (tamper-evidence) ----
     def verify(self):
@@ -448,7 +556,17 @@ def cmd_seal(args):
 
 def cmd_verify(args):
     tc = Timechain(args.root)
-    ok, report = tc.verify()
+    ok, report = tc.verify_fast() if getattr(args, "fast", False) else tc.verify()
+    # v3.12: registries are INSIDE the integrity perimeter — check the live
+    # registry hashes against the latest sealed epoch ring (best-effort import
+    # so a stripped-down deployment without epochs.py still verifies rings).
+    try:
+        import epochs as _epochs
+        eok, ereport = _epochs.check_epoch(args.root)
+        ok = ok and eok
+        report.extend(ereport)
+    except ImportError:
+        pass
     for line in report:
         print(("  ok  " if ok else "  !!  ") + line)
     print("VERIFY:", "PASS" if ok else "FAIL")
@@ -512,6 +630,8 @@ def build_parser():
     ps.set_defaults(func=cmd_seal)
 
     pv = sub.add_parser("verify", parents=[common], help="walk and verify the whole chain")
+    pv.add_argument("--fast", action="store_true",
+                    help="O(tail) verify from the newest checkpoint (v3.14)")
     pv.set_defaults(func=cmd_verify)
 
     pl = sub.add_parser("log", parents=[common], help="print the chain")

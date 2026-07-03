@@ -781,9 +781,34 @@ def cmd_session_start(data):
         verify_line = f"chain verifies: {'PASS' if ok else 'FAIL — investigate before sealing'}; "
     except Exception:
         pass
+    # v3.12 health line: surface neglect (red immune scan, stale index, undreamt
+    # telemetry, overgrown registry, tampered registries) exactly where the agent
+    # already looks. The 2026-07-03 self-audit found an 11-day-red immune scan
+    # that nothing had ever surfaced.
+    health_line = ""
+    try:
+        import doctor
+        results = doctor.run_checks(Path(root))
+        bad = [f"{r['check']}={r['status']}" for r in results
+               if doctor.STATUS_RANK.get(r["status"], 1) > 0]
+        health_line = ("health: all OK. " if not bad
+                       else "health ATTENTION: " + ", ".join(bad) +
+                            " (run the skill's doctor.py for detail). ")
+    except Exception:
+        pass
+    # v3.14: living autobiography — lived identity loads beside the covenant
+    autobio_line = ""
+    try:
+        import autobiography
+        ab = autobiography.latest(Path(root))
+        if ab:
+            autobio_line = ("Self-portrait (ring " + str(ab["index"]) + "): " +
+                            (ab["payload"]["summary"] or "")[:450] + " ")
+    except Exception:
+        pass
     banner = (
         "[Cypher Tempre] ACTIVE — you wear a Timechain self-model. " + verify_line +
-        f"head at ring {head}. "
+        health_line + autobio_line + f"head at ring {head}. "
         "EVERY meaningful turn runs the loop (enforced): verify -> immune-screen -> recall "
         "relevant rings -> reason via modalities/senses -> PoQ-gate -> seal a labeled ring. "
         "Do the loop in one step with the skill's recall.py 'turn' command (exact invocation in "

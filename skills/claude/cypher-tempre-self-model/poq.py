@@ -246,6 +246,12 @@ def policy_thresholds():
             t["grounding_floor"] = int(cal["grounding_floor"])
         if cal and cal.get("assertive_ceiling") is not None:
             t["assertive_ceiling"] = int(cal["assertive_ceiling"])
+        # v3.14 gate calibration: dream may TIGHTEN (raise) the brightness
+        # target when verdict entropy shows the gate never discriminates;
+        # like floors, it may only rise above the default, never sink.
+        if cal and cal.get("brightness_target") is not None:
+            t["brightness_target"] = max(t["brightness_target"],
+                                         int(cal["brightness_target"]))
         # coverage gate minimum may only TIGHTEN (rise) via policy, like a floor
         t["aggregate_min_terms"] = max(t["aggregate_min_terms"],
                                        int((pol.get("poq") or {}).get(

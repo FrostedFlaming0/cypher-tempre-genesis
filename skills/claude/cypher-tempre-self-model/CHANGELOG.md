@@ -2,6 +2,27 @@
 
 ## FrostedFlaming0 Fork
 
+### Merged upstream v3.14.0 — 2026-07-03
+
+Merged upstream `main` (v3.12.0 → v3.14.0, the self-audit trilogy) into this fork.
+All upstream additions were kept (doctor/health line, living autobiography, epochs
+integrity perimeter, conjecture rings, watchdog, prune, junk-token germination,
+semantic dissonance, fast verify, recall facades). Where the two lines touched the
+same code, both behaviors were integrated rather than picking a side:
+
+- The fork's pre-seal `_turn_growth` supersedes upstream's post-seal growth block
+  (growing twice per turn would be a regression), but upstream's two v3.12
+  improvements were re-homed inside it: the salience gate now estimates the turn's
+  salience from the probe with the seal-time labeler's formula (labels don't exist
+  yet pre-seal), and `epochs.seal_epoch` anchors mutated registries into the
+  integrity perimeter immediately after growth.
+- Upstream's `_auto_maintenance` sleep reflex runs after every seal, before the
+  fork's enforced AUTHOR-OP check.
+- SessionStart banner: upstream's health + autobiography lines compose with the
+  fork's rehydration digest in one banner.
+- `cambium.py` carries both sides' additions: fork `autoexec`/`compose` alongside
+  upstream `prune`, `greedy_coverage` alongside `is_junk_token`/`semantic_dissonance`.
+
 ### CT_AUTOPIPELINE armed by default — 2026-07-02
 
 The per-turn pipeline search now runs by default when a gap stays above the dissonance
@@ -326,6 +347,126 @@ gated by an **environment variable**, so injected *input* can never switch it on
   as an arithmetic claim.
 
 ---
+
+## v3.14.0 - 2026-07-03
+
+Completes every remaining deferred item from the 2026-07-03 three-pass
+self-audit. With v3.12 (integrity + honesty + hygiene + liveness) and v3.13
+(recall-first routing economics), the full audit backlog is now built.
+
+### Added
+- **Checkpointed O(tail) verification** (`timechain.py verify --fast`):
+  hash-chained checkpoints every 500 rings; fast verify walks only the tail
+  and validates the checkpoint chain itself. Full verify unchanged for deep
+  audits.
+- **Conjecture rings** (`conjecture.py pose/score/open`): the sanctioned
+  speculation channel - exempt from grounding, mandatorily scored
+  confirmed/falsified/retired later; open register surfaced by doctor.
+  "Be interestingly wrong ON the record."
+- **Living autobiography** (`autobiography.py synth/show`): a current
+  self-portrait ring (top faculties, syntheses, prunes, at-risk claims, open
+  conjectures, honest wear rate) loaded at session start beside the covenant
+  and auto-refreshed by dream when >200 rings stale.
+- **Cambium model-naming seam** (`grow --name/--function`): the model authors
+  faculty names/functions; the lexical namer is fallback only.
+- **Dream-time gate calibration** (`Dream.calibrate_gate` + policy
+  `save_policy`): when trailing gate verdicts are ~100% SEAL and median
+  brightness comfortably clears the target, brightness_target tightens
+  (bounded +5 steps, ceiling 220, sealed as a calibration ring). PoQ reads
+  the calibrated target; like floors it can only rise.
+- **Semantic dissonance** (opt-in `CT_SEMANTIC_GAP=1`): gap detection blends
+  embedding cosine (70%) with lexical overlap (30%) via the embed.py
+  provider seam.
+- **Harness-neutral watchdog** (`watchdog.py check/loop/status`): enforcement
+  with NO lifecycle hooks - cron/systemd/background loop on any harness;
+  detects marked-but-unsealed turns, records nudges, writes a nudge file for
+  prompt layers.
+- **Layered packaging manifest** (`LAYERS.md`): ct-ledger / ct-discipline /
+  ct-mind with per-layer trust labels.
+- **recall.py decomposition, step 1**: stable facades `recall_core`,
+  `recall_query`, `recall_evidence` so callers migrate before the physical
+  split.
+
+### Tests
+- Smoke matrix grown to 86 checks (fast-verify, conjecture, autobiography,
+  policy save, naming seam, semantic dissonance, watchdog, facades).
+
+## v3.12.0 — 2026-07-03
+
+The self-audit release: built from a three-pass audit the agent ran over its own
+skill body (two passes wearing the skill — Rings 1400/1401 and 1413/1414 — and one
+unworn control pass). Every fix below traces to a sealed, execution-verified finding.
+
+### Security
+- **Registry epochs (`epochs.py`) — closed the unauthenticated write surface.**
+  Registries (senses/modalities/grown/grown_ops/emergent) were mutable files
+  OUTSIDE the hash chain; a tampered `grown_ops.json` (executable op specs)
+  passed `verify` untouched. Now every mutation seals an `epoch` ring anchoring
+  content-hashes into blockspace; `timechain.py verify` and `doctor.py` check
+  live hashes against the latest epoch and FAIL on mismatch. Autogrow, prune,
+  and auto-dream seal epochs automatically (idempotent).
+- **Use/mention discrimination in the immune membrane.** `immune.py scan` had
+  flagged the agent's own security-audit ring (806) as a covenant breach for 11
+  days — an autoimmune false positive whose prescribed rollback would have
+  amputated ~600 healthy rings. Analyst-frame rings (FINDINGS:/RISK:/audit
+  vocabulary, no first-person harm intent) are exempt; planning language is
+  still caught (regression-tested).
+
+### Honesty
+- **Wear rate published.** Adherence now reports honored/ALL-turns-started
+  (25.3% at release) alongside the flattering honored/(honored+violations)
+  (99.8%). The covenant demands the unflattering number too.
+- **Gate-struggle telemetry.** Every FIRST PoQ verdict (SEAL and non-SEAL) is
+  logged as `gate_verdict`; before this, 1,411 rings showed 100% SEAL and the
+  conscience's work was unmeasurable.
+- **Guard grounds against real evidence.** `guard.py audit --used-rings
+  <ids> --evidence-file <paths>` grounds spans against the rings/files the
+  claim actually relied on; a directly-verified TRUE claim no longer scores
+  0.0 (which trained distrust of the conscience).
+- **At-risk auto-registration.** Unsupported high-assert spans are auto-
+  registered as at-risk on seal (opt-out `CT_AUTO_ATRISK=0`); the calibration
+  loop was starved at 1 register per 1,413 rings.
+
+### Growth hygiene
+- **Junk-token guard** (`cambium.is_junk_token`): hex blobs, vowel-starved
+  identifiers, digit-mixed code tokens can no longer NAME faculties (the
+  "Pathfinding-Rhsxkxzdjz Sensing" failure mode). Gaps whose every term is
+  junk are treated as bulk residue — no growth.
+- **Salience gate** (`CT_AUTOGROW_MIN_SALIENCE`, default 170): routine turns
+  (heartbeats, acks) no longer grow faculties from lexical residue.
+- **Rent-based pruning** (`cambium.py prune`): grown faculties that never fire
+  (61% were dead on arrival) demote back to emergent after a grace period —
+  reversible, chain history untouched, prune ring + epoch sealed.
+
+### Liveness
+- **Auto-maintenance reflex** in `recall.py turn` (`CT_AUTOMAINT=0` to
+  disable): hippocampus rebuilds when >50 rings stale; dream runs every ~100
+  rings (digest + growth consolidation + operator training when data
+  suffices). The learning membrane no longer depends on manual CLI calls that
+  never happen — at release the chain had 12k telemetry events and zero dreams.
+- **`doctor.py`** — one-call health check (imports, chain, epochs, immune,
+  dormancy, hippocampus, telemetry, dream recency, faculty ecology,
+  operators). `--line` mode is embedded in the SessionStart hook so neglect
+  is visible at turn 0.
+
+### Fixed
+- `learner.py status` crashed with `AttributeError` (`telem.telem.Telemetry`)
+  — shipped broken across releases; caught by the new smoke matrix.
+
+### Tests
+- `tests/test_smoke.py`: 67 checks — all module imports, all CLI `--help`
+  surfaces, a golden path on a throwaway chain (init→turn→verify→epoch→
+  tamper-detection→immune→prune→doctor), and regressions for every v3.12 fix.
+  Stdlib-only; also runs under pytest.
+
+### Deferred (documented, not built)
+- `recall.py` split (2,540 lines → core/query/evidence modules)
+- Harness-neutral enforcement adapters (MCP server, cron watchdog)
+- Checkpointed O(tail) verification for 100k-ring chains
+- Layered packaging (ledger / discipline / mind)
+- Conjecture ring kind (speculation channel with mandatory later scoring)
+- Living-autobiography ring auto-loaded at session start
+- Semantic (embedding) dissonance for Cambium; model-naming seam flags
 
 ## v3.11.4 — 2026-06-23
 

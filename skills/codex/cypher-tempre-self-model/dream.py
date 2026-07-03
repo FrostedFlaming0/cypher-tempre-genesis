@@ -383,6 +383,50 @@ class Dream:
         return out
 
     # ---- the cadence ----
+    def calibrate_gate(self):
+        """v3.14 gate calibration (self-audit: 100% of observed verdicts were
+        SEAL — a door never seen closed discriminates nothing). Measure verdict
+        entropy over the trailing gate_verdict events; when the gate always
+        says yes AND median brightness clears the target comfortably, tighten
+        brightness_target in policy (bounded, reversible, sealed)."""
+        try:
+            import policy as policymod
+            events = []
+            for _, e in self.tel.events():
+                if e.get("event") == "gate_verdict":
+                    events.append(e.get("data") or {})
+            window = events[-200:]
+            if len(window) < 50:
+                return {"held": f"only {len(window)} gate_verdict events (< 50)"}
+            from collections import Counter
+            dist = Counter(w.get("decision") for w in window)
+            n = sum(dist.values())
+            seal_frac = dist.get("SEAL", 0) / n
+            bright = sorted(w.get("brightness") or 0 for w in window
+                            if w.get("brightness"))
+            med = bright[len(bright)//2] if bright else 0
+            pol = policymod.load_policy()
+            cur = int(((pol.get("poq") or {}).get("calibrated") or {})
+                      .get("brightness_target") or 180)
+            if seal_frac > 0.98 and med > cur + 15:
+                new_t = min(cur + 5, 220)   # bounded step, hard ceiling
+                cal = pol.setdefault("poq", {}).setdefault("calibrated", {})
+                cal["brightness_target"] = new_t
+                policymod.save_policy(pol)
+                self.tc.seal("calibration", {
+                    "summary": (f"gate calibration: verdict entropy ~0 "
+                                f"(SEAL {seal_frac:.0%} of {n}), median "
+                                f"brightness {med} — tightened "
+                                f"brightness_target {cur} -> {new_t}"),
+                    "seal_frac": round(seal_frac, 3), "median_brightness": med,
+                    "old_target": cur, "new_target": new_t})
+                return {"adopted": True, "old": cur, "new": new_t,
+                        "seal_frac": round(seal_frac, 3)}
+            return {"held": (f"gate discriminates (SEAL {seal_frac:.0%}, "
+                             f"median {med}, target {cur})")}
+        except Exception as exc:
+            return {"error": str(exc)[:100]}
+
     def run(self, train=True, do_seal=True):
         if (self.tc.dir / "PAUSED").exists():
             return {"ran": False, "reason": "self-model is dormant — a paused self does not dream"}
@@ -404,6 +448,16 @@ class Dream:
             report["abstraction"] = {"error": str(exc)}
         report["salience"] = self.resonate()
         report["economics"] = self.account()
+        report["gate_calibration"] = self.calibrate_gate()
+        # v3.14: refresh the living autobiography when stale
+        try:
+            import autobiography
+            root_dir = self.tc.dir.parent
+            if autobiography.is_stale(root_dir):
+                ab = autobiography.synth(root_dir)
+                report["autobiography"] = {"resealed": ab["index"]}
+        except Exception as exc:
+            report["autobiography"] = {"error": str(exc)[:80]}
         dg = self.tel.digest()                # ONE call: digest() seals on first invocation,
         report["digest"] = {k: dg.get(k) for k in ("sealed", "ring_index", "to")}
         report["duration_s"] = round(time.time() - t0, 2)

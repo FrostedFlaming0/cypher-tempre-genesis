@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import sys
 from pathlib import Path
@@ -212,6 +213,59 @@ def greedy_coverage(gap: dict, k: int = 4) -> list:
     return chosen
 
 
+_VOWELS = set("aeiouy")
+
+
+def is_junk_token(w: str) -> bool:
+    """True when a token is unfit to name a faculty: hex/hash-like blobs,
+    vowel-starved identifiers, digit-mixed code tokens, or very long compounds.
+    Junk tokens may still describe the gap; they must never become its NAME."""
+    lw = w.lower()
+    if len(lw) > 18:
+        return True
+    if any(ch.isdigit() for ch in lw):
+        return True
+    letters = [c for c in lw if c.isalpha()]
+    if not letters:
+        return True
+    vr = sum(1 for c in letters if c in _VOWELS) / len(letters)
+    if len(letters) >= 6 and vr < 0.25:          # rhsxkxzdjz, ss58format, xchacha…
+        return True
+    # 4+ consecutive consonants that aren't a common English cluster
+    run = 0
+    for c in lw:
+        run = run + 1 if c.isalpha() and c not in _VOWELS else 0
+        if run >= 5:
+            return True
+    return False
+
+
+def semantic_dissonance(gap: dict, corpus, input_text: str):
+    """v3.14 (opt-in: CT_SEMANTIC_GAP=1): re-score the gap with embedding
+    cosine between the input and each faculty's function text, replacing pure
+    token overlap. Uses the stdlib hashing embedder by default (honest
+    ceiling: morphology, not true synonymy; select a provider via CT_EMBED
+    for real semantics). Returns an adjusted dissonance in 0-255."""
+    try:
+        import os as _os
+        import embed as embmod
+        emb = embmod.get_embedder(_os.environ.get("CT_EMBED", "hashing"))
+        iv = emb.embed(input_text)
+        best = 0.0
+        for f in corpus:
+            fv = emb.embed(f.get("function", "") + " " + f.get("name", ""))
+            num = sum(a * b for a, b in zip(iv, fv))
+            da = sum(a * a for a in iv) ** 0.5 or 1.0
+            db = sum(b * b for b in fv) ** 0.5 or 1.0
+            best = max(best, num / (da * db))
+        # high similarity to SOME faculty -> low dissonance
+        sem = int(round((1.0 - best) * 255))
+        # blend: semantic signal dominates, lexical keeps a vote
+        return int(round(0.7 * sem + 0.3 * gap["dissonance"]))
+    except Exception:
+        return gap["dissonance"]
+
+
 def infer_kind(input_text: str) -> str:
     return "modality" if set(tokens(input_text)) & REASON_VERBS else "sense"
 
@@ -250,8 +304,12 @@ def propose(gap: dict, input_text: str, mode: str = "auto", kind_override=None) 
             "seed_terms": [],
         }
 
-    # sprout from the uncovered gap terms
-    seed = [w for w in gap["uncovered"] if len(w) >= 4][:6] or gap["uncovered"][:6]
+    # sprout from the uncovered gap terms — junk-guarded (v3.12): random identifiers,
+    # hex blobs, and vowel-less code tokens must never become faculty names (the
+    # 'Pathfinding-Rhsxkxzdjz' failure mode found in the 2026-07-03 self-audit).
+    clean = [w for w in gap["uncovered"] if not is_junk_token(w)]
+    seed = [w for w in clean if len(w) >= 4][:6] or clean[:6] or \
+           [w for w in gap["uncovered"] if len(w) >= 4][:2]
     kind = kind_override or infer_kind(input_text)
     label = "-".join(w.capitalize() for w in seed[:2]) if seed else "Novel"
     suffix = "Sensing" if kind == "sense" else "Reasoning"
@@ -627,7 +685,7 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
 
 def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
          kind_override=None, difficulty: int = 0, registry_root=None, force=False,
-         gap_override=None):
+         gap_override=None, name_override=None, function_override=None):
     tc = Timechain(root)
     home = registry_home(root, registry_root)   # faculties live here; rings seal to root
     corpus = load_corpus(home)
@@ -645,6 +703,18 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
         return result, None
 
     prop = propose(gap, input_text, mode=mode, kind_override=kind_override)
+    # v3.14 model-naming seam: the model (the semantic half of the mind) may
+    # name and describe what it grows; the lexical namer is the fallback, not
+    # the author. This honors the division-of-labor principle Cambium violated.
+    if name_override:
+        suffix = "Sensing" if prop["kind"] == "sense" else "Reasoning"
+        nm = name_override.strip()
+        if not nm.endswith(("Sensing", "Reasoning")):
+            nm = f"{nm} {suffix}"
+        prop["name"] = nm
+        prop["origin"] = prop.get("origin", "sprout") + "+model-named"
+    if function_override:
+        prop["function"] = function_override.strip()
     data = load_emergent(home)
     existing = match_emergent(data, prop)
 
@@ -708,9 +778,31 @@ def fill_gap(root: Path, input_text: str, context: str = "", both: bool = True,
     so growth tracks gap DIVERSITY, not input count. Best-effort; returns the grow
     results (each has action covered|born|promoted|recurrence)."""
     home = registry_home(root, registry_root)
-    snap = detect_gap(load_corpus(home), input_text, context)   # ONE snapshot for both kinds
+    corpus = load_corpus(home)
+    snap = detect_gap(corpus, input_text, context)   # ONE snapshot for both kinds
+    if os.environ.get("CT_SEMANTIC_GAP", "").lower() in ("1", "true", "yes", "on"):
+        snap["dissonance_lexical"] = snap["dissonance"]
+        snap["dissonance"] = semantic_dissonance(snap, corpus, input_text)
     if snap["dissonance"] <= DISSONANCE_FLOOR:
         return [{"action": "covered", "gap": snap}]             # no real gap — nothing to fill
+    # v3.12 salience gate: routine/low-salience turns (heartbeats, acks) must not
+    # grow faculties from their lexical residue. Caller passes salience via env
+    # or the turn loop; 0 disables the gate.
+    min_sal = int(os.environ.get("CT_AUTOGROW_MIN_SALIENCE", "170"))
+    turn_sal = int(os.environ.get("CT_TURN_SALIENCE", "0") or 0)
+    # A routine (low-salience) turn does not grow — UNLESS the gap itself is
+    # strong (dissonance >= 200): genuine novelty overrides routineness, so a
+    # quiet turn that stumbles onto truly new ground still grows (the salience
+    # gate exists to stop heartbeat residue, not discovery).
+    if min_sal and turn_sal and turn_sal < min_sal and snap["dissonance"] < 200:
+        return [{"action": "covered", "gap": snap,
+                 "reason": f"salience {turn_sal} < autogrow floor {min_sal} and "
+                           f"dissonance {snap['dissonance']} < 200: routine turn, no growth"}]
+    # v3.12 germination test: junk-free seeds required — a gap whose every
+    # uncovered term is junk is bulk residue, not a genuine capability gap.
+    if all(is_junk_token(w) for w in snap["uncovered"]):
+        return [{"action": "covered", "gap": snap,
+                 "reason": "all gap terms are junk tokens (code residue): no faculty grown"}]
     results = []
     for k in (["sense", "modality"] if both else [None]):
         try:
@@ -762,7 +854,9 @@ def cmd_sense(args):
 def cmd_grow(args):
     result, ring = grow(args.root, args.input, args.context or "", mode=args.mode,
                         kind_override=args.kind, difficulty=args.difficulty,
-                        registry_root=args.registry_root)
+                        registry_root=args.registry_root,
+                        name_override=getattr(args, "name", None),
+                        function_override=getattr(args, "function", None))
     _print_gap(result["gap"])
     if not result["grew"]:
         print(f"  -> {result['reason']}")
@@ -935,6 +1029,10 @@ def build_parser():
     pg.add_argument("--mode", choices=["auto", "fuse", "sprout"], default="auto")
     pg.add_argument("--kind", choices=["sense", "modality"], default=None)
     pg.add_argument("--difficulty", type=int, default=0)
+    pg.add_argument("--name", default=None,
+                    help="model-authored faculty name (v3.14 naming seam; lexical namer is fallback)")
+    pg.add_argument("--function", default=None,
+                    help="model-authored faculty function description")
     pg.set_defaults(func=cmd_grow)
 
     pp = sub.add_parser("propose-op", parents=[common],
@@ -989,9 +1087,101 @@ def build_parser():
     pc.add_argument("--difficulty", type=int, default=0)
     pc.set_defaults(func=cmd_compose)
 
+    ppr = sub.add_parser("prune", parents=[common],
+                         help="demote grown faculties that never pay rent (fire<=floor after a grace period) back to emergent")
+    ppr.add_argument("--min-fires", type=int, default=2, help="fires needed to keep canonical status (default 2)")
+    ppr.add_argument("--grace-rings", type=int, default=50, help="rings of grace after birth before rent is due (default 50)")
+    ppr.add_argument("--dry-run", action="store_true", help="report only, change nothing")
+    ppr.set_defaults(func=cmd_prune)
+
     pe = sub.add_parser("emergent", parents=[common], help="list the Dream Cache of emergent faculties (proposals)")
     pe.set_defaults(func=cmd_emergent)
     return p
+
+
+def prune(root: Path, registry_root=None, min_fires: int = 2,
+          grace_rings: int = 50, dry_run: bool = False) -> dict:
+    """v3.12 rent-based demotion (self-audit: 61% of grown faculties fired <=1
+    time — dead on arrival). A grown faculty that has not fired at least
+    *min_fires* times, and whose birth is older than *grace_rings* rings, is
+    demoted back to emergent (reversible; the birth/promotion rings remain in
+    the chain — history is never rewritten, only the ACTIVE registry changes).
+    Junk-named faculties (is_junk_token on any name word) get no grace."""
+    home = registry_home(root, registry_root)
+    tc = Timechain(root)
+    # fire census + birth heights from the chain
+    fire, birth = {}, {}
+    head = -1
+    if tc.rings_path.exists():
+        with tc.rings_path.open() as fh:
+            for line in fh:
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                head = max(head, r.get("index", -1))
+                labels = (r.get("payload") or {}).get("labels") or {}
+                for kind in ("senses", "modalities"):
+                    for f in labels.get(kind) or []:
+                        fire[f["name"]] = fire.get(f["name"], 0) + 1
+                if r.get("ring_type") == "promotion":
+                    nm = (r.get("payload") or {}).get("summary") or \
+                         (r.get("payload") or {}).get("name") or ""
+                    birth.setdefault(nm.strip(), r.get("index", 0))
+    grown = load_grown(home)
+    emergent = load_emergent(home)
+    demoted, kept = [], []
+    for key in ("senses", "modalities"):
+        keep = []
+        for f in grown.get(key, []):
+            fires = fire.get(f["name"], 0)
+            born = birth.get(f["name"], 0)
+            junk = any(is_junk_token(w) for w in re.findall(r"[A-Za-z0-9]+", f["name"]))
+            grace_over = head < 0 or (head - born) >= grace_rings
+            if fires < min_fires and (grace_over or junk):
+                demoted.append({"name": f["name"], "kind": key, "fires": fires,
+                                "junk_name": junk})
+            else:
+                keep.append(f)
+                kept.append(f["name"])
+        if not dry_run:
+            grown[key] = keep
+    if not dry_run and demoted:
+        for d in demoted:
+            emergent["faculties"].append({
+                "eid": f"demoted-{len(emergent['faculties'])+1}",
+                "kind": "sense" if d["kind"] == "senses" else "modality",
+                "name": d["name"], "function": "(demoted: paid no rent)",
+                "category": "demoted", "recurrence": 0, "status": "demoted",
+            })
+        save_grown(home, grown)
+        save_emergent(home, emergent)
+        try:
+            tc.seal("prune", {
+                "summary": (f"pruned {len(demoted)} rent-delinquent grown "
+                            f"faculties back to emergent (kept {len(kept)})"),
+                "demoted": [d["name"] for d in demoted]})
+        except Exception:
+            pass
+        try:
+            import epochs as _epochs
+            _epochs.seal_epoch(root, reason=f"prune: demoted {len(demoted)}")
+        except Exception:
+            pass
+    return {"demoted": demoted, "kept": len(kept), "head": head}
+
+
+def cmd_prune(args):
+    res = prune(args.root, registry_root=getattr(args, "registry_root", None),
+                min_fires=args.min_fires, grace_rings=args.grace_rings,
+                dry_run=args.dry_run)
+    tag = "(dry run) " if args.dry_run else ""
+    print(f"{tag}demoted {len(res['demoted'])} faculties, kept {res['kept']}")
+    for d in res["demoted"][:20]:
+        print(f"  - {d['name']} ({d['kind']}, fires={d['fires']}"
+              + (", junk name" if d["junk_name"] else "") + ")")
+    if len(res["demoted"]) > 20:
+        print(f"  … and {len(res['demoted'])-20} more")
 
 
 def main(argv=None):
