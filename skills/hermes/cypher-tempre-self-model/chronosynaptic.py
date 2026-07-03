@@ -208,7 +208,8 @@ class Node:
 
 
 class ChronosynapticTree:
-    def __init__(self, root_path, iterations=16, forks=4, max_depth=2, c=1.2, window=POQ_WINDOW):
+    def __init__(self, root_path, iterations=16, forks=4, max_depth=2, c=1.2, window=POQ_WINDOW,
+                 contrastive=True):
         self.root_path = Path(root_path)
         self.tc = Timechain(self.root_path)
         # Bounded relevance window (O(window) tail read): ground the search against recent
@@ -223,6 +224,14 @@ class ChronosynapticTree:
         self.forks = forks
         self.max_depth = max_depth
         self.c = c
+        # v3.15 contrastive valuation: absolute brightness SATURATES (the fourth
+        # self-audit measured every fork landing 179-185/255 — near-coin-flip
+        # selection). Contrastive mode scores a perspective by the INFORMATION it
+        # adds over its siblings: brightness is blended with the reading's
+        # distinctiveness (token novelty vs. the sibling consensus), so the
+        # collapse favours surprise that survives verification, not eloquence.
+        self.contrastive = contrastive
+        self._sibling_tokens = {}   # depth -> accumulated token multiset of evaluated readings
 
     # ---- perspective selection (relevance to the query, exploration via UCT) ----
     def rank(self, query, context, k, exclude_ids=()):
@@ -239,6 +248,23 @@ class ChronosynapticTree:
         text = self.compose(path, query)
         verdict = self.gate.evaluate(text, self.chain, context, external,
                                      ring_token_sets=self._ring_token_sets)
+        if self.contrastive and path:
+            depth = len(path)
+            toks = set(tokens(frame(path[-1], query)))
+            seen = self._sibling_tokens.setdefault(depth, {})
+            if toks:
+                novel = sum(1 for t in toks if t not in seen)
+                distinct = novel / len(toks)          # 1.0 = says something no sibling said
+            else:
+                distinct = 0.0
+            for t in toks:
+                seen[t] = seen.get(t, 0) + 1
+            # blend: verification still dominates (0.7), distinctiveness breaks the
+            # saturation tie (0.3 x 255 spread) — recorded on the verdict for audit.
+            verdict = dict(verdict)
+            verdict["distinctiveness"] = round(distinct, 3)
+            verdict["brightness_absolute"] = verdict["brightness"]
+            verdict["brightness"] = round(0.7 * verdict["brightness"] + 0.3 * distinct * 255, 3)
         return verdict, text
 
     def compose(self, path, query):
@@ -327,12 +353,31 @@ class ChronosynapticTree:
             [{"perspective": ch.perspective["name"], "kind": ch.perspective["kind"],
               "visits": ch.N, "value": round(ch.q() * 255, 1)} for ch in root.children],
             key=lambda d: d["visits"], reverse=True)
+        # v3.15 loser epitaphs: the collapse ring records WHY each losing fork
+        # lost (one line each), so a later dream cycle can learn which
+        # perspectives keep losing and why — the losers no longer just vanish.
+        chosen_names = {p["name"] for p in leaf.path}
+        epitaphs = []
+        for ch in root.children:
+            if ch.perspective["name"] in chosen_names:
+                continue
+            v = ch.poq or {}
+            epitaphs.append({
+                "perspective": ch.perspective["name"],
+                "visits": ch.N,
+                "value": round(ch.q() * 255, 1),
+                "epitaph": (f"lost: value {round(ch.q()*255,1)} vs winner "
+                            f"{round(leaf.q()*255,1) if leaf.N else '?'}; "
+                            + (f"distinctiveness {v.get('distinctiveness')}"
+                               if v.get("distinctiveness") is not None
+                               else "no distinct reading"))})
         payload = {
             "event": "chronosynaptic_collapse",
             "query": query,
             "chosen_path": [p["name"] for p in leaf.path],
             "synthesis": synthesis,
             "considered_forks": forks_report,
+            "loser_epitaphs": epitaphs,
             "collapsed_from": len(root.children),
             "sealed_one_of": sum(1 for _ in root.children),
         }
@@ -540,8 +585,18 @@ class PipelineTree(ChronosynapticTree):
 # --------------------------------------------------------------------------- #
 
 def cmd_think(args):
+    # v3.15 --budget deep: spend search where the gap is — depth 4, 64 iterations,
+    # wider exploration (c=1.8), 6 forks. The router invokes this automatically
+    # when dissonance is high; routine turns keep the cheap default.
+    if getattr(args, "budget", "") == "deep":
+        args.iterations = max(args.iterations, 64)
+        args.depth = max(args.depth, 4)
+        args.forks = max(args.forks, 6)
     tree = ChronosynapticTree(args.root, iterations=args.iterations,
-                              forks=args.forks, max_depth=args.depth, window=args.window)
+                              forks=args.forks, max_depth=args.depth, window=args.window,
+                              contrastive=not args.no_contrastive)
+    if getattr(args, "budget", "") == "deep":
+        tree.c = 1.8
     if len(tree.chain) == 0:
         print("No chain yet — run 'python3 timechain.py init' first.")
         sys.exit(1)
@@ -666,6 +721,10 @@ def build_parser():
     pt.add_argument("--iterations", type=int, default=16)
     pt.add_argument("--forks", type=int, default=4)
     pt.add_argument("--depth", type=int, default=2)
+    pt.add_argument("--budget", choices=["default", "deep"], default="default",
+                    help="deep: depth>=4, iterations>=64, forks>=6, wider exploration — for high-dissonance queries")
+    pt.add_argument("--no-contrastive", action="store_true",
+                    help="disable v3.15 contrastive valuation (absolute brightness only)")
     pt.add_argument("--window", type=int, default=POQ_WINDOW,
                     help=f"bounded relevance window of recent rings to ground against (default {POQ_WINDOW}; 0 = whole chain)")
     pt.add_argument("--seal", action="store_true", help="seal the collapsed highest-truth path into the chain")

@@ -28,10 +28,11 @@ from pathlib import Path
 
 SKILL_DIR = Path(__file__).parent
 
-MODULES = ["timechain", "poq", "recall", "cambium", "immune", "continuum",
-           "chronosynaptic", "telemetry", "dormancy", "replay", "dream",
-           "learner", "lens", "extractor", "hippocampus", "epochs",
-           "modality_ops", "faculties", "guard", "task", "policy", "bench"]
+MODULES = ["timechain", "poq", "recall", "recall_cli", "cambium", "immune",
+           "continuum", "chronosynaptic", "telemetry", "dormancy", "replay",
+           "dream", "learner", "lens", "extractor", "hippocampus", "epochs",
+           "modality_ops", "faculties", "guard", "task", "policy", "bench",
+           "router", "conjecture", "autobiography", "calibrators"]
 
 
 def _result(name, status, detail):
@@ -167,12 +168,48 @@ def run_checks(root: Path) -> list:
     except Exception as exc:
         out.append(_result("ecology", "WARN", str(exc)))
 
+    # 9a. gate saturation (v3.15) — a gate whose brightness barely varies is
+    # closed to information; and one that never says anything but SEAL
+    # discriminates nothing. σ over the trailing 200 verdicts must be >= 10.
+    try:
+        import telemetry as _telmod
+        tel = _telmod.Telemetry(root)
+        bright, decisions = [], []
+        for _, e in tel.events():
+            if e.get("event") == "gate_verdict":
+                d = e.get("data") or {}
+                if d.get("brightness"):
+                    bright.append(float(d["brightness"]))
+                decisions.append(d.get("decision"))
+        bright, decisions = bright[-200:], decisions[-200:]
+        if len(bright) >= 30:
+            mean = sum(bright) / len(bright)
+            var = sum((b - mean) ** 2 for b in bright) / len(bright)
+            sigma = var ** 0.5
+            nonseal = sum(1 for d in decisions if d and d != "SEAL")
+            saturated = sigma < 10 and nonseal == 0
+            out.append(_result("gate", "SATURATED" if saturated else "OK",
+                               f"brightness σ={sigma:.1f} over {len(bright)} verdicts, "
+                               f"{nonseal} non-SEAL"
+                               + (" — no discriminating power; run dream.py "
+                                  "calibrate" if saturated else "")))
+        else:
+            out.append(_result("gate", "OK",
+                               f"only {len(bright)} scored verdicts (need 30 to judge saturation)"))
+    except Exception as exc:
+        out.append(_result("gate", "WARN", str(exc)))
+
     # 9b. conjecture debt + autobiography freshness (v3.14)
     try:
         import conjecture
         oc = conjecture.open_register(root)
-        out.append(_result("conjectures", "OK" if len(oc) < 8 else "DEBT",
-                           f"{len(oc)} open awaiting a verdict"))
+        od = [c for c in oc if c.get("overdue")]
+        status = "OVERDUE" if od else ("OK" if len(oc) < 8 else "DEBT")
+        detail = f"{len(oc)} open awaiting a verdict"
+        if od:
+            detail += (f"; {len(od)} PAST DUE — score now: "
+                       + ", ".join(f"#{c['ring']}" for c in od[:4]))
+        out.append(_result("conjectures", status, detail))
     except Exception as exc:
         out.append(_result("conjectures", "WARN", str(exc)))
     try:
@@ -182,6 +219,18 @@ def run_checks(root: Path) -> list:
                            "re-synth due" if stale else "fresh"))
     except Exception as exc:
         out.append(_result("autobiography", "WARN", str(exc)))
+
+    # 9c. calibrators — every heuristic constant must have an owner (v3.15)
+    try:
+        import calibrators
+        s = calibrators.status(root)
+        out.append(_result("calibrators", "OK" if not s["orphaned"] else "ORPHANED",
+                           f"{s['owned']}/{s['total']} constants owned, "
+                           f"{s['adjusted']} ever adjusted"
+                           + ("; orphaned: " + ", ".join(s["orphaned"][:4])
+                              if s["orphaned"] else "")))
+    except Exception as exc:
+        out.append(_result("calibrators", "WARN", str(exc)))
 
     # 10. learning operators
     try:

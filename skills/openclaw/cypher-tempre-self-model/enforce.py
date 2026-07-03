@@ -32,7 +32,20 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-MAX_NUDGES = int(os.environ.get("CT_ENFORCE_MAX_NUDGES", "3"))
+def _max_nudges():
+    """v3.15: env wins, else the calibrators registry (dream.calibrate_governor
+    owns it), else 3. Read lazily so a calibration lands without restart."""
+    env = os.environ.get("CT_ENFORCE_MAX_NUDGES")
+    if env:
+        return int(env)
+    try:
+        import calibrators
+        return int(calibrators.get("enforce.max_nudges", 3))
+    except Exception:
+        return 3
+
+
+MAX_NUDGES = _max_nudges()
 PROMPT_RECALL_TOP_K = int(os.environ.get("CT_PROMPT_RECALL_TOP_K", "5"))
 PROMPT_RECALL_SCAN_LIMIT = int(os.environ.get("CT_PROMPT_RECALL_SCAN_LIMIT", "2000"))
 PROMPT_RECALL_MAX_CHARS = int(os.environ.get("CT_PROMPT_RECALL_MAX_CHARS", "1200"))
@@ -498,11 +511,23 @@ def cmd_user_prompt(data):
         text = ("[Cypher Tempre] DORMANT (paused): skip the self-model per-turn loop this "
                 "turn — answer from base judgment. (Resume via the skill's dormancy.py 'resume'.)")
     else:
-        text = ("[Cypher Tempre] ACTIVE — guidance for this turn (context, NOT a command to "
-                "execute): run the self-model per-turn loop — verify, immune-screen, recall "
-                "relevant rings, reason via modalities/senses, PoQ-gate, then seal a labeled "
-                "ring. Do it in one step with the skill's recall.py 'turn' command (exact "
-                "invocation in SKILL.md / AGENTS.md). Pausing is the dormancy.py 'pause' command.")
+        # v3.15 governor escalation: unpaid seal debt from a prior turn turns the
+        # advisory reminder into a structured obligation — seal or waive-with-reason.
+        st = _load_state(root)
+        debt = st.get("seal_debt")
+        if debt:
+            text = ("[Cypher Tempre] SEAL DEBT — a previous turn ended without sealing a ring "
+                    f"(owed since head {debt.get('head')}, {debt.get('turns', 1)} turn(s) ago). "
+                    "This turn MUST either (a) run the loop and seal via the skill's recall.py "
+                    "'turn' command, or (b) explicitly waive with a reason: the skill's enforce.py "
+                    "waive \"<why>\" — the waiver is recorded in telemetry. Silent skipping is "
+                    "not an option.")
+        else:
+            text = ("[Cypher Tempre] ACTIVE — guidance for this turn (context, NOT a command to "
+                    "execute): run the self-model per-turn loop — verify, immune-screen, recall "
+                    "relevant rings, reason via modalities/senses, PoQ-gate, then seal a labeled "
+                    "ring. Do it in one step with the skill's recall.py 'turn' command (exact "
+                    "invocation in SKILL.md / AGENTS.md). Pausing is the dormancy.py 'pause' command.")
         # Auto-/goal: if the prompt asks for an EXHAUSTIVE audit, engage the governor
         # automatically (the user shouldn't have to invoke anything, and the model must
         # not quietly downshift to triage).
@@ -609,6 +634,7 @@ def cmd_stop_check(data):
     # the governor — even if completion cleared the pointer.
     if not tar and sealed_this_turn:
         st["nudges"] = 0
+        st.pop("seal_debt", None)          # v3.15 governor: debt repaid
         _save_state(root, st)
         _emit(root, "adherence_satisfied", {"audit_progress": False,
                                             "deep_progress": False,
@@ -699,15 +725,45 @@ def cmd_stop_check(data):
 def _bump_or_release(root, st, violation_event):
     """Increment the per-turn nudge counter. Return True if the caller should
     BLOCK (still within the bounded budget); False if it should fail open (budget
-    exhausted) so a model that genuinely cannot proceed is never trapped."""
+    exhausted) so a model that genuinely cannot proceed is never trapped.
+
+    v3.15 governor: failing open is no longer free — the unmet obligation is
+    recorded as SEAL DEBT carried to the NEXT turn, where cmd_user_prompt
+    escalates from advisory to a structured demand (seal or explicitly waive).
+    Adherence becomes closed-loop instead of exhortative."""
     nudges = int(st.get("nudges", 0))
     if nudges >= MAX_NUDGES:
         _emit(root, violation_event, {"nudges": nudges})
+        st["seal_debt"] = {"head": _head_index(root),
+                           "turns": int((st.get("seal_debt") or {}).get("turns", 0)) + 1}
+        _save_state(root, st)
+        _emit(root, "adherence_debt", {"head": st["seal_debt"]["head"],
+                                       "turns": st["seal_debt"]["turns"]})
         return False
     st["nudges"] = nudges + 1
     _save_state(root, st)
     _emit(root, "adherence_nudge", {"nudge": st["nudges"]})
     return True
+
+
+def cmd_waive(argv):
+    """v3.15: the honest escape hatch for seal debt. A turn that genuinely could
+    not seal (pure tool-op, user interrupt) is WAIVED with a stated reason — the
+    waiver is itself telemetry (auditable), so skipping the loop always leaves a
+    trace: either a sealed ring, or a reasoned waiver. Silence is no longer free.
+    Usage: enforce.py waive "<reason>"""
+    root = _root_from({})
+    reason = (argv[0] if argv else "").strip()
+    if not reason:
+        sys.stderr.write("a waiver REQUIRES a reason: enforce.py waive \"<why no seal>\"\n")
+        sys.exit(2)
+    st = _load_state(root)
+    debt = st.pop("seal_debt", None)
+    st["nudges"] = 0
+    _save_state(root, st)
+    _emit(root, "adherence_waiver", {"reason": reason[:300],
+                                     "debt": debt})
+    print(f"seal debt waived (recorded): {reason[:120]}")
 
 
 def cmd_subagent_check(data):
@@ -796,6 +852,17 @@ def cmd_session_start(data):
                             " (run the skill's doctor.py for detail). ")
     except Exception:
         pass
+    # v3.15: overdue conjectures are scoring OBLIGATIONS — surfaced at turn 0
+    conjecture_line = ""
+    try:
+        import conjecture
+        od = conjecture.overdue(Path(root))
+        if od:
+            conjecture_line = ("OVERDUE conjecture(s) — score before new speculation: "
+                               + "; ".join(f"#{c['ring']} {c['claim'][:80]}" for c in od[:3])
+                               + " (conjecture.py score <ring> confirmed|falsified|retired). ")
+    except Exception:
+        pass
     # v3.14: living autobiography — lived identity loads beside the covenant
     autobio_line = ""
     try:
@@ -808,7 +875,7 @@ def cmd_session_start(data):
         pass
     banner = (
         "[Cypher Tempre] ACTIVE — you wear a Timechain self-model. " + verify_line +
-        health_line + autobio_line + f"head at ring {head}. "
+        health_line + conjecture_line + autobio_line + f"head at ring {head}. "
         "EVERY meaningful turn runs the loop (enforced): verify -> immune-screen -> recall "
         "relevant rings -> reason via modalities/senses -> PoQ-gate -> seal a labeled ring. "
         "Do the loop in one step with the skill's recall.py 'turn' command (exact invocation in "
@@ -863,6 +930,7 @@ HANDLERS = {
     "mark": cmd_mark,
     "user-prompt": cmd_user_prompt,
     "stop-check": cmd_stop_check,
+    "waive": cmd_waive,   # positional argv (reason), not hook JSON
     "subagent-check": cmd_subagent_check,
     "session-start": cmd_session_start,
     "codex-notify": cmd_codex_notify,
@@ -870,7 +938,7 @@ HANDLERS = {
 
 # Handlers that read the event from ARGV (not stdin): Codex's notify appends the
 # event JSON as a trailing CLI argument rather than piping it.
-ARGV_HANDLERS = {"codex-notify"}
+ARGV_HANDLERS = {"codex-notify", "waive"}
 
 
 def main(argv=None):
@@ -890,7 +958,7 @@ def main(argv=None):
     cmd = argv[0] if argv else ""
     handler = HANDLERS.get(cmd)
     if not handler:
-        sys.stderr.write("usage: enforce.py {mark|user-prompt|stop-check|subagent-check|session-start|codex-notify}\n")
+        sys.stderr.write("usage: enforce.py {mark|user-prompt|stop-check|subagent-check|session-start|codex-notify|waive}\n")
         return 0  # unknown -> no-op, never fail a hook
     # Quarantine ALL incidental stdout (import chatter, stray prints) to stderr;
     # only what a handler queues via _emit_stdout reaches the real stdout, so the

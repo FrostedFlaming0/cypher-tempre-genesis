@@ -26,13 +26,20 @@ sys.path.insert(0, str(SKILL_DIR))
 from timechain import Timechain
 
 
-def pose(root: Path, claim: str, test: str = "") -> dict:
+def pose(root: Path, claim: str, test: str = "", due_ring: int = 0) -> dict:
     tc = Timechain(root)
-    ring = tc.seal("conjecture", {
+    payload = {
         "summary": claim,
         "status": "open",
         "proposed_test": test or "(none stated - name one when scoring)",
-    })
+    }
+    # v3.15 due-ring: a speculation channel without mandatory settlement is just
+    # a place to sound smart. A due_ring makes scoring an OBLIGATION: once the
+    # chain head passes it, the conjecture is OVERDUE and the enforcement layer
+    # injects a scoring demand exactly like a seal obligation.
+    if due_ring:
+        payload["due_ring"] = int(due_ring)
+    ring = tc.seal("conjecture", payload)
     return ring
 
 
@@ -64,22 +71,39 @@ def score(root: Path, index: int, verdict: str, evidence: str = "") -> dict:
 
 def open_register(root: Path) -> list:
     tc = Timechain(root)
-    posed, scored = {}, set()
+    posed, scored, head = {}, set(), 0
     for r in tc.load():
+        head = max(head, r.get("index", 0))
         if r.get("ring_type") == "conjecture":
             posed[r["index"]] = (r.get("payload") or {})
         elif r.get("ring_type") == "conjecture-score":
             scored.add((r.get("payload") or {}).get("conjecture_ring"))
-    return [{"ring": i, "claim": p.get("summary", "")[:160],
-             "test": p.get("proposed_test", "")[:120]}
-            for i, p in sorted(posed.items()) if i not in scored]
+    out = []
+    for i, p in sorted(posed.items()):
+        if i in scored:
+            continue
+        due = p.get("due_ring") or 0
+        out.append({"ring": i, "claim": p.get("summary", "")[:160],
+                    "test": p.get("proposed_test", "")[:120],
+                    "due_ring": due,
+                    "overdue": bool(due and head >= due)})
+    return out
+
+
+def overdue(root: Path) -> list:
+    """Open conjectures whose due_ring the chain head has passed — these are
+    scoring OBLIGATIONS, surfaced by enforce.py at session start and by doctor."""
+    return [c for c in open_register(root) if c.get("overdue")]
 
 
 def cmd_pose(args):
-    r = pose(args.root, args.claim, args.test or "")
+    r = pose(args.root, args.claim, args.test or "", due_ring=args.due_ring)
     print(f"conjecture sealed: Ring {r['index']}  {r['ring_hash'][:16]}..")
     print("  it is now ON the record - score it when evidence arrives:")
     print(f"  python3 conjecture.py score {r['index']} confirmed|falsified|retired")
+    if args.due_ring:
+        print(f"  DUE at ring {args.due_ring}: once the head passes it, scoring "
+              f"becomes an obligation (enforce/doctor will demand a verdict)")
 
 
 def cmd_score(args):
@@ -94,7 +118,9 @@ def cmd_open(args):
         return
     print(f"{len(reg)} open conjecture(s) awaiting a verdict:")
     for c in reg:
-        print(f"  #{c['ring']}: {c['claim']}")
+        tag = "  ** OVERDUE **" if c.get("overdue") else (
+            f"  (due ring {c['due_ring']})" if c.get("due_ring") else "")
+        print(f"  #{c['ring']}: {c['claim']}{tag}")
         print(f"      test: {c['test']}")
 
 
@@ -107,6 +133,8 @@ def main():
     pp = sub.add_parser("pose", parents=[common])
     pp.add_argument("claim")
     pp.add_argument("--test", default="")
+    pp.add_argument("--due-ring", type=int, default=0,
+                    help="chain height at which scoring becomes an obligation")
     pp.set_defaults(func=cmd_pose)
     ps = sub.add_parser("score", parents=[common])
     ps.add_argument("index", type=int)

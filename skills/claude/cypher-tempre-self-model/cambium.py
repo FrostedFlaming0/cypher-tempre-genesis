@@ -633,14 +633,15 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
         return None
     existing_ids = [it["id"] for it in base] + [it["id"] for it in grown.get(key, [])]
     new_id = (max(existing_ids) if existing_ids else 0) + 1
-    grown.setdefault(key, []).append({
+    entry = {
         "id": new_id,
         "name": e["name"],
         "origin": f"emergent {e['eid']} (promoted after {e['recurrence']} recurrences)",
         "function": e["function"],
         "category": e["category"],
         "orientation": e.get("orientation") or faculty_orientation(e["kind"]),
-    })
+    }
+    grown.setdefault(key, []).append(entry)
     save_grown(root, grown)                    # promotions live in the per-user grown.json, not the base
     e["promoted_to_id"] = new_id
 
@@ -665,6 +666,20 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
                 spec, activation_text or " ".join(seeds), activation_context or "")
     except Exception:
         pass
+
+    # v3.15 BEHAVIORAL PAYLOAD: promotion now REQUIRES an effect — a faculty that
+    # only decorates ring metadata is ornament, not organ. Three effect types:
+    #   op    — an executable primitive-composed op (registered above)
+    #   frame — a reasoning directive injected into the wear-loop when it fires
+    #   hint  — a routing bias the router consults (set via `cambium.py effect`)
+    # Default: op when registration succeeded, else a frame distilled from the
+    # faculty's own function text. No more effect-free faculties.
+    if op_spec:
+        entry["effect"] = {"type": "op", "spec": op_spec}
+    else:
+        entry["effect"] = {"type": "frame",
+                           "text": f"Apply {e['name']}: {e['function'][:160]}"}
+    save_grown(root, grown)
 
     grown_path = root / "registry" / "grown.json"
     grown_ops_path = root / "registry" / "grown_ops.json"
@@ -780,9 +795,17 @@ def fill_gap(root: Path, input_text: str, context: str = "", both: bool = True,
     home = registry_home(root, registry_root)
     corpus = load_corpus(home)
     snap = detect_gap(corpus, input_text, context)   # ONE snapshot for both kinds
-    if os.environ.get("CT_SEMANTIC_GAP", "").lower() in ("1", "true", "yes", "on"):
+    # v3.15: semantic dissonance is the DEFAULT gap detector (opt-out:
+    # CT_SEMANTIC_GAP=0). The junk-token guard treats the symptom (garbage
+    # names); semantic scoring treats the cause — growth should trigger on
+    # CONCEPTUAL novelty, not unseen-token noise.
+    if os.environ.get("CT_SEMANTIC_GAP", "1").lower() not in ("0", "false", "no", "off"):
         snap["dissonance_lexical"] = snap["dissonance"]
-        snap["dissonance"] = semantic_dissonance(snap, corpus, input_text)
+        snap["dissonance_semantic"] = semantic_dissonance(snap, corpus, input_text)
+        # Semantic scoring ADDS sensitivity (conceptual novelty hiding in
+        # familiar words) — it never suppresses a genuine lexical gap. The
+        # junk-token germination test below handles lexical false positives.
+        snap["dissonance"] = max(snap["dissonance_semantic"], snap["dissonance_lexical"])
     if snap["dissonance"] <= DISSONANCE_FLOOR:
         return [{"action": "covered", "gap": snap}]             # no real gap — nothing to fill
     # v3.12 salience gate: routine/low-salience turns (heartbeats, acks) must not
@@ -1092,15 +1115,25 @@ def build_parser():
     ppr.add_argument("--min-fires", type=int, default=2, help="fires needed to keep canonical status (default 2)")
     ppr.add_argument("--grace-rings", type=int, default=50, help="rings of grace after birth before rent is due (default 50)")
     ppr.add_argument("--dry-run", action="store_true", help="report only, change nothing")
+    ppr.add_argument("--effectful", action="store_true",
+                     help="v3.15: rent is paid only by CONTRIBUTING fires (computed op result or injected frame), not label decoration")
     ppr.set_defaults(func=cmd_prune)
-
+    pef = sub.add_parser("effect", parents=[common],
+                         help="attach a behavioral effect (frame|hint|op) to a grown faculty, or --backfill all")
+    pef.add_argument("selector", nargs="?", default="")
+    pef.add_argument("--type", choices=["frame", "hint", "op"], default="frame")
+    pef.add_argument("--value", default="")
+    pef.add_argument("--backfill", action="store_true",
+                     help="give every effect-free grown faculty its default payload")
+    pef.set_defaults(func=cmd_effect)
     pe = sub.add_parser("emergent", parents=[common], help="list the Dream Cache of emergent faculties (proposals)")
     pe.set_defaults(func=cmd_emergent)
     return p
 
 
 def prune(root: Path, registry_root=None, min_fires: int = 2,
-          grace_rings: int = 50, dry_run: bool = False) -> dict:
+          grace_rings: int = 50, dry_run: bool = False,
+          effectful: bool = False) -> dict:
     """v3.12 rent-based demotion (self-audit: 61% of grown faculties fired <=1
     time — dead on arrival). A grown faculty that has not fired at least
     *min_fires* times, and whose birth is older than *grace_rings* rings, is
@@ -1121,9 +1154,22 @@ def prune(root: Path, registry_root=None, min_fires: int = 2,
                     continue
                 head = max(head, r.get("index", -1))
                 labels = (r.get("payload") or {}).get("labels") or {}
+                # v3.15 effect-gated rent: with --effectful, a firing only pays
+                # rent when the faculty CONTRIBUTED to the ring — a computed op
+                # result or an injected frame. Label-only decoration counts for
+                # nothing; ornament dies faster, organs survive.
+                contributed = set()
+                if effectful:
+                    contributed = set((labels.get("computed") or {}).keys())
+                    for fr in labels.get("frames") or []:
+                        for kind in ("senses", "modalities"):
+                            for f in labels.get(kind) or []:
+                                if f["name"] in fr:
+                                    contributed.add(f["name"])
                 for kind in ("senses", "modalities"):
                     for f in labels.get(kind) or []:
-                        fire[f["name"]] = fire.get(f["name"], 0) + 1
+                        if not effectful or f["name"] in contributed:
+                            fire[f["name"]] = fire.get(f["name"], 0) + 1
                 if r.get("ring_type") == "promotion":
                     nm = (r.get("payload") or {}).get("summary") or \
                          (r.get("payload") or {}).get("name") or ""
@@ -1171,10 +1217,79 @@ def prune(root: Path, registry_root=None, min_fires: int = 2,
     return {"demoted": demoted, "kept": len(kept), "head": head}
 
 
+def set_effect(root: Path, selector: str, effect_type: str, value: str = "",
+               registry_root=None) -> dict:
+    """v3.15: attach/replace a behavioral effect on a grown faculty.
+    frame -> value is the reasoning directive; hint -> value is a routing bias
+    ("replay"|"partial"|"model"); op -> value names a registered grown op."""
+    home = registry_home(root, registry_root)
+    grown = load_grown(home)
+    hit = None
+    for key in ("senses", "modalities"):
+        for f in grown.get(key, []):
+            if f["name"] == selector or str(f["id"]) == selector:
+                hit = f
+                break
+        if hit:
+            break
+    if hit is None:
+        raise SystemExit(f"no grown faculty matches {selector!r}")
+    if effect_type == "frame":
+        hit["effect"] = {"type": "frame", "text": value or f"Apply {hit['name']}: {hit.get('function','')[:160]}"}
+    elif effect_type == "hint":
+        if value not in ("replay", "partial", "model"):
+            raise SystemExit("hint value must be replay|partial|model")
+        hit["effect"] = {"type": "hint", "bias": value}
+    elif effect_type == "op":
+        hit["effect"] = {"type": "op", "name": value or hit["name"]}
+    else:
+        raise SystemExit("effect type must be frame|hint|op")
+    save_grown(home, grown)
+    return hit
+
+
+def backfill_effects(root: Path, registry_root=None) -> dict:
+    """v3.15: give every effect-free grown faculty its default behavioral payload
+    (an op if a grown op with its name exists, else a frame from its function
+    text). Idempotent; existing effects are never overwritten."""
+    home = registry_home(root, registry_root)
+    grown = load_grown(home)
+    op_names = set()
+    try:
+        import modality_ops
+        op_names = set((modality_ops.load_grown_ops(home) or {}).keys())
+    except Exception:
+        pass
+    filled = 0
+    for key in ("senses", "modalities"):
+        for f in grown.get(key, []):
+            if isinstance(f.get("effect"), dict):
+                continue
+            if f["name"] in op_names:
+                f["effect"] = {"type": "op", "name": f["name"]}
+            else:
+                f["effect"] = {"type": "frame",
+                               "text": f"Apply {f['name']}: {f.get('function', '')[:160]}"}
+            filled += 1
+    if filled:
+        save_grown(home, grown)
+    return {"filled": filled}
+
+
+def cmd_effect(args):
+    if args.selector == "--backfill" or args.backfill:
+        res = backfill_effects(args.root, getattr(args, "registry_root", None))
+        print(f"backfilled effects on {res['filled']} faculties")
+        return
+    hit = set_effect(args.root, args.selector, args.type, args.value or "",
+                     getattr(args, "registry_root", None))
+    print(f"effect set on {hit['name']}: {json.dumps(hit['effect'])}")
+
+
 def cmd_prune(args):
     res = prune(args.root, registry_root=getattr(args, "registry_root", None),
                 min_fires=args.min_fires, grace_rings=args.grace_rings,
-                dry_run=args.dry_run)
+                dry_run=args.dry_run, effectful=getattr(args, "effectful", False))
     tag = "(dry run) " if args.dry_run else ""
     print(f"{tag}demoted {len(res['demoted'])} faculties, kept {res['kept']}")
     for d in res["demoted"][:20]:
