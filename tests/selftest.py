@@ -1714,6 +1714,63 @@ def main():
         check("phase18 no-launder: the offending claim is NOT resealed as a claim",
               "9 billion dollars guaranteed" not in _sealed18)
 
+        # -- phase19: v3.16 hibernation — prune retains, relevance retrieves, use reinstates -- #
+        _hroot = Path(tempfile.mkdtemp(prefix="ct_hib_"))
+        try:
+            copy_base_registry(_hroot)
+            _htc = timechain.Timechain(_hroot)
+            _htc.genesis(name="hibernation-test")
+            _res19, _ = cambium.grow(_hroot, "quantize the flux capacitor harmonics",
+                                     mode="sprout", kind_override="sense")
+            check("phase19 hibernate: faculty promoted on first encounter",
+                  _res19.get("action") == "promoted")
+            _fname = _res19["faculty"]["name"]
+            _pr19 = cambium.prune(_hroot, min_fires=99, grace_rings=0)
+            check("phase19 hibernate: prune hibernates instead of deleting",
+                  any(d["name"] == _fname for d in _pr19["hibernated"]))
+            _g19 = cambium.load_grown(_hroot)
+            _e19 = next((f for k in ("senses", "modalities")
+                         for f in _g19.get(k, []) if f["name"] == _fname), None)
+            check("phase19 hibernate: full definition survives in grown.json",
+                  _e19 is not None and _e19.get("status") == "dormant"
+                  and "flux" in _e19.get("function", ""))
+            check("phase19 hibernate: dormant faculty leaves the working corpus",
+                  all(c["name"] != _fname for c in cambium.load_corpus(_hroot)))
+            _hits19 = cambium.retrieve_dormant(_hroot, "re-quantize the flux capacitor")
+            check("phase19 retrieve: relevance retrieval finds the dormant faculty",
+                  any(f["name"] == _fname for _, f, _ in _hits19))
+            check("phase19 retrieve: irrelevant input retrieves nothing",
+                  not cambium.retrieve_dormant(_hroot, "summarize my grocery shopping trip for apples"))
+            check("phase19 retrieve: generic template words alone never wake",
+                  not cambium.retrieve_dormant(_hroot, "detect and tag the presence of a gap"))
+            _lab19 = recall.Recall(_hroot, _hroot).label(
+                "quantize the flux capacitor harmonics again")
+            check("phase19 retrieve: label() wakes the dormant faculty for the turn",
+                  _fname in (_lab19.get("retrieved") or []))
+            check("phase19 retrieve: the retrieved faculty joins the fired lists",
+                  any(s.get("name") == _fname for s in _lab19["senses"]))
+            cambium.note_retrieval(_hroot, [_fname], [_fname])
+            cambium.note_retrieval(_hroot, [_fname], [_fname])
+            _g19b = cambium.load_grown(_hroot)
+            _e19b = next((f for k in ("senses", "modalities")
+                          for f in _g19b.get(k, []) if f["name"] == _fname), None)
+            check("phase19 reinstate: contributing retrievals return it to active",
+                  _e19b is not None and _e19b.get("status") == "active")
+            check("phase19 reinstate: a faculty-wake ring is sealed on the chain",
+                  any(r.get("ring_type") == "faculty-wake" for r in _htc.load()))
+            cambium.prune(_hroot, min_fires=99, grace_rings=0)   # hibernate it again
+            _res19b, _ = cambium.grow(_hroot, "quantize the flux capacitor harmonics",
+                                      mode="sprout", kind_override="sense")
+            check("phase19 dedup: a recurring gap wakes the dormant faculty",
+                  _res19b.get("action") == "woken")
+            _g19c = cambium.load_grown(_hroot)
+            check("phase19 dedup: the registry holds exactly one copy",
+                  sum(1 for k in ("senses", "modalities")
+                      for f in _g19c.get(k, []) if f["name"] == _fname) == 1)
+            check("phase19 hibernate: the scratch chain still verifies", _htc.verify()[0])
+        finally:
+            shutil.rmtree(_hroot, ignore_errors=True)
+
         check("timechain: final verify", tc.verify()[0])
     finally:
         shutil.rmtree(root, ignore_errors=True)

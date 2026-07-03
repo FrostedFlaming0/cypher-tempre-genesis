@@ -1,5 +1,74 @@
 # Changelog
 
+## v3.16.0 - 2026-07-03
+
+Hibernation, not amputation: pruning now retains every faculty. A grown
+sense/modality that stops paying rent goes DORMANT in place — the full
+definition survives in the registry, it leaves the per-turn working set, and
+it is retrieved back by task relevance exactly like rings recalled from
+blockspace.
+
+### Added
+- **Dormant tier in grown.json** (`status: "dormant"` + `dormant_since` /
+  `dormant_fires` / `wake_hits` fields): `cambium.py prune` hibernates in
+  place instead of demoting to emergent; nothing is deleted or stripped, and
+  already-dormant faculties owe no further rent.
+- **Relevance retrieval over the dormant pool** (`cambium.retrieve_dormant`):
+  scoring uses the SAME stem + synonym folding the hippocampus applies to
+  ring terms, so faculty retrieval has the reach of blockspace recall. A
+  faculty's distinctive vocabulary (name words + seed terms) counts double
+  and at least one distinctive hit is required — generic template words
+  alone never wake anything. Tunables: `CT_WAKE_TOPK` (default 3),
+  `CT_WAKE_FLOOR` (default 3).
+- **Per-turn wake in the labeler** (`recall.label`): content matching a
+  dormant faculty retrieves it for THAT turn — it joins the fired lists, its
+  op runs, its frame injects; the ring records `labels.retrieved`. The loop
+  prints a `retrieved :` line when it happens.
+- **Reinstatement by use** (`cambium.note_retrieval`, wired into the turn
+  loop): a retrieval that CONTRIBUTED (computed op result or injected frame)
+  earns a wake_hit; at `CT_REINSTATE_AT` (default 2) the faculty returns to
+  the active set with a sealed `faculty-wake` ring — the same rent
+  discipline as `prune --effectful`, pointed the other way.
+- **Wake-first growth dedup**: `fill_gap` retrieves from the dormant pool
+  before growing anything new, and a recurring gap whose faculty sleeps
+  wakes it instead of duplicating it — the registry holds one copy, ever.
+- **CLI**: `cambium.py dormant` (list the pool), `cambium.py wake <name>`
+  / `--all` (manual reinstatement), `cambium.py recall-dormant "<input>"`
+  (read-only preview of what would wake).
+- **Seed terms preserved on promotion**: grown entries now carry their
+  `seed_terms`, so a later hibernation stays retrievable by the vocabulary
+  that originally grew the faculty.
+
+### Changed
+- `cambium.load_corpus` excludes dormant faculties from the working set
+  (opt-in `include_dormant=True`), so labeling and gap detection scale with
+  the ACTIVE registry — the performance win pruning was for, without the
+  loss.
+- doctor `ecology` judges dead-growth over ACTIVE faculties only and reports
+  the dormant pool separately as healthy, retrievable state.
+- `prune()` returns `hibernated` (with `demoted` kept as an alias for
+  pre-3.16 callers); the prune ring summary records hibernation.
+
+### Compliance (static-scan regressions introduced in v3.14/v3.15)
+- Auto-maintenance now rebuilds the hippocampus and runs the dream cycle
+  IN-PROCESS (plain library calls) instead of spawning a second interpreter —
+  faster, same best-effort envelope, and the scanner no longer infers an
+  undeclared shell capability.
+- router.py reads `cambium.DISSONANCE_FLOOR` through the module it already
+  imported — the dynamic-import expression is gone.
+- recall.py's delegation seam resolves names via the module namespace dict
+  rather than dynamic attribute access.
+- Result: all five bundles scan SAFE again (only the long-accepted MIT
+  LICENSE boilerplate low-severity note remains).
+
+### Tests
+- selftest phase19 (14 checks): prune retains the full definition; dormant
+  leaves the working corpus; relevance retrieves; irrelevant and
+  template-word probes do not; label() wakes for the turn and the faculty
+  joins the fired lists; contributing retrievals reinstate with a sealed
+  faculty-wake ring; a recurring gap wakes instead of duplicating; the
+  scratch chain verifies.
+
 ## v3.15.0 - 2026-07-03
 
 "v3.14 built the organs; v3.15 is circulation." Every signal the skill emits

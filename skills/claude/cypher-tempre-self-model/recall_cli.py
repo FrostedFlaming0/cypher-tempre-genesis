@@ -14,7 +14,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -40,6 +39,9 @@ def _print_labels(lab, indent="  "):
     print(f"{indent}keywords  : {', '.join(lab['keywords'][:8]) or '-'}")
     print(f"{indent}entities  : {', '.join(lab['entities'][:8]) or '-'}")
     print(f"{indent}salience  : {lab['salience']}   dissonance: {lab['dissonance']}")
+    if lab.get("retrieved"):
+        print(f"{indent}retrieved : {', '.join(lab['retrieved'])}  "
+              f"(woken from the dormant pool for this turn)")
     for fr in lab.get("frames", []):
         print(f"{indent}frame     > {fr}")
 
@@ -383,6 +385,23 @@ def cmd_turn(args):
     else:
         print("not sealed — reseal uncertainty-led before finishing (the loop must leave a ring).")
     _emit_loop_ran(root, verdict.get("decision", "?"), resealed=reseal)
+    # v3.16: account this turn's dormant retrievals — a retrieval that CONTRIBUTED
+    # (computed op result or injected frame) earns a wake_hit; enough of them and
+    # the faculty is reinstated to the active working set.
+    try:
+        import cambium as _cam
+        _retr = (labels or {}).get("retrieved") or []
+        if _retr:
+            _contrib = set(((labels or {}).get("computed") or {}).keys())
+            for _fr in (labels or {}).get("frames") or []:
+                for _nm in _retr:
+                    if _nm in _fr:
+                        _contrib.add(_nm)
+            _w = _cam.note_retrieval(root, _retr, _contrib, registry_root=reg)
+            if _w.get("woken"):
+                print("reinstated to active: " + ", ".join(x["name"] for x in _w["woken"]))
+    except Exception:
+        pass
     _auto_maintenance(root)
     # 6. Eager autonomous growth: if this turn revealed a gap the faculties don't cover,
     # fill it — grow a coded sense AND modality (deduped). Tunable via CT_AUTOGROW=0.
@@ -398,6 +417,10 @@ def cmd_turn(args):
                 _os.environ["CT_TURN_SALIENCE"] = "0"
             grown = cambium.fill_gap(root, probe, context=args.context or "",
                                      both=True, registry_root=reg)
+            woke = sorted({g["faculty"]["name"] for g in grown
+                           if g.get("action") == "woken" and g.get("faculty")})
+            if woke:
+                print("woke dormant faculties for the gap: " + ", ".join(woke))
             names = sorted({g["faculty"]["name"] for g in grown
                             if g.get("action") in ("born", "promoted") and g.get("faculty")})
             if names:
@@ -444,9 +467,13 @@ def _auto_maintenance(root):
                 m = json.loads(meta_p.read_text())
                 ih = m.get("head_index", -1)
             if head - ih > 50:
-                import subprocess as _sp
-                _sp.run([sys.executable, str(Path(__file__).parent / "hippocampus.py"),
-                         "build", "--root", str(root)], capture_output=True, timeout=120)
+                # In-process rebuild (no interpreter spawn); output is discarded
+                # exactly as before and the enclosing try keeps it best-effort.
+                import io as _io
+                import contextlib as _ctx
+                import hippocampus as _hip
+                with _ctx.redirect_stdout(_io.StringIO()):
+                    _hip.Hippocampus(root).build()
                 did.append("hippocampus")
         except Exception:
             pass
@@ -457,9 +484,13 @@ def _auto_maintenance(root):
             # and the unbounded default made dream fire on EVERY fresh chain,
             # which broke head-advance assertions in harness tests)
             if head >= 100 and head - int(st.get("last_dream_head", -10**9)) > 100:
-                import subprocess as _sp
-                _sp.run([sys.executable, str(Path(__file__).parent / "dream.py"),
-                         "run", "--root", str(root)], capture_output=True, timeout=300)
+                # In-process dream cycle (no interpreter spawn); same best-effort
+                # envelope, output discarded as before.
+                import io as _io
+                import contextlib as _ctx
+                import dream as _dreammod
+                with _ctx.redirect_stdout(_io.StringIO()):
+                    _dreammod.Dream(root).run()
                 st["last_dream_head"] = head
                 did.append("dream")
                 # dream growth mutates registries — anchor them
