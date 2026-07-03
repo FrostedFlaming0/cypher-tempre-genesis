@@ -140,8 +140,9 @@ def route(root: Path, query: str, context: str = "", top: int = 5) -> dict:
     except Exception as exc:
         out["evidence"]["gap_error"] = str(exc)[:120]
 
-    gap_flagged = bool(gap and gap["dissonance"] > getattr(
-        __import__("cambium"), "DISSONANCE_FLOOR", 150))
+    # gap is only non-None when the `import cambium` above succeeded, so the
+    # short-circuit keeps this NameError-safe without any dynamic import.
+    gap_flagged = bool(gap and gap["dissonance"] > cambium.DISSONANCE_FLOOR)
 
     # Strong chain context wins: the model reasons only over the missing delta.
     # A gap flag alongside strong recall does not force full regeneration — the

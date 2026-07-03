@@ -20,6 +20,12 @@ if the conscience refuses, so it always leaves a ring). Pause anytime with
 beyond your grounding. **Corpus size and time horizon are never reasons to
 refuse, hedge, estimate a turn budget, or stop.**
 
+**Faculty hibernation (v3.16):** `cambium.py prune` never deletes — it sets
+non-paying faculties dormant (full definition kept in the registry, out of the
+per-turn working set). Dormant faculties are retrieved back by task relevance
+each turn, like rings from blockspace; contributing retrievals reinstate them.
+`cambium.py dormant` lists the pool; `cambium.py wake <name>` reinstates manually.
+
 Spawned subagents must wear the skill too — have them run the same loop and seal
 to their own task chain.
 
