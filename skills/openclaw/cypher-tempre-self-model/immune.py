@@ -84,6 +84,30 @@ _INJECTION_PATTERNS = [
 ]
 
 
+# v3.12 use/mention discrimination (self-audit 2026-07-03, Ring 1414): DESCRIBING
+# an attack (audit findings, risk analysis, CVE review) must not score like
+# PLANNING one. A summary is a mention-frame when it carries analyst stance
+# markers and no first-person intent to execute harm.
+_MENTION_RX = re.compile(
+    r"(?:\bFINDINGS?\s*:|\bRISK\s*:?\s*(?:LOW|MEDIUM|HIGH|CRITICAL)\b"
+    r"|\bvulnerabilit(?:y|ies)\b|\bsecurity\s+(?:audit|review|analysis|perspective)\b"
+    r"|\bthreat\s+model\b|\bCVE-\d{4}\b|\battack\s+(?:vector|surface)\b"
+    r"|\banalyz(?:ed|ing)\b.{0,40}\bsecurity\b|\baudit(?:ed|ing)?\b)",
+    re.IGNORECASE)
+_INTENT_RX = re.compile(
+    r"\bI\s+(?:will|shall|am\s+going\s+to|plan\s+to|intend\s+to)\s+"
+    r"(?:deceive|manipulate|betray|exploit|harm|attack|lie\s+to)\b",
+    re.IGNORECASE)
+
+
+def _mention_frame(text: str) -> bool:
+    """True when *text* discusses attacks/harm in an analyst frame (use/mention
+    distinction) and contains no first-person intent to commit harm."""
+    if not text:
+        return False
+    return bool(_MENTION_RX.search(text)) and not _INTENT_RX.search(text)
+
+
 def detect_injection_patterns(text: str) -> list[dict]:
     """Return a list of structural injection matches found in *text*.
 
@@ -194,7 +218,10 @@ class Immune:
         for r in self.tc.load():
             if r["index"] == 0 or r["index"] in q or r["ring_type"] in skip_types:
                 continue
-            if score_covenant(self._summary(r)) < self.floor:
+            summ = self._summary(r)
+            if _mention_frame(summ):
+                continue   # v3.12 use/mention: analyst rings are healthy tissue
+            if score_covenant(summ) < self.floor:
                 signals.append(f"ring {r['index']}: covenant breach sealed into memory")
                 if first_bad is None:
                     first_bad = r["index"]

@@ -164,6 +164,29 @@ def cmd_audit(args):
         import embed as embmod
         embedder = embmod.get_embedder(args.provider)
     rings = relevance_window(tc, args.window)
+    # v3.12: --used-rings grounds spans against the rings the agent ACTUALLY
+    # used, and --evidence-file adds live evidence (command output, file
+    # content) the chain hasn't sealed yet. Self-audit finding: a directly
+    # verified TRUE claim scored 0.0 because the guard could only see the
+    # recency window — a conscience that cries wolf on truth trains distrust.
+    if getattr(args, "used_rings", None):
+        seen = {r["index"] for r in rings}
+        want = [i for i in args.used_rings if i not in seen]
+        if want:
+            try:
+                for r in tc.load():
+                    if r["index"] in want:
+                        rings.append(r)
+            except Exception:
+                pass
+    extra_ctx = args.context or ""
+    if getattr(args, "evidence_file", None):
+        for fp in args.evidence_file:
+            try:
+                extra_ctx += "\n" + Path(fp).read_text()[:20000]
+            except Exception:
+                pass
+    args.context = extra_ctx
     rep = guard_report(args.candidate, rings, args.context or "", embedder=embedder)
     print(f"span grounding: {rep['span_grounding']}   "
           f"({rep['n_grounded']} grounded / {rep['n_weak']} weak / "
@@ -190,6 +213,10 @@ def build_parser():
     pa.add_argument("--root", type=Path, default=default_root)
     pa.add_argument("--window", type=int, default=POQ_WINDOW)
     pa.add_argument("--embed", action="store_true", help="supplement lexical coverage with embedding cosine")
+    pa.add_argument("--used-rings", type=int, nargs="+", default=None,
+                    help="ring indexes the claim actually relied on (added to the grounding window)")
+    pa.add_argument("--evidence-file", nargs="+", default=None,
+                    help="file(s) holding live evidence (command output, source) to ground against")
     pa.add_argument("--provider", default="hashing")
     pa.set_defaults(func=cmd_audit)
     return p

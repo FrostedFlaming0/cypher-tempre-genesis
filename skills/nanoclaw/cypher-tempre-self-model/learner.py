@@ -362,7 +362,7 @@ def cmd_calibrate_poq(args):
 def cmd_status(args):
     s = load_scorer(args.registry_root)
     pol = policymod.load_policy(args.registry_root)
-    tel = telem.telem.Telemetry(args.root).stats()
+    tel = telem.Telemetry(args.root).stats()
     print(f"retrieval scorer : {s['scorer_version'] if s else 'hand-2.1 (no trained operator active)'}")
     if s:
         print(f"  holdout MRR {s['eval']['trained_mrr']} vs hand {s['eval']['hand_mrr']}  "
