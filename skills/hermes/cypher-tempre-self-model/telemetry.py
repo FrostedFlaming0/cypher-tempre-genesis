@@ -72,6 +72,10 @@ EVENT_TYPES = (
     # (turns that sealed vs. turns that needed nudging or fell open).
     "adherence_session_start", "adherence_turn_start", "adherence_loop_ran",
     "adherence_satisfied", "adherence_nudge", "adherence_violation",
+    # v3.15 depth-completing governor: unmet seal obligations become recorded
+    # DEBT carried across turns; a turn that truly cannot seal must WAIVE with a
+    # reason. Plus regret-scored routing and calibrator adjustments.
+    "adherence_debt", "adherence_waiver", "route_regret", "calibration",
 )
 
 
@@ -189,6 +193,10 @@ class Telemetry:
                 c["nudges"] += 1
             elif ev == "adherence_violation":
                 c["violations"] += 1
+            elif ev == "adherence_debt":
+                c["debt"] = c.get("debt", 0) + 1
+            elif ev == "adherence_waiver":
+                c["waivers"] = c.get("waivers", 0) + 1
             elif ev == "adherence_loop_ran":
                 c["loops"] += 1
                 dec = d.get("decision", "?")
@@ -209,9 +217,52 @@ class Telemetry:
         # 99.8% "adherence" over turns that mostly had to be forced. Both are
         # published now; the covenant demands the unflattering one too.
         wear_rate = (c["satisfied"] / c["turns"]) if c["turns"] else None
+        # v3.15 accounted rate: sealed OR reasoned-waiver turns / all turns —
+        # the governor's target is 100% ACCOUNTED (no silent skips), while
+        # wear_rate stays the raw discipline number.
+        accounted = ((c["satisfied"] + c.get("waivers", 0)) / c["turns"]) if c["turns"] else None
         return {"counts": c, "loop_decisions": loop_decisions, "last_ts": last_ts,
                 "adherence_rate": rate, "nudge_rate": nudge_rate,
-                "reseal_rate": reseal_rate, "wear_rate": wear_rate}
+                "reseal_rate": reseal_rate, "wear_rate": wear_rate,
+                "accounted_rate": accounted}
+
+    def wear_trend(self, days: int = 7):
+        """v3.15: per-day wear rate over the trailing window + slope sign, so the
+        conscience can SEE its own discipline decaying (or recovering) instead of
+        only knowing the lifetime average. Returns {days:[(date, rate)], slope}."""
+        from datetime import datetime, timedelta, timezone
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        per = {}
+        for _, e in self.events():
+            ev = e.get("event", "")
+            if ev not in ("adherence_turn_start", "adherence_satisfied"):
+                continue
+            ts = e.get("ts", "")
+            try:
+                when = datetime.fromisoformat(ts)
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+            if when < cutoff:
+                continue
+            day = when.date().isoformat()
+            d = per.setdefault(day, {"turns": 0, "honored": 0})
+            if ev == "adherence_turn_start":
+                d["turns"] += 1
+            else:
+                d["honored"] += 1
+        rows = [(day, (v["honored"] / v["turns"]) if v["turns"] else None)
+                for day, v in sorted(per.items())]
+        rated = [(i, r) for i, (_, r) in enumerate(rows) if r is not None]
+        slope = None
+        if len(rated) >= 2:  # least-squares slope over day index
+            n = len(rated)
+            sx = sum(i for i, _ in rated); sy = sum(r for _, r in rated)
+            sxx = sum(i * i for i, _ in rated); sxy = sum(i * r for i, r in rated)
+            den = n * sxx - sx * sx
+            slope = ((n * sxy - sx * sy) / den) if den else None
+        return {"days": rows, "slope": slope}
 
     # ---- notarization ----
     def _state(self):
@@ -396,6 +447,10 @@ def cmd_adherence(args):
           f"(honored / (honored+violations))")
     print(f"  wear rate       : {_pct(a.get('wear_rate'))}   "
           f"(honored / ALL turns started — the unflattering, honest number)")
+    print(f"  accounted rate  : {_pct(a.get('accounted_rate'))}   "
+          f"(sealed OR reasoned-waiver — the governor target is 100%)")
+    print(f"  seal debt       : {c.get('debt', 0)} recorded   "
+          f"waivers: {c.get('waivers', 0)}")
     print(f"  nudges issued   : {c['nudges']}   nudge rate: {_pct(a['nudge_rate'])} per turn")
     print(f"  one-call loops  : {c['loops']}   "
           f"(of which immune-blocked: {c['blocked']})")
@@ -405,6 +460,15 @@ def cmd_adherence(args):
         decs = "  ".join(f"{k}:{v}" for k, v in sorted(a["loop_decisions"].items()))
         print(f"  loop verdicts   : {decs}")
     print(f"  last adherence event: {a['last_ts'] or '-'}")
+    try:
+        tr = Telemetry(args.root).wear_trend()
+        if tr["days"]:
+            spark = "  ".join(f"{d[5:]}:{_pct(r)}" for d, r in tr["days"][-7:])
+            direction = ("improving" if (tr["slope"] or 0) > 0.005 else
+                         "DECAYING" if (tr["slope"] or 0) < -0.005 else "flat")
+            print(f"  wear trend (7d) : {spark}   slope: {direction}")
+    except Exception:
+        pass
     if c["turns"] == 0 and c["sessions"] == 0:
         print("  (no adherence events yet — wire the hooks and run a few turns)")
 

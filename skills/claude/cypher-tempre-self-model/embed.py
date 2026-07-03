@@ -156,6 +156,24 @@ class _VoyageEmbedder:
 
 
 def get_embedder(name="hashing", **kw):
+    if name == "auto":
+        # v3.15 TIER LOGIC: use the best embedder actually importable, falling
+        # back cleanly — st (true semantics) > trained lens > hashing (stdlib).
+        # The fingerprint seam makes tier switches SAFE: a bank built in another
+        # vector space is rebuilt, never silently mixed.
+        try:
+            import sentence_transformers  # noqa: F401
+            return _STEmbedder(**{k: v for k, v in kw.items() if k != "registry_root"})
+        except Exception:
+            pass
+        try:
+            import lens as lensmod
+            e = lensmod.load_active(kw.get("registry_root"))
+            if e is not None:
+                return e
+        except Exception:
+            pass
+        return HashingEmbedder()
     if name == "hashing":
         return HashingEmbedder(**kw)
     if name == "lens":

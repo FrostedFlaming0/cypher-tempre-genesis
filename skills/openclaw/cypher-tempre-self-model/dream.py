@@ -347,6 +347,73 @@ class Dream:
         except Exception as exc:
             return {"error": str(exc)[:100]}
 
+    def calibrate_router(self):
+        """v3.15: learn router thresholds from route_regret evidence.
+        over-model regrets (MODEL chosen but the chain had it) -> lower
+        partial_floor one bounded step; over-replay regrets (chain answer was
+        wrong/stale) -> raise it. Needs >= 10 regrets and a 2:1 imbalance —
+        drift, never leap; every move is sealed by calibrators.adjust."""
+        try:
+            import calibrators as cal
+            root_dir = self.tc.dir.parent
+            over_model = over_replay = 0
+            for _, e in self.tel.events():
+                if e.get("event") == "route_regret":
+                    v = (e.get("data") or {}).get("verdict")
+                    if v == "over-model":
+                        over_model += 1
+                    elif v == "over-replay":
+                        over_replay += 1
+            n = over_model + over_replay
+            if n < 10:
+                return {"held": f"only {n} scored regrets (< 10)"}
+            cur = float(cal.get("router.partial_floor", 0.35, root=root_dir))
+            if over_model >= 2 * over_replay:
+                new = round(max(0.10, cur - 0.05), 2)
+                why = f"{over_model} over-model vs {over_replay} over-replay regrets"
+            elif over_replay >= 2 * over_model:
+                new = round(min(0.80, cur + 0.05), 2)
+                why = f"{over_replay} over-replay vs {over_model} over-model regrets"
+            else:
+                return {"held": f"regrets balanced ({over_model} vs {over_replay})"}
+            if new == cur:
+                return {"held": f"already at bound ({cur})"}
+            cal.adjust(root_dir, "router.partial_floor", new, why)
+            return {"adopted": True, "old": cur, "new": new, "why": why}
+        except Exception as exc:
+            return {"error": str(exc)[:100]}
+
+    def calibrate_governor(self):
+        """v3.15: tune the nudge budget from adherence evidence. If most debt
+        turns follow exhausted nudges without conversion (nudging isn't
+        working), REDUCE the budget — quieter, spend the savings on the seal-
+        debt escalation instead. If nudges convert well, hold."""
+        try:
+            import calibrators as cal
+            root_dir = self.tc.dir.parent
+            nudges = debts = satisfied = 0
+            for _, e in self.tel.events():
+                ev = e.get("event")
+                if ev == "adherence_nudge":
+                    nudges += 1
+                elif ev == "adherence_debt":
+                    debts += 1
+                elif ev == "adherence_satisfied":
+                    satisfied += 1
+            if nudges < 100:
+                return {"held": f"only {nudges} nudges observed (< 100)"}
+            conversion = satisfied / nudges if nudges else 0
+            cur = int(cal.get("enforce.max_nudges", 3, root=root_dir))
+            if conversion < 0.3 and cur > 1:
+                cal.adjust(root_dir, "enforce.max_nudges", cur - 1,
+                           f"nudge conversion {conversion:.0%} — repetition isn't converting; "
+                           f"governor escalation carries the load")
+                return {"adopted": True, "old": cur, "new": cur - 1,
+                        "conversion": round(conversion, 2)}
+            return {"held": f"conversion {conversion:.0%} at budget {cur}"}
+        except Exception as exc:
+            return {"error": str(exc)[:100]}
+
     def run(self, train=True, do_seal=True):
         if (self.tc.dir / "PAUSED").exists():
             return {"ran": False, "reason": "self-model is dormant — a paused self does not dream"}
@@ -365,6 +432,8 @@ class Dream:
         report["salience"] = self.resonate()
         report["economics"] = self.account()
         report["gate_calibration"] = self.calibrate_gate()
+        report["router_calibration"] = self.calibrate_router()
+        report["governor_calibration"] = self.calibrate_governor()
         # v3.14: refresh the living autobiography when stale
         try:
             import autobiography

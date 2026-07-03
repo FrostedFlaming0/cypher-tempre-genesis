@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -156,6 +157,46 @@ def measure_grounding(cand: set, support: set) -> int:
     return clamp(coverage(cand, support) * 255)
 
 
+# ---- v3.15 entity-level grounding -----------------------------------------
+# Bag-of-words grounding cannot see a fabricated SPECIFIC (a number, filename,
+# or identifier that appears nowhere in the evidence) as long as the surrounding
+# prose overlaps. These extract the claim-bearing specifics and check each one
+# verbatim against the declared evidence — the most dangerous hallucinations are
+# invented specifics, and this is the microscope that sees them.
+_SPECIFIC = re.compile(
+    r"(\d[\d,.]*%?"                       # numbers / percents
+    r"|[\w./-]+\.(?:py|md|json|jsonl|js|sh|txt|yml|yaml|toml)"  # filenames
+    r"|[a-z_][a-z0-9_]*\(\)"              # function() references
+    r"|[A-Z][A-Z0-9_]{2,}"                # CONSTANTS / env flags
+    r"|v\d+\.\d+(?:\.\d+)?"              # versions
+    r")")
+
+
+def extract_specifics(text: str) -> list:
+    """Claim-bearing specifics: numbers, filenames, function refs, constants,
+    versions. Short/trivial matches (single digits used as list markers) are kept
+    — conservatively — only when len > 1."""
+    out = []
+    for m in _SPECIFIC.finditer(text or ""):
+        s = m.group(0).strip(",.")
+        if len(s) > 1 and s not in out:
+            out.append(s)
+    return out
+
+
+def entity_grounding(candidate: str, evidence_text: str):
+    """Fraction of the candidate's specifics that appear VERBATIM in the evidence,
+    scaled 0-255. Returns (score, missing:list, total:int). No specifics -> (255, [], 0)
+    — nothing to fabricate. Case-insensitive; commas in numbers folded."""
+    specs = extract_specifics(candidate)
+    if not specs:
+        return 255, [], 0
+    ev = (evidence_text or "").lower().replace(",", "")
+    missing = [s for s in specs if s.lower().replace(",", "") not in ev]
+    score = clamp(255 * (len(specs) - len(missing)) / len(specs))
+    return score, missing, len(specs)
+
+
 def measure_assertiveness(text: str) -> int:
     low = text.lower()
     sents = [s for s in re.split(r"[.!?]+", text) if s.strip()]
@@ -267,7 +308,8 @@ class PoQGate:
         self.t = {**policy_thresholds(), **(thresholds or {})}
 
     def evaluate(self, candidate: str, chain, context: str = "", external_scores=None,
-                 ring_token_sets=None, span_guard=False, declared_evidence=None) -> dict:
+                 ring_token_sets=None, span_guard=False, declared_evidence=None,
+                 evidence_texts=None) -> dict:
         ext = external_scores or {}
         cand = set(tokens(candidate))
         ctx = set(tokens(context))
@@ -343,6 +385,34 @@ class PoQGate:
             "reasons": reasons,
             "cited_rings": cited,
         }
+        # v3.15 entity-level grounding: when the caller declares its evidence
+        # (--evidence-file / used-ring texts), every SPECIFIC in the candidate
+        # (number, filename, constant, version) must appear verbatim in it.
+        # Fabricated specifics degrade SEAL -> FORCE_UNCERTAINTY.
+        if evidence_texts:
+            ev_blob = "\n".join(evidence_texts) + "\n" + (context or "")
+            eg, missing, total = entity_grounding(candidate, ev_blob)
+            verdict["entity_grounding"] = eg
+            verdict["specifics_total"] = total
+            if missing:
+                verdict["specifics_missing"] = missing[:10]
+            floor = self.t.get("entity_grounding_floor", 128)
+            enforce = bool(self.t.get("entity_grounding_enforce")) or \
+                os.environ.get("CT_ENTITY_GATE", "") == "1"
+            if total >= 2 and eg < floor and decision == "SEAL":
+                if enforce:
+                    verdict["decision"] = decision = "FORCE_UNCERTAINTY"
+                    verdict["reasons"].append(
+                        f"entity grounding {eg} < floor {floor}: {len(missing)}/{total} "
+                        f"specifics absent from declared evidence — "
+                        f"{', '.join(repr(m) for m in missing[:4])} — cite where each comes "
+                        f"from or hedge them explicitly.")
+                else:
+                    verdict["reasons"].append(
+                        f"note: entity grounding {eg} < {floor} — {len(missing)}/{total} "
+                        f"specifics not found in declared evidence "
+                        f"({', '.join(repr(m) for m in missing[:4])}) (advisory; "
+                        f"arm with CT_ENTITY_GATE=1 or entity_grounding_enforce).")
         if effort is not None:
             verdict["effort"] = effort["score"]
             verdict["low_effort"] = low_effort      # advisory even when not enforced
@@ -405,7 +475,7 @@ def gate_and_seal(tc: Timechain, candidate: str, context: str = "",
                   ring_type: str = "experience", difficulty: int = 0,
                   external_scores=None, files=None, extra_payload=None, gate: PoQGate = None,
                   window: int = POQ_WINDOW, relevant_rings=None, use_index: bool = False,
-                  declared_evidence=None):
+                  declared_evidence=None, evidence_texts=None):
     """Run the gate; seal only if the verdict is SEAL. Returns (verdict, ring|None).
     `extra_payload` (e.g. self-labels from recall.py) is merged into the sealed payload.
     The gate scores against a BOUNDED relevance window (relevant rings first, then recent),
@@ -422,9 +492,20 @@ def gate_and_seal(tc: Timechain, candidate: str, context: str = "",
             relevant_rings = hippo.candidates(candidate, context, limit=window)
         except Exception:
             relevant_rings = None
+    # v3.15: when the caller DECLARED its evidence (used-rings), those texts feed
+    # the entity-grounding microscope (fabricated specifics degrade the verdict).
+    # Only declared evidence is audited — a novel thought legitimately carries new
+    # specifics; the microscope targets "I relied on X" claims whose specifics
+    # aren't actually in X.
+    if evidence_texts is None and relevant_rings and declared_evidence:
+        try:
+            evidence_texts = [ring_text(r) for r in relevant_rings[:40]]
+        except Exception:
+            evidence_texts = None
     verdict = gate.evaluate(candidate, relevance_window(tc, window, relevant_rings),
                             context, external_scores, span_guard=True,
-                            declared_evidence=declared_evidence)
+                            declared_evidence=declared_evidence,
+                            evidence_texts=evidence_texts)
     if verdict["decision"] == "SEAL":
         payload = {"summary": candidate}
         if context:
