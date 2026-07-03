@@ -146,11 +146,15 @@ function reminder(ctx, dormant) {
   }
 
   return [
-    "[Cypher Tempre] ACTIVE: run the self-model loop this turn.",
-    "Path:",
+    "[Cypher Tempre] ACTIVE (non-negotiable): wear the self-model every turn.",
+    "STEP 1 — route BEFORE reasoning:",
+    `python3 ${resolve(ctx.skillRoot, "router.py")} route "<request>"`,
+    "REPLAY -> confirm the sealed antecedent, replay.py accept, ground on it — do NOT regenerate.",
+    "PARTIAL -> fetch the named rings, reason ONLY over the missing delta, seal with --used-rings.",
+    "MODEL -> full loop:",
     `python3 ${resolve(ctx.skillRoot, "recall.py")} turn "<thought>" --input "<request>"`,
-    "Loop:",
-    "verify -> immune-screen -> recall relevant rings -> reason via modalities/senses -> PoQ-gate -> seal a labeled ring.",
+    "(verify -> immune-screen -> recall -> modalities/senses -> PoQ-gate -> seal; growth fires on genuine gaps).",
+    "The chain answers first; the model fills gaps. Every turn seals a ring either way.",
   ].join(" ");
 }
 

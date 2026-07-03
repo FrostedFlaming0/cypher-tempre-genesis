@@ -138,6 +138,22 @@ def load_policy(registry_root=None):
     return policy
 
 
+def save_policy(policy, registry_root=None):
+    """v3.14: persist the effective policy to registry/policy.json. Floors are
+    re-guarded on save (they may only rise above defaults, mirroring load).
+    Used by dream-time gate calibration; every adoption is also sealed as a
+    calibration ring so policy drift is on the chain."""
+    p = _policy_path(registry_root)
+    out = dict(policy or {})
+    vals = out.get("values") or {}
+    for floor in ("covenant_floor", "consistency_floor"):
+        vals[floor] = max(DEFAULT_POLICY["values"][floor], int(vals.get(floor, 0) or 0))
+    out["values"] = vals
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(out, indent=2, ensure_ascii=False))
+    return p
+
+
 def write_calibration(section, payload, registry_root=None):
     """The learner's ONLY write path: store `payload` under <section>.calibrated,
     preserving every user-set key in the file. Returns the stored payload."""

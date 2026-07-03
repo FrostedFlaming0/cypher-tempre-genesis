@@ -62,6 +62,9 @@ SCHEMA = 1
 EVENT_TYPES = (
     "offer", "fetch", "use", "falsify",
     "replay-accept", "replay-reject", "missed-positive", "route",
+    # v3.12/v3.13 additions: first-verdict gate observability, auto-maintenance
+    # runs, and recall-first routing decisions (REPLAY/PARTIAL/MODEL economics)
+    "gate_verdict", "auto_maintenance", "route_decision",
     "evidence",          # V4 P5: evidence-assembly calls (shapes routed, emptiness —
     #                      the abstain-on-answerable signal feed for dream digests)
     # V6 adherence layer: the hook-driven enforcement of the per-turn loop. These
@@ -201,9 +204,14 @@ class Telemetry:
         rate = (c["satisfied"] / decided) if decided else None
         nudge_rate = (c["nudges"] / c["turns"]) if c["turns"] else None
         reseal_rate = (c["resealed"] / c["loops"]) if c["loops"] else None
+        # v3.12 honest metric: wear rate = honored turns / ALL turns started.
+        # The old headline (honored/(honored+violations)) hid the nudging — a
+        # 99.8% "adherence" over turns that mostly had to be forced. Both are
+        # published now; the covenant demands the unflattering one too.
+        wear_rate = (c["satisfied"] / c["turns"]) if c["turns"] else None
         return {"counts": c, "loop_decisions": loop_decisions, "last_ts": last_ts,
                 "adherence_rate": rate, "nudge_rate": nudge_rate,
-                "reseal_rate": reseal_rate}
+                "reseal_rate": reseal_rate, "wear_rate": wear_rate}
 
     # ---- notarization ----
     def _state(self):
@@ -386,6 +394,8 @@ def cmd_adherence(args):
     print(f"  violations      : {c['violations']}   (exhausted nudges, failed open)")
     print(f"  adherence rate  : {_pct(a['adherence_rate'])}   "
           f"(honored / (honored+violations))")
+    print(f"  wear rate       : {_pct(a.get('wear_rate'))}   "
+          f"(honored / ALL turns started — the unflattering, honest number)")
     print(f"  nudges issued   : {c['nudges']}   nudge rate: {_pct(a['nudge_rate'])} per turn")
     print(f"  one-call loops  : {c['loops']}   "
           f"(of which immune-blocked: {c['blocked']})")
