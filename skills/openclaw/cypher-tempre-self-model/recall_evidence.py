@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""recall_evidence - Layer 3 facade: evidence assembly (v3.14).
+"""recall_evidence - evidence assembly (v3.15: physical split landed).
 
 Evidence-shape routing and assembly for seals (used-rings resolution, PoQ
-window construction, span-guard integration). See recall_core for sealing.
+window construction, span-guard integration). Engine in recall.py.
 
     from recall_evidence import Recall
 """

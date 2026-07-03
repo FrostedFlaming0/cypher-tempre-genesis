@@ -1,5 +1,106 @@
 # Changelog
 
+## v3.15.0 - 2026-07-03
+
+"v3.14 built the organs; v3.15 is circulation." Every signal the skill emits
+now flows back into behavior. Builds all nine improvement areas from the
+fourth self-audit (Ring 1509) EXCEPT temporal decay/consolidation - by
+explicit design the FULL chain stays indexed so recall over any ring in
+history is verbatim-perfect.
+
+### Added
+- **Hippocampus auto-index on seal** (`timechain._maybe_autoindex`, opt-out
+  `CT_AUTOINDEX=0`): the index is brought to the chain head on EVERY seal -
+  the chronic `hippocampus STALE` doctor warning is now structurally
+  impossible. Full history indexed, no decay, no consolidation shortcuts.
+- **Entity-level grounding in PoQ** (`poq.extract_specifics` /
+  `poq.entity_grounding`): every SPECIFIC in a candidate (number, filename,
+  function ref, constant, version) is checked VERBATIM against declared
+  evidence. Fabricated specifics degrade SEAL -> FORCE_UNCERTAINTY (advisory
+  by default; arm with `CT_ENTITY_GATE=1` or `entity_grounding_enforce`).
+- **Gate discrimination battery** (`tests/test_gate_discrimination.py`, 12
+  checks): grounded-true vs confident-fabrication vs vacuous-filler over the
+  same evidence - the gate must ORDER them and separate by >=100 points.
+  Discrimination is now falsifiable, not a vibe.
+- **Gate saturation check in doctor**: sigma of trailing 200 gate_verdict
+  brightnesses < 10 with zero non-SEAL verdicts flags `GATE SATURATED`.
+- **Conjecture due-rings** (`conjecture.py pose --due-ring N`): once the
+  chain head passes the due height, scoring becomes an OBLIGATION - doctor
+  flags OVERDUE, and session-start injects the scoring demand. A speculation
+  channel without mandatory settlement is just a place to sound smart.
+- **Depth-completing governor** (enforce.py): exhausting the nudge budget now
+  records SEAL DEBT carried to the next turn, where the reminder escalates to
+  a structured seal-or-waive demand. `enforce.py waive "<reason>"` is the
+  honest escape hatch - the waiver is telemetry (adherence_debt /
+  adherence_waiver events). New `accounted rate` metric (sealed OR reasoned
+  waiver; the governor target is 100%) and a 7-day `wear trend` with slope
+  (improving/flat/DECAYING) in `telemetry.py adherence`.
+- **Behavioral faculty payloads** (cambium): every promotion now carries an
+  EFFECT - an executable op, a reasoning FRAME injected into loop output when
+  the faculty fires (visible as `frame >` lines), or a routing hint.
+  `cambium.py effect <name> --type frame|hint|op` sets them;
+  `cambium.py effect --backfill` gave all 87 existing faculties defaults.
+  No more effect-free ornament.
+- **Effect-gated rent** (`cambium.py prune --effectful`): rent is paid only
+  by CONTRIBUTING fires (computed op result or injected frame), not label
+  decoration. Decorative faculties die faster; organs survive.
+- **Contrastive chronosynaptic rollouts**: fork value blends PoQ brightness
+  (0.7) with the reading's DISTINCTIVENESS vs sibling consensus (0.3) - the
+  audit measured every fork landing 179-185/255 (coin-flip selection); values
+  now spread. `--no-contrastive` restores absolute scoring.
+- **`chronosynaptic.py think --budget deep`**: depth 4, 64 iterations, 6
+  forks, wider exploration (c=1.8) for high-dissonance queries.
+- **Loser epitaphs**: collapse rings record WHY each losing fork lost, so
+  dream cycles can learn which perspectives keep losing.
+- **Telemetry-compiled autobiography**: the self-portrait now carries the
+  7-day discipline trend, recall-first routing economics, the last REFUTED
+  belief, and the most-EFFECTFUL faculties (computed contributions, not
+  label fires) - the unflattering numbers are the identity doing work.
+- **Calibrators registry** (`calibrators.py`): every heuristic constant has
+  an OWNER - name, bounds, evidence stream, owning dream-cycle calibrator.
+  8/8 constants registered (router floors, gate targets, growth salience,
+  replay threshold, nudge budget). `adjust` is bounded, sealed, and
+  telemetry-logged; doctor audits ownership (`calibrators` check).
+- **Router regret learning** (`router.py regret <ring>
+  over-replay|over-model|good`): routing decisions are scored after the
+  fact; `dream.calibrate_router` moves `router.partial_floor` one bounded
+  step when regrets are lopsided (>=10 scored, 2:1 imbalance).
+  `dream.calibrate_governor` shrinks the nudge budget when nudge->seal
+  conversion is poor (the audit measured 108% nudge rate converting at 25%).
+- **Embed auto-tier** (`embed.get_embedder("auto")`): sentence-transformers >
+  trained lens > stdlib hashing, resolved at runtime; fingerprint seam makes
+  tier switches safe (foreign-space banks rebuild, never mix).
+- **Stem + synonym folding in hippocampus**: light conservative stemmer plus
+  a domain synonym table (verify~integrity~tamper, faculty~modality~sense,
+  recall~retrieval~memory, ...) applied at BOTH index and query time.
+  Folding only ADDS canonical forms - verbatim terms are always kept, the
+  full chain stays indexed.
+- **Semantic dissonance is the DEFAULT gap detector** (opt-out
+  `CT_SEMANTIC_GAP=0`): growth triggers on conceptual novelty, not
+  unseen-token noise.
+
+### Changed
+- **recall.py physically split** (2,663 lines -> 1,800-line engine +
+  930-line `recall_cli.py`): every cmd_* handler, the parser, and loop
+  orchestration moved out; `python3 recall.py <cmd>` delegates so all
+  existing invocations work unchanged. The v3.14 facades (recall_core /
+  recall_query / recall_evidence) now document the landed split.
+- `enforce.MAX_NUDGES` reads through the calibrators registry (env
+  `CT_ENFORCE_MAX_NUDGES` still wins).
+- doctor imports matrix widened to 27 modules (router, conjecture,
+  autobiography, calibrators, recall_cli included).
+
+### Tests
+- smoke matrix: 89 -> 106 checks (entity grounding, calibrators ownership,
+  governor wiring, folding, contrastive seam, effects, due-rings,
+  auto-index hook, regret channel, dream calibrators, auto embed tier).
+- new `tests/test_gate_discrimination.py` (12 checks).
+
+### Explicitly NOT built (user decision)
+- Temporal decay + consolidation rings: recall must stay verbatim-perfect
+  over the WHOLE history, so the full chain remains indexed with no
+  recency bias and no summary shortcuts.
+
 ## v3.14.0 - 2026-07-03
 
 Completes every remaining deferred item from the 2026-07-03 three-pass

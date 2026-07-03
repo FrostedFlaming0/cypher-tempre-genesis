@@ -40,9 +40,16 @@ sys.path.insert(0, str(SKILL_DIR))
 
 import telemetry as telem
 
-# PARTIAL requires this much lexical relevance mass across recalled rings
-PARTIAL_FLOOR = 0.35      # top recalled ring score floor
-PARTIAL_RINGS = 2         # need at least this many related rings
+# PARTIAL requires this much lexical relevance mass across recalled rings.
+# v3.15: read THROUGH the calibrators registry — dream.calibrate_router owns
+# these and adjusts them from route_regret evidence (bounded, sealed).
+try:
+    import calibrators as _cal
+    PARTIAL_FLOOR = float(_cal.get("router.partial_floor", 0.35))
+    PARTIAL_RINGS = int(_cal.get("router.partial_rings", 2))
+except Exception:
+    PARTIAL_FLOOR = 0.35      # top recalled ring score floor
+    PARTIAL_RINGS = 2         # need at least this many related rings
 
 
 def route(root: Path, query: str, context: str = "", top: int = 5) -> dict:
@@ -194,6 +201,25 @@ def cmd_route(args):
     print(f"  NEXT: {res['next']}")
 
 
+def regret(root: Path, decision_ring: int, verdict: str, why: str = "") -> dict:
+    """v3.15: score a past routing decision so thresholds can LEARN.
+    verdict: 'over-replay'  (REPLAY/PARTIAL chosen but the answer was wrong/stale
+                             -> floor too low),
+             'over-model'   (MODEL chosen but the chain had it -> floor too high),
+             'good'         (decision was right — reinforces current thresholds)."""
+    if verdict not in ("over-replay", "over-model", "good"):
+        raise SystemExit("verdict must be over-replay|over-model|good")
+    telem.record(str(root), "route_regret",
+                 {"ring": decision_ring, "verdict": verdict, "why": why[:200]})
+    return {"ring": decision_ring, "verdict": verdict}
+
+
+def cmd_regret(args):
+    r = regret(args.root, args.ring, args.verdict, args.why or "")
+    print(f"regret recorded for routing at ring {r['ring']}: {r['verdict']} "
+          f"(dream.calibrate_router learns from these)")
+
+
 def cmd_stats(args):
     from collections import Counter
     c, n = Counter(), 0
@@ -227,6 +253,12 @@ def main():
     pr.set_defaults(func=cmd_route)
     ps = sub.add_parser("stats", parents=[common], help="routing decision distribution + model-avoidance rate")
     ps.set_defaults(func=cmd_stats)
+    pg = sub.add_parser("regret", parents=[common],
+                        help="score a past route decision (over-replay|over-model|good) — evidence for threshold learning")
+    pg.add_argument("ring", type=int)
+    pg.add_argument("verdict", choices=["over-replay", "over-model", "good"])
+    pg.add_argument("--why", default="")
+    pg.set_defaults(func=cmd_regret)
     args = ap.parse_args()
     args.func(args)
 

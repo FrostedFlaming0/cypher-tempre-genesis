@@ -912,6 +912,47 @@ verified it directly, ground it against your actual evidence instead of arguing:
 Seals auto-register unsupported high-assert spans as at-risk claims
 (`CT_AUTO_ATRISK=0` to opt out) — calibration data accrues without ceremony.
 
+## Circulation — signals flow back into behavior (v3.15)
+
+v3.14 built the organs; v3.15 is circulation. Every measured signal now has a
+return path into thresholds, behavior, and identity:
+
+**Always-fresh recall.** Every seal brings the hippocampus to the chain head
+(`CT_AUTOINDEX=0` only for bulk imports). The FULL history stays indexed —
+no decay, no consolidation shortcuts — recall over any ring is verbatim.
+Stem + domain-synonym folding widens hits (verify~integrity~tamper) at index
+and query time; verbatim terms are always kept. `embed.get_embedder("auto")`
+resolves the best available tier (st > lens > hashing) fingerprint-safely.
+
+**Fabrication microscope.** Declared-evidence seals check every SPECIFIC
+(number, filename, version, constant) verbatim against the evidence;
+fabricated specifics degrade to FORCE_UNCERTAINTY (arm hard enforcement with
+`CT_ENTITY_GATE=1`). The discrimination battery
+(`tests/test_gate_discrimination.py`) keeps the gate falsifiably sharp, and
+doctor flags `GATE SATURATED` when verdict variance collapses.
+
+**Seal debt, not nagging.** Exhausting the nudge budget records DEBT; the next
+turn escalates to seal-or-waive (`enforce.py waive "<reason>"` — recorded).
+`telemetry.py adherence` shows the accounted rate (target 100%) and a 7-day
+wear trend with slope. Overdue conjectures (`conjecture.py pose --due-ring N`)
+become scoring obligations surfaced at session start.
+
+**Growth with teeth.** Every grown faculty carries an EFFECT (op / frame /
+hint — `cambium.py effect`); fired frames inject reasoning directives into
+loop output. `prune --effectful` charges rent only for CONTRIBUTING fires.
+Semantic dissonance is the default gap detector (`CT_SEMANTIC_GAP=0` to opt
+out).
+
+**Sharper forks.** Chronosynaptic values blend brightness with the reading's
+distinctiveness vs sibling consensus (de-saturated selection); collapse rings
+carry loser epitaphs; `think --budget deep` spends search on hard queries.
+
+**Owned constants.** `calibrators.py status` — every heuristic constant has an
+owner, bounds, and an evidence stream; adjustments are bounded and sealed.
+Score routing decisions with `router.py regret <ring> over-replay|over-model|good`;
+`dream.py run` now also calibrates the router floor and the nudge budget from
+accrued regret/conversion evidence.
+
 ## Self-defense — the membrane is tamper-proof and self-healing
 
 **Harden the boundary (consensus).** Beyond the hash-chain (tamper-evident), a quorum of

@@ -73,10 +73,61 @@ def _scaffold(root: Path) -> str:
         pass
     try:
         import telemetry as telem
-        a = telem.Telemetry(root).adherence()
+        tel = telem.Telemetry(root)
+        a = tel.adherence()
         if a.get("wear_rate") is not None:
             lines.append(f"Honest wear rate: {a['wear_rate']*100:.0f}% "
-                         f"(adherence {a['adherence_rate']*100:.1f}%).")
+                         f"(adherence {a['adherence_rate']*100:.1f}%"
+                         + (f", accounted {a['accounted_rate']*100:.0f}%"
+                            if a.get("accounted_rate") is not None else "")
+                         + ").")
+        # v3.15: the 7-day discipline SLOPE — an identity that can see itself decaying
+        try:
+            tr = tel.wear_trend()
+            if tr.get("slope") is not None:
+                direction = ("improving" if tr["slope"] > 0.005 else
+                             "decaying" if tr["slope"] < -0.005 else "flat")
+                lines.append(f"Discipline trend (7d): {direction}.")
+        except Exception:
+            pass
+        # v3.15: routing economics — how often the chain answered instead of the model
+        try:
+            routes = Counter()
+            for _, e in tel.events():
+                if e.get("event") == "route_decision":
+                    routes[(e.get("data") or {}).get("decision", "?")] += 1
+            n = sum(routes.values())
+            if n:
+                avoid = (routes.get("REPLAY", 0) + routes.get("PARTIAL", 0)) / n
+                lines.append(f"Recall-first economics: {avoid*100:.0f}% of {n} routed "
+                             f"turns answered from the chain.")
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # v3.15: refuted beliefs are part of identity — the last conjecture scored
+    # FALSIFIED is carried in the self-portrait (an identity that remembers being
+    # wrong is the one that calibrates).
+    try:
+        last_refuted = None
+        for r in tc.load():
+            if r.get("ring_type") == "conjecture-score" and \
+               (r.get("payload") or {}).get("verdict") == "falsified":
+                last_refuted = (r.get("payload") or {}).get("summary", "")[:140]
+        if last_refuted:
+            lines.append(f"Last refuted belief: {last_refuted}")
+    except Exception:
+        pass
+    # v3.15: top faculties by EFFECT (computed op contributions), not just label fires
+    try:
+        eff = Counter()
+        for r in tc.load():
+            comp = ((r.get("payload") or {}).get("labels") or {}).get("computed") or {}
+            for nm in comp:
+                eff[nm] += 1
+        if eff:
+            lines.append("Most-effectful faculties: " +
+                         ", ".join(n for n, _ in eff.most_common(5)) + ".")
     except Exception:
         pass
     return " ".join(lines)

@@ -49,6 +49,54 @@ import embed as embmod
 
 WORD_RE = re.compile(r"[a-z0-9']+")
 
+# ---- v3.15 stem + synonym folding ------------------------------------------
+# The stdlib tier cannot bridge synonymy, but it CAN fold morphology and the
+# skill's own domain vocabulary. Folding happens at BOTH index and query time,
+# so 'verifying integrity' hits rings that say 'verify' or 'tamper'. This
+# raises the REPLAY hit rate without any ML dependency — and the full chain
+# stays indexed verbatim (folding only ADDS canonical forms, it never drops).
+_SUFFIXES = ("ations", "ation", "ising", "izing", "ingly", "ities", "ments",
+             "ness", "ment", "ions", "ing", "ers", "ies", "ily", "ed", "es",
+             "er", "ly", "s")
+
+
+def _stem(w):
+    """Light suffix-stripper (Porter-flavoured, deliberately conservative):
+    only strips when the stem stays >= 4 chars, so short roots stay intact."""
+    for suf in _SUFFIXES:
+        if w.endswith(suf) and len(w) - len(suf) >= 4:
+            return w[: len(w) - len(suf)]
+    return w
+
+
+# Domain synonym table: each group folds to its first member (the canon).
+_SYN_GROUPS = [
+    ("verify", "verification", "integrity", "tamper", "tampering", "audit"),
+    ("faculty", "modality", "sense", "faculties", "modalities", "senses"),
+    ("seal", "sealed", "sealing", "ring", "rings"),
+    ("recall", "retrieve", "retrieval", "remember", "memory"),
+    ("conjecture", "speculation", "hypothesis"),
+    ("chain", "timechain", "ledger"),
+    ("error", "bug", "crash", "failure", "broken"),
+    ("fix", "repair", "patch", "fixed"),
+    ("grow", "growth", "grown", "sprout", "cambium"),
+    ("gate", "poq", "conscience", "brightness"),
+]
+_SYN = {}
+for _grp in _SYN_GROUPS:
+    for _w in _grp:
+        _SYN[_w] = _grp[0]
+
+
+def fold(w):
+    """Canonical form of a term: synonym-fold first (exact), then stem, then
+    synonym-fold the stem (so 'verifying'->'verify'->canon)."""
+    w = w.lower()
+    if w in _SYN:
+        return _SYN[w]
+    s = _stem(w)
+    return _SYN.get(s, s)
+
 
 def _toks(text):
     return [w for w in WORD_RE.findall((text or "").lower()) if len(w) > 1]
@@ -90,8 +138,11 @@ def _ring_terms(ring):
         terms = {str(t).lower() for t in kws} | {str(t).lower() for t in ents}
         for q in quants:                       # '5 mile' -> '5', 'mile' (both searchable)
             terms |= set(str(q).lower().split())
-        return terms
-    return set(_toks(_block_text(ring)))
+    else:
+        terms = set(_toks(_block_text(ring)))
+    # v3.15: index BOTH the verbatim term and its folded canon — verbatim-perfect
+    # recall is preserved; folding only widens the net.
+    return terms | {fold(t) for t in terms}
 
 
 class Hippocampus:
@@ -262,7 +313,9 @@ class Hippocampus:
         LSH buckets near the query embedding, never all n rings."""
         self._load()
         scores = Counter()
-        for t in set(_toks(query_text + " " + context)):
+        qtoks = set(_toks(query_text + " " + context))
+        qtoks |= {fold(t) for t in qtoks}   # v3.15 query-side folding (verbatim kept too)
+        for t in qtoks:
             posting = self._postings.get(t)
             if not posting or len(posting) > self.DF_CAP:   # missing or non-selective -> skip
                 continue

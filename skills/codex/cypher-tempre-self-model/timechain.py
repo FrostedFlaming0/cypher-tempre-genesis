@@ -353,7 +353,21 @@ class Timechain:
         ring = self._seal(ring, difficulty=difficulty)
         self._append(ring)
         self._maybe_checkpoint(ring)
+        self._maybe_autoindex(ring)
         return ring
+
+    def _maybe_autoindex(self, ring):
+        """v3.15: keep the hippocampus at the chain head on every seal.
+        Incremental (O(new rings)); indexes the FULL chain history — no decay,
+        no consolidation shortcuts — so recall over any ring stays verbatim.
+        Disable with CT_AUTOINDEX=0 (e.g. bulk imports that reindex at the end)."""
+        if os.environ.get("CT_AUTOINDEX", "1") == "0":
+            return
+        try:
+            from hippocampus import Hippocampus
+            Hippocampus(self.root).ensure_current()
+        except Exception:
+            pass  # never let indexing failures block a seal
 
     # ---- v3.14 checkpointed verification (O(tail) re-verify) ----
     CHECKPOINT_EVERY = 500
