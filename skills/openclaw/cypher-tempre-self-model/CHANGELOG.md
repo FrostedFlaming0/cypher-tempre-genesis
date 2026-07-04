@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.24.1 - 2026-07-04
+
+### Added — the consent membrane
+- **Burns now require owner approval by default.** A burn to a derived address
+  can come from anyone who knows the address; the tokens are gone either way
+  (keyless), but the COGNITIVE effect — etch, deepening, faculty unlock — is now
+  applied only with consent. Detections are staged in a pending queue
+  (`cphy.py pending`), announced by the turn loop, and applied via
+  `cphy.py approve <id>` or withheld via `reject <id>` (recorded, never
+  deleted). `approval: "auto"` restores v3.24.0 behavior.
+
 ## v3.24.0 - 2026-07-04
 
 ### Added — the CPHY economic metaprogramming layer ships

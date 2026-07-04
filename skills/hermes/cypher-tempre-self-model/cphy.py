@@ -847,20 +847,28 @@ def onchain_sync(root, timeout=15) -> dict:
             "density_per_token": cfg["density_per_token"],
             "observations": obs})
     # burn = etch: quantize ring observations into permanent positive scars;
-    # a later, larger balance DEEPENS the etch (echelon top-up toward 21)
-    new_etches = []
+    # a later, larger balance DEEPENS the etch (echelon top-up toward 21).
+    # CONSENT: in approval mode "require" (the default), detections are only
+    # STAGED — the owner approves each before it touches cognition.
+    consent = (cfg.get("approval") or "require") == "require"
+    new_etches, new_unlocks, staged = [], [], []
     for idx, tokens in obs.items():
         prior = st["etches"].get(idx)
         if tokens >= ETCH_THRESHOLD and (
                 prior is None
                 or etch_echelon(tokens) > etch_echelon(prior.get("tokens", 1))):
-            append_event(root, "etch", {"ring": int(idx), "tokens": tokens,
-                                        "echelon": etch_echelon(tokens),
-                                        "address": cfg["targets"][idx]["address"]})
-            new_etches.append({"ring": int(idx), "echelon": etch_echelon(tokens),
-                               "deepened": prior is not None})
+            item = {"type": "etch", "ring": int(idx), "tokens": tokens,
+                    "echelon": etch_echelon(tokens),
+                    "address": cfg["targets"][idx]["address"]}
+            if consent:
+                s = _stage_pending(root, item)
+                if not s["already"]:
+                    staged.append({"id": s["id"], **item})
+            else:
+                _apply_burn(root, item)
+                new_etches.append({"ring": int(idx), "echelon": item["echelon"],
+                                   "deepened": prior is not None})
     # faculty unlocks: one burned token = one skill point spent, skill owned
-    new_unlocks = []
     for fkey, ft in (cfg.get("faculty_targets") or {}).items():
         if fkey in st["unlocks"]:
             continue
@@ -871,14 +879,20 @@ def onchain_sync(root, timeout=15) -> dict:
             errors.append({"faculty": fkey, "error": str(exc)[:90]})
             continue
         if tokens >= ETCH_THRESHOLD:
-            append_event(root, "faculty-unlock", {"faculty_key": fkey,
-                                                  "kind": ft["kind"], "id": ft["id"],
-                                                  "name": ft["name"], "tokens": tokens,
-                                                  "address": ft["address"]})
-            res = apply_faculty_unlock(root, ft["kind"], ft["id"])
-            new_unlocks.append({**res, "faculty": fkey})
+            item = {"type": "unlock", "faculty_key": fkey, "kind": ft["kind"],
+                    "fid": ft["id"], "name": ft["name"], "tokens": tokens,
+                    "address": ft["address"]}
+            if consent:
+                s = _stage_pending(root, item)
+                if not s["already"]:
+                    staged.append({"id": s["id"], **item})
+            else:
+                res = _apply_burn(root, item)
+                new_unlocks.append({**res, "faculty": fkey})
     return {"observed": obs, "changed": obs != prev, "errors": errors,
             "new_etches": new_etches, "new_unlocks": new_unlocks,
+            "pending_approval": staged,
+            "awaiting": len([x for x in load_pending(root) if x["status"] == "pending"]),
             "total_burned_to_blockspace": round(sum(obs.values()), 6)}
 
 
@@ -968,6 +982,84 @@ def onchain_gate(root, wallet: str) -> dict:
     return {"wallet": wallet, "balance_cphy": tokens, "tier": tier,
             "note": "attestation recorded; read-only, no signature challenge — "
                     "bind only wallets you own"}
+
+
+# ---- approval membrane: burns are observed, but CONSENT applies them ------
+#
+# A burn to a derived address can come from ANYONE who knows the address.
+# The tokens are gone either way (keyless), but the COGNITIVE effect — the
+# etch, the deepening, the unlock — is applied only with the owner's consent.
+# Default mode "require": detected burns land in a pending queue, the turn
+# loop announces them, and `cphy.py approve <id>` applies / `reject <id>`
+# withholds (recorded, never deleted). Set approval="auto" to restore
+# consent-free application. Money can knock; only the owner opens the door.
+
+def pending_path(root) -> Path:
+    return Path(root) / "registry" / "cphy" / "pending.json"
+
+
+def load_pending(root) -> list:
+    p = pending_path(root)
+    return json.loads(p.read_text()) if p.exists() else []
+
+
+def save_pending(root, items):
+    atomic_write_json(pending_path(root), items)
+
+
+def _stage_pending(root, item) -> dict:
+    """Queue a detected burn for owner consent (deduped by content id)."""
+    items = load_pending(root)
+    pid = sha256_hex(canonical({k: item[k] for k in sorted(item)
+                                if k not in ("detected",)}))[:10]
+    if any(x["id"] == pid for x in items):
+        return {"id": pid, "already": True}
+    items.append({"id": pid, "status": "pending", "detected": now_iso(), **item})
+    save_pending(root, items)
+    return {"id": pid, "already": False}
+
+
+def _apply_burn(root, item):
+    """Apply one consented burn observation to the ledger/registries."""
+    if item["type"] == "etch":
+        append_event(root, "etch", {"ring": item["ring"], "tokens": item["tokens"],
+                                    "echelon": item["echelon"],
+                                    "address": item["address"]})
+        return {"etched": item["ring"], "echelon": item["echelon"]}
+    if item["type"] == "unlock":
+        append_event(root, "faculty-unlock", {"faculty_key": item["faculty_key"],
+                                              "kind": item["kind"], "id": item["fid"],
+                                              "name": item["name"],
+                                              "tokens": item["tokens"],
+                                              "address": item["address"]})
+        return apply_faculty_unlock(root, item["kind"], item["fid"])
+    raise RuntimeError(f"unknown pending type {item['type']!r}")
+
+
+def approve(root, pid) -> dict:
+    items = load_pending(root)
+    match = [x for x in items if x["id"] == pid and x["status"] == "pending"]
+    if not match:
+        raise RuntimeError(f"no pending burn {pid}")
+    item = match[0]
+    result = _apply_burn(root, item)
+    item["status"] = "approved"
+    item["resolved"] = now_iso()
+    save_pending(root, items)
+    return {"approved": pid, **result}
+
+
+def reject(root, pid) -> dict:
+    items = load_pending(root)
+    match = [x for x in items if x["id"] == pid and x["status"] == "pending"]
+    if not match:
+        raise RuntimeError(f"no pending burn {pid}")
+    match[0]["status"] = "rejected"
+    match[0]["resolved"] = now_iso()
+    save_pending(root, items)
+    return {"rejected": pid,
+            "note": "cognitive effect withheld; the burned tokens themselves "
+                    "are unrecoverable by anyone (keyless address)"}
 
 
 def turn_sync(root, min_interval_s=60, timeout=6):
@@ -1463,6 +1555,30 @@ def cmd_selftest(args):
         ok("registering a faculty target does NOT unlock it — only a burn does",
            f9002.get("status") == "dormant" and not f9002.get("pinned"))
 
+        # ---- approval membrane: consent gates cognition, not money ----
+        stg = _stage_pending(root, {"type": "etch", "ring": 6, "tokens": 3.0,
+                                    "echelon": 3, "address": "0x" + "6" * 40})
+        before_etch = dict(compile_state(read_ledger(root))["etches"])
+        ok("detected burn is STAGED, not applied (consent default)",
+           not stg["already"] and "6" not in before_etch
+           and any(x["id"] == stg["id"] and x["status"] == "pending"
+                   for x in load_pending(root)))
+        approve(root, stg["id"])
+        ok("approve applies the etch and records consent",
+           "6" in compile_state(read_ledger(root))["etches"]
+           and any(x["id"] == stg["id"] and x["status"] == "approved"
+                   for x in load_pending(root)))
+        stg2 = _stage_pending(root, {"type": "unlock", "faculty_key": "sense:9002",
+                                     "kind": "sense", "fid": 9002,
+                                     "name": "Still-Locked Sensing", "tokens": 1.0,
+                                     "address": "0x" + "7" * 40})
+        reject(root, stg2["id"])
+        f9002r = next(f for f in _cb.load_grown(home)["senses"] if f.get("id") == 9002)
+        ok("reject withholds the effect (faculty stays locked; record kept)",
+           f9002r.get("status") == "dormant"
+           and any(x["id"] == stg2["id"] and x["status"] == "rejected"
+                   for x in load_pending(root)))
+
         events = read_ledger(root)
         ok("ledger hash chain verifies", verify_ledger(events)[0])
         st1 = json.dumps(write_derived(root), sort_keys=True)
@@ -1596,6 +1712,19 @@ def main():
     po.add_argument("--match", default=None)
     po.add_argument("--wallet", default=None, help="holder wallet for gate")
     po.set_defaults(func=cmd_onchain)
+
+    pap = sub.add_parser("approve", parents=[common],
+                         help="consent to a detected burn (applies its etch/unlock)")
+    pap.add_argument("pending_id")
+    pap.set_defaults(func=lambda a: print(json.dumps(approve(a.root, a.pending_id), indent=2)))
+
+    prj = sub.add_parser("reject", parents=[common],
+                         help="withhold a detected burn's effect (tokens stay burned)")
+    prj.add_argument("pending_id")
+    prj.set_defaults(func=lambda a: print(json.dumps(reject(a.root, a.pending_id), indent=2)))
+
+    ppd = sub.add_parser("pending", parents=[common], help="burns awaiting consent")
+    ppd.set_defaults(func=lambda a: print(json.dumps(load_pending(a.root), indent=2)))
 
     pet = sub.add_parser("etch", parents=[common],
                          help="burn=etch: positive scars + RPG faculty unlocks (1 token each)")

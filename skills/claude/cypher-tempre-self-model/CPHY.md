@@ -58,6 +58,16 @@ beyond 21 tokens buy nothing.**
 - **Per-turn observation.** The turn loop calls `turn_sync` (rate-limited,
   fail-soft): burns take effect at turn granularity without manual syncing.
 
+
+## Consent membrane (v3.24.1)
+
+Anyone who knows a deposit address can burn to it — so by default **burns are
+observed but not applied**: detections land in a pending queue, the turn loop
+announces them, and only the owner's `cphy.py approve <id>` applies the etch or
+unlock (`reject <id>` withholds it, recorded forever; the tokens are burned
+either way). Set `approval: "auto"` in `registry/cphy/onchain.json` to restore
+consent-free application. Money can knock; only the owner opens the door.
+
 ## Faculty unlocks (RPG skill points)
 
 ```

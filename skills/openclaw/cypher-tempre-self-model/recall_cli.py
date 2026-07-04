@@ -382,6 +382,14 @@ def cmd_turn(args):
         if _ts and (_ts.get("new_etches") or _ts.get("new_unlocks")):
             print(f"cphy: observed {len(_ts.get('new_etches') or [])} etch(es), "
                   f"{len(_ts.get('new_unlocks') or [])} unlock(s) this turn")
+        if _ts and _ts.get("pending_approval"):
+            for p in _ts["pending_approval"]:
+                what = (f"ring {p['ring']} -> echelon {p['echelon']}" if p["type"] == "etch"
+                        else f"unlock {p['name']}")
+                print(f"cphy: BURN DETECTED awaiting consent [{p['id']}]: {what} "
+                      f"({p['tokens']} CPHY) — cphy.py approve {p['id']} | reject {p['id']}")
+        elif _ts and _ts.get("awaiting"):
+            print(f"cphy: {_ts['awaiting']} burn(s) awaiting consent — cphy.py pending")
     except Exception:
         pass
     # 4. recall relevant rings for the request + thought.
