@@ -997,9 +997,11 @@ cause, treat it as compromise. If it was your own deliberate edit, re-anchor it:
 
 **Growth hygiene.** Faculties must pay rent: `python3 cambium.py prune --dry-run`
 shows grown faculties that never fire (junk-named ones get no grace); dropping
-`--dry-run` demotes them back to emergent — reversible, history untouched. Routine
-low-salience turns do not grow faculties (`CT_AUTOGROW_MIN_SALIENCE`, default 170),
-and junk tokens (hex blobs, identifiers) can never name a faculty.
+`--dry-run` HIBERNATES them — they survive in the registry with status dormant,
+leave the per-turn working set, and stay retrievable by relevance (see
+Hibernation below). Nothing is deleted; history untouched. Routine low-salience
+turns do not grow faculties (`CT_AUTOGROW_MIN_SALIENCE`, default 170), and junk
+tokens (hex blobs, identifiers) can never name a faculty.
 
 **Auto-maintenance.** The turn loop runs its own sleep reflex (`CT_AUTOMAINT=0`
 to disable): the hippocampus rebuilds when it falls >50 rings behind, and a dream
@@ -1033,9 +1035,8 @@ resolves the best available tier (st > lens > hashing) fingerprint-safely.
 **Fabrication microscope.** Declared-evidence seals check every SPECIFIC
 (number, filename, version, constant) verbatim against the evidence;
 fabricated specifics degrade to FORCE_UNCERTAINTY (arm hard enforcement with
-`CT_ENTITY_GATE=1`). The discrimination battery
-(`tests/test_gate_discrimination.py`) keeps the gate falsifiably sharp, and
-doctor flags `GATE SATURATED` when verdict variance collapses.
+`CT_ENTITY_GATE=1`), and doctor flags `GATE SATURATED` when verdict variance
+collapses.
 
 **Seal debt, not nagging.** Exhausting the nudge budget records DEBT; the next
 turn escalates to seal-or-waive (`enforce.py waive "<reason>"` — recorded).
@@ -1052,6 +1053,36 @@ out).
 **Sharper forks.** Chronosynaptic values blend brightness with the reading's
 distinctiveness vs sibling consensus (de-saturated selection); collapse rings
 carry loser epitaphs; `think --budget deep` spends search on hard queries.
+
+## Hibernation — prune retains, relevance retrieves (v3.16)
+
+Pruning is hibernation, not amputation. A grown faculty that stops paying rent
+is set **dormant in place**: its full definition (function, seed terms, effect,
+op) survives in `registry/grown.json`, it simply leaves the per-turn working
+set so labeling stays fast and the ecology stays honest. Dormant faculties are
+**retrievable by task relevance exactly like rings from blockspace**: each turn,
+the labeler matches the content against the dormant pool using the same
+stem + synonym folding the hippocampus applies to ring terms; a faculty whose
+distinctive vocabulary (name + seed terms, weighted double) genuinely overlaps
+the turn is woken FOR that turn — it fires, its op runs, its frame injects.
+Generic template words never wake anything.
+
+Retrievals that CONTRIBUTE (a computed op result or an injected frame) earn
+`wake_hits`; at `CT_REINSTATE_AT` (default 2) the faculty is reinstated to the
+active set with a sealed `faculty-wake` ring — the same rent discipline as
+`prune --effectful`, pointed the other way. Growth is wake-first: a gap that a
+dormant faculty already covers wakes it instead of growing a duplicate.
+
+```bash
+python3 cambium.py prune --effectful   # hibernate non-contributing faculties (nothing deleted)
+python3 cambium.py dormant             # list the dormant pool
+python3 cambium.py recall-dormant "<input>"   # which faculties would wake (read-only)
+python3 cambium.py wake "<name>" [--all]      # manual reinstatement
+```
+
+Tuning: `CT_WAKE_TOPK` (retrievals per turn, default 3), `CT_WAKE_FLOOR`
+(relevance threshold, default 3), `CT_REINSTATE_AT` (contributing retrievals
+before reinstatement, default 2).
 
 **Owned constants.** `calibrators.py status` — every heuristic constant has an
 owner, bounds, and an evidence stream; adjustments are bounded and sealed.

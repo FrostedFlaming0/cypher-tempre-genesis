@@ -718,11 +718,31 @@ class Recall:
                         target.insert(0, {"id": x["id"], "name": x["name"], "distilled": x["p"]})
                         del target[6:]
                 distilled_version = self.labeler["labeler_version"]
+        # v3.16 DORMANT RETRIEVAL: hibernated faculties are out of the working
+        # set, but content that genuinely matches one retrieves it for THIS
+        # turn — the same relevance-first contract as recalling rings from
+        # blockspace. Retrieved names join the fired lists, so their ops run
+        # and their frames inject below.
+        retrieved = []
+        try:
+            import cambium as _cammod
+            _home = _cammod.registry_home(self._registry_root, self._registry_root)
+            for kind, f, score in _cammod.retrieve_dormant(_home, content, context):
+                target = senses if kind == "sense" else mods
+                if not any(e["name"] == f["name"] for e in target):
+                    target.insert(5, {"id": f.get("id"), "name": f["name"],
+                                      "retrieved": score})
+                    del target[6:]
+                retrieved.append(f["name"])
+        except Exception:
+            pass
         ents = entities(content)
         kws = keywords(content)
         salience = clamp(50 + 9 * len(ents) + min(120, 3 * len(set(tokens(content)))))
         lab = {"senses": senses, "modalities": mods, "keywords": kws,
                "entities": ents, "salience": salience, "dissonance": gap["dissonance"]}
+        if retrieved:
+            lab["retrieved"] = retrieved
         quants = quantities(content)
         if quants:
             lab["quantities"] = quants
@@ -1881,9 +1901,10 @@ def __getattr__(name):
     _loop_seal from recall directly. Delegate lazily to recall_cli (PEP 562)
     so the physical split breaks no one."""
     import recall_cli
-    if hasattr(recall_cli, name):
-        return getattr(recall_cli, name)
-    raise AttributeError(f"module 'recall' has no attribute {name!r}")
+    try:
+        return vars(recall_cli)[name]
+    except KeyError:
+        raise AttributeError(f"module 'recall' has no attribute {name!r}") from None
 
 
 if __name__ == "__main__":

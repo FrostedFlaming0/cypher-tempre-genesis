@@ -142,11 +142,15 @@ def run_checks(root: Path) -> list:
     except Exception as exc:
         out.append(_result("dream", "WARN", str(exc)))
 
-    # 9. faculty ecology — dead-growth ratio
+    # 9. faculty ecology — dead-growth ratio over the ACTIVE working set only.
+    # v3.16: dormant (hibernated) faculties are a healthy retrievable pool, not
+    # overgrowth — they left the working set precisely so they stop costing.
     try:
         reg = root / "registry"
         grown = json.loads((reg / "grown.json").read_text()) if (reg / "grown.json").exists() else {}
-        gnames = [f["name"] for f in grown.get("senses", []) + grown.get("modalities", [])]
+        allg = grown.get("senses", []) + grown.get("modalities", [])
+        active = [f["name"] for f in allg if f.get("status") != "dormant"]
+        dormant = [f["name"] for f in allg if f.get("status") == "dormant"]
         fire = {}
         if tc.rings_path.exists():
             with tc.rings_path.open() as fh:
@@ -159,12 +163,13 @@ def run_checks(root: Path) -> list:
                     for kind in ("senses", "modalities"):
                         for f in labels.get(kind) or []:
                             fire[f["name"]] = fire.get(f["name"], 0) + 1
-        dead = [n for n in gnames if fire.get(n, 0) <= 1]
-        ratio = (len(dead) / len(gnames)) if gnames else 0.0
+        dead = [n for n in active if fire.get(n, 0) <= 1]
+        ratio = (len(dead) / len(active)) if active else 0.0
         status = "OK" if ratio < 0.4 else "OVERGROWN"
         out.append(_result("ecology", status,
-                           f"{len(gnames)} grown faculties, {len(dead)} dead "
-                           f"(fired<=1) = {ratio:.0%} dead-growth"))
+                           f"{len(active)} active grown ({len(dormant)} dormant, "
+                           f"retrievable), {len(dead)} dead-active (fired<=1) = "
+                           f"{ratio:.0%} dead-growth"))
     except Exception as exc:
         out.append(_result("ecology", "WARN", str(exc)))
 

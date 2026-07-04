@@ -54,6 +54,13 @@ PROMOTE_AT = max(1, int(os.environ.get("CT_PROMOTE_AT", "1")))
 # only if you want to cap registry size for PERFORMANCE (detect_gap/label cost rises with
 # faculty count) — it is not a safety control. The base 21/21 are never counted here.
 MAX_GROWN = int(os.environ.get("CT_MAX_GROWN", "0"))
+# v3.16 hibernation: rent-delinquent faculties are never deleted — prune sets them
+# DORMANT in place (out of the per-turn working set, full definition retained in
+# grown.json) and they stay retrievable by task relevance, waking on match exactly
+# like rings recalled from blockspace.
+WAKE_TOPK = max(1, int(os.environ.get("CT_WAKE_TOPK", "3")))          # dormant faculties retrievable per turn
+WAKE_FLOOR = max(1, int(os.environ.get("CT_WAKE_FLOOR", "3")))        # min relevance score to wake
+REINSTATE_AT = max(1, int(os.environ.get("CT_REINSTATE_AT", "2")))    # contributing retrievals -> active again
 REASON_VERBS = {"analyze", "plan", "compute", "design", "solve", "debug", "optimize",
                 "prove", "derive", "decide", "evaluate", "calculate", "reason", "refactor"}
 
@@ -142,7 +149,7 @@ def migrate_legacy_promotions(root: Path) -> bool:
     return moved
 
 
-def load_corpus(root: Path):
+def load_corpus(root: Path, include_dormant: bool = False):
     try:
         migrate_legacy_promotions(root)        # best-effort; the merge below is loss-proof regardless
     except Exception:
@@ -153,6 +160,8 @@ def load_corpus(root: Path):
                              ("sense", "registry/senses.json", "senses")]:
         data = json.loads((root / fname).read_text())
         for f in list(data.get(key, [])) + list(grown.get(key, [])):   # base + per-user promotions
+            if not include_dormant and f.get("status") == "dormant":
+                continue        # hibernated: out of the working set, retrievable on relevance
             corpus.append({
                 "kind": kind, "id": f["id"], "name": f["name"],
                 "function": f["function"], "category": f["category"],
@@ -640,6 +649,9 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
         "function": e["function"],
         "category": e["category"],
         "orientation": e.get("orientation") or faculty_orientation(e["kind"]),
+        # v3.16: seed terms ride along so a later hibernation stays retrievable
+        # by the vocabulary that originally grew the faculty.
+        "seed_terms": list(e.get("seed_terms") or []),
     }
     grown.setdefault(key, []).append(entry)
     save_grown(root, grown)                    # promotions live in the per-user grown.json, not the base
@@ -695,6 +707,156 @@ def promote(root: Path, tc: Timechain, e: dict, difficulty: int = 0,
 
 
 # --------------------------------------------------------------------------- #
+# Hibernation: the dormant pool (v3.16)
+#
+# Rent-delinquent faculties are HIBERNATED, never deleted: the full definition
+# stays in grown.json with status "dormant", excluded from the per-turn working
+# set (load_corpus), and retrievable by task relevance — the faculty analogue of
+# recalling rings from blockspace. A retrieved faculty fires for THAT turn (its
+# op runs, its frame injects); retrievals that CONTRIBUTE earn reinstatement.
+# --------------------------------------------------------------------------- #
+
+def _fold_tokens(text: str) -> set:
+    """Folded (stem + synonym) token set — the SAME canonicalization the
+    hippocampus applies to ring terms, so dormant-faculty retrieval has the
+    reach of blockspace recall. Falls back to raw tokens if folding is
+    unavailable."""
+    toks = set(tokens(text or ""))
+    try:
+        from hippocampus import fold
+        return toks | {fold(t) for t in toks}
+    except Exception:
+        return toks
+
+
+# Template vocabulary shared by every sprouted faculty (name suffixes + the
+# boilerplate of the function sentences). These words alone must never wake a
+# dormant faculty — only its DISTINCTIVE vocabulary may.
+_GENERIC_FACULTY_TOKENS = _fold_tokens(
+    "sensing reasoning fusion novel detect tag presence input data facing "
+    "perceptual gap existing senses cover covered reason resolve problems "
+    "involving environment action modalities apply applying together requires "
+    "faculty fused when both once")
+
+
+def dormant_pool(root: Path):
+    """[(kind, entry)] of hibernated faculties — definitions intact in grown.json."""
+    grown = load_grown(root)
+    out = []
+    for key, kind in (("senses", "sense"), ("modalities", "modality")):
+        for f in grown.get(key, []):
+            if f.get("status") == "dormant":
+                out.append((kind, f))
+    return out
+
+
+def retrieve_dormant(root: Path, text: str, context: str = "", k: int = None,
+                     floor: int = None):
+    """Relevance-match the dormant pool against a turn's content.
+
+    Scoring mirrors how rings are recalled: folded-token overlap, with the
+    faculty's distinctive vocabulary (name words + seed terms) counting double
+    and at least one distinctive hit REQUIRED — generic template words alone
+    never wake anything. Returns [(kind, faculty, score)] best-first, top-k."""
+    pool = dormant_pool(root)
+    if not pool:
+        return []
+    k = k or WAKE_TOPK
+    floor = floor or WAKE_FLOOR
+    probe = _fold_tokens(f"{text} {context}")
+    if not probe:
+        return []
+    hits = []
+    for kind, f in pool:
+        core = (_fold_tokens(str(f.get("name", ""))) |
+                _fold_tokens(" ".join(f.get("seed_terms") or []))) - _GENERIC_FACULTY_TOKENS
+        func = _fold_tokens(str(f.get("function", ""))) - core - _GENERIC_FACULTY_TOKENS
+        m_core = probe & core
+        if not m_core:
+            continue
+        score = 2 * len(m_core) + len(probe & func)
+        if score >= floor:
+            hits.append((score, kind, f))
+    hits.sort(key=lambda h: (-h[0], str(h[2].get("name", ""))))
+    return [(kind, f, score) for score, kind, f in hits[:k]]
+
+
+def wake(root: Path, names, reason: str = "", registry_root=None, difficulty: int = 0):
+    """Return dormant faculties to the ACTIVE working set. Flips status on the
+    surviving registry entries (nothing is grown, copied, or deleted), seals ONE
+    faculty-wake ring, and re-anchors the registry epoch."""
+    home = registry_home(root, registry_root)
+    grown = load_grown(home)
+    if isinstance(names, str):
+        names = [names]
+    wanted = {str(n).strip().lower() for n in names}
+    woken = []
+    for key in ("senses", "modalities"):
+        for f in grown.get(key, []):
+            if f.get("status") != "dormant":
+                continue
+            if "*" in wanted or str(f.get("name", "")).lower() in wanted or \
+                    str(f.get("id")) in wanted:
+                f["status"] = "active"
+                f["woken_at"] = now_iso()
+                f.pop("wake_hits", None)
+                woken.append({"kind": "sense" if key == "senses" else "modality",
+                              "name": f["name"], "id": f.get("id")})
+    if not woken:
+        return {"woken": [], "ring": None}
+    save_grown(home, grown)
+    ring = None
+    try:
+        ring = Timechain(root).seal("faculty-wake", {
+            "event": "faculty_wake", "woken": [w["name"] for w in woken],
+            "reason": short(reason or "relevance retrieval", 200),
+            "summary": (f"woke {len(woken)} dormant faculties back into the working set: "
+                        + ", ".join(w["name"] for w in woken))},
+            poq={"coherence": 215, "relevance": 220, "novelty": 160,
+                 "consistency": 220, "depth": 180, "covenant": 250},
+            difficulty=difficulty)
+    except Exception:
+        pass
+    try:
+        import epochs as _epochs
+        _epochs.seal_epoch(root, reason=f"wake: {', '.join(w['name'] for w in woken)[:80]}")
+    except Exception:
+        pass
+    return {"woken": woken, "ring": ring}
+
+
+def note_retrieval(root: Path, retrieved, contributed, registry_root=None,
+                   reinstate_at: int = None):
+    """Account a turn's dormant retrievals. A retrieval that CONTRIBUTED (a
+    computed op result or an injected frame) earns a wake_hit; at reinstate_at
+    hits the faculty is reinstated to the active set — the same rent discipline
+    as prune --effectful, pointed the other way. Decorative retrievals earn
+    nothing."""
+    reinstate_at = reinstate_at or REINSTATE_AT
+    home = registry_home(root, registry_root)
+    grown = load_grown(home)
+    retrieved = set(retrieved or [])
+    contributed = set(contributed or [])
+    to_wake, dirty = [], False
+    for key in ("senses", "modalities"):
+        for f in grown.get(key, []):
+            if f.get("status") != "dormant" or f.get("name") not in retrieved:
+                continue
+            if f["name"] in contributed:
+                f["wake_hits"] = int(f.get("wake_hits", 0)) + 1
+                dirty = True
+                if f["wake_hits"] >= reinstate_at:
+                    to_wake.append(f["name"])
+    if dirty:
+        save_grown(home, grown)
+    if to_wake:
+        return wake(root, to_wake,
+                    reason=f"reinstated after {reinstate_at} contributing retrievals",
+                    registry_root=registry_root)
+    return {"woken": [], "ring": None}
+
+
+# --------------------------------------------------------------------------- #
 # The four-stage growth loop
 # --------------------------------------------------------------------------- #
 
@@ -734,6 +896,16 @@ def grow(root: Path, input_text: str, context: str = "", mode: str = "auto",
     existing = match_emergent(data, prop)
 
     if existing:
+        # v3.16: if this gap's faculty was promoted earlier and now sleeps in the
+        # dormant pool, the recurrence IS the retrieval signal — wake it rather
+        # than duplicate it or merely log the recurrence.
+        if existing.get("status") == "promoted":
+            w = wake(root, [existing["name"]],
+                     reason=f"gap recurred: {short(input_text, 80)}",
+                     registry_root=registry_root)
+            if w["woken"]:
+                result.update(grew=True, action="woken", faculty=existing)
+                return result, w.get("ring")
         existing["recurrence"] += 1
         existing.setdefault("history", []).append(
             {"ts": now_iso(), "dissonance": gap["dissonance"], "context": short(input_text, 120)})
@@ -793,21 +965,46 @@ def fill_gap(root: Path, input_text: str, context: str = "", both: bool = True,
     so growth tracks gap DIVERSITY, not input count. Best-effort; returns the grow
     results (each has action covered|born|promoted|recurrence)."""
     home = registry_home(root, registry_root)
-    corpus = load_corpus(home)
-    snap = detect_gap(corpus, input_text, context)   # ONE snapshot for both kinds
-    # v3.15: semantic dissonance is the DEFAULT gap detector (opt-out:
-    # CT_SEMANTIC_GAP=0). The junk-token guard treats the symptom (garbage
-    # names); semantic scoring treats the cause — growth should trigger on
-    # CONCEPTUAL novelty, not unseen-token noise.
-    if os.environ.get("CT_SEMANTIC_GAP", "1").lower() not in ("0", "false", "no", "off"):
-        snap["dissonance_lexical"] = snap["dissonance"]
-        snap["dissonance_semantic"] = semantic_dissonance(snap, corpus, input_text)
-        # Semantic scoring ADDS sensitivity (conceptual novelty hiding in
-        # familiar words) — it never suppresses a genuine lexical gap. The
-        # junk-token germination test below handles lexical false positives.
-        snap["dissonance"] = max(snap["dissonance_semantic"], snap["dissonance_lexical"])
+
+    def _measure():
+        corpus = load_corpus(home)
+        snap = detect_gap(corpus, input_text, context)   # ONE snapshot for both kinds
+        # v3.15: semantic dissonance is the DEFAULT gap detector (opt-out:
+        # CT_SEMANTIC_GAP=0). The junk-token guard treats the symptom (garbage
+        # names); semantic scoring treats the cause — growth should trigger on
+        # CONCEPTUAL novelty, not unseen-token noise.
+        if os.environ.get("CT_SEMANTIC_GAP", "1").lower() not in ("0", "false", "no", "off"):
+            snap["dissonance_lexical"] = snap["dissonance"]
+            snap["dissonance_semantic"] = semantic_dissonance(snap, corpus, input_text)
+            # Semantic scoring ADDS sensitivity (conceptual novelty hiding in
+            # familiar words) — it never suppresses a genuine lexical gap. The
+            # junk-token germination test below handles lexical false positives.
+            snap["dissonance"] = max(snap["dissonance_semantic"], snap["dissonance_lexical"])
+        return snap
+
+    snap = _measure()
     if snap["dissonance"] <= DISSONANCE_FLOOR:
         return [{"action": "covered", "gap": snap}]             # no real gap — nothing to fill
+    # v3.16 wake-first: before growing anything new, RETRIEVE any dormant faculty
+    # that already covers this ground — hibernation means the mind may already own
+    # the organ it needs, and waking beats regrowing.
+    woken_results = []
+    try:
+        hits = retrieve_dormant(home, input_text, context)
+        if hits:
+            w = wake(root, [f["name"] for _, f, _ in hits],
+                     reason=f"gap-fill retrieval: {short(input_text, 80)}",
+                     registry_root=registry_root)
+            woken_names = {x["name"] for x in w.get("woken", [])}
+            woken_results = [{"action": "woken", "faculty": f, "score": s, "gap": snap}
+                             for kind, f, s in hits if f["name"] in woken_names]
+    except Exception:
+        pass
+    if woken_results:
+        snap = _measure()                       # the woken faculties may now cover the gap
+        if snap["dissonance"] <= DISSONANCE_FLOOR:
+            return woken_results + [{"action": "covered", "gap": snap,
+                                     "reason": "woken faculties cover the gap"}]
     # v3.12 salience gate: routine/low-salience turns (heartbeats, acks) must not
     # grow faculties from their lexical residue. Caller passes salience via env
     # or the turn loop; 0 disables the gate.
@@ -818,13 +1015,13 @@ def fill_gap(root: Path, input_text: str, context: str = "", both: bool = True,
     # quiet turn that stumbles onto truly new ground still grows (the salience
     # gate exists to stop heartbeat residue, not discovery).
     if min_sal and turn_sal and turn_sal < min_sal and snap["dissonance"] < 200:
-        return [{"action": "covered", "gap": snap,
+        return woken_results + [{"action": "covered", "gap": snap,
                  "reason": f"salience {turn_sal} < autogrow floor {min_sal} and "
                            f"dissonance {snap['dissonance']} < 200: routine turn, no growth"}]
     # v3.12 germination test: junk-free seeds required — a gap whose every
     # uncovered term is junk is bulk residue, not a genuine capability gap.
     if all(is_junk_token(w) for w in snap["uncovered"]):
-        return [{"action": "covered", "gap": snap,
+        return woken_results + [{"action": "covered", "gap": snap,
                  "reason": "all gap terms are junk tokens (code residue): no faculty grown"}]
     results = []
     for k in (["sense", "modality"] if both else [None]):
@@ -837,7 +1034,7 @@ def fill_gap(root: Path, input_text: str, context: str = "", both: bool = True,
             results.append(res)
         except Exception:
             pass
-    return results
+    return woken_results + results
 
 
 # --------------------------------------------------------------------------- #
@@ -856,7 +1053,8 @@ def _print_gap(gap):
 
 def _announce(fac, action):
     verb = {"born": "A NEW FACULTY HAS EMERGED", "recurrence": "FACULTY RECURRED",
-            "promoted": "FACULTY PROMOTED TO CANONICAL REGISTRY"}[action]
+            "promoted": "FACULTY PROMOTED TO CANONICAL REGISTRY",
+            "woken": "DORMANT FACULTY WOKEN BACK INTO THE WORKING SET"}[action]
     print(f"\n  -- co-evolver report: {verb} --")
     print(f"    name:      {fac['name']}")
     print(f"    kind:      {fac['kind']}")
@@ -885,7 +1083,8 @@ def cmd_grow(args):
         print(f"  -> {result['reason']}")
         return
     _announce(result["faculty"], result["action"])
-    print(f"\n  sealed {ring['ring_type']} Ring {ring['index']}  {ring['ring_hash'][:16]}..")
+    if ring:
+        print(f"\n  sealed {ring['ring_type']} Ring {ring['index']}  {ring['ring_hash'][:16]}..")
     payload = ring.get("payload", {}) if ring else {}
     if payload.get("op_source"):
         act = payload.get("op_activation") or {}
@@ -1111,7 +1310,7 @@ def build_parser():
     pc.set_defaults(func=cmd_compose)
 
     ppr = sub.add_parser("prune", parents=[common],
-                         help="demote grown faculties that never pay rent (fire<=floor after a grace period) back to emergent")
+                         help="hibernate grown faculties that never pay rent — dormant + retrievable by relevance, never deleted")
     ppr.add_argument("--min-fires", type=int, default=2, help="fires needed to keep canonical status (default 2)")
     ppr.add_argument("--grace-rings", type=int, default=50, help="rings of grace after birth before rent is due (default 50)")
     ppr.add_argument("--dry-run", action="store_true", help="report only, change nothing")
@@ -1128,18 +1327,33 @@ def build_parser():
     pef.set_defaults(func=cmd_effect)
     pe = sub.add_parser("emergent", parents=[common], help="list the Dream Cache of emergent faculties (proposals)")
     pe.set_defaults(func=cmd_emergent)
+    pd = sub.add_parser("dormant", parents=[common],
+                        help="list the dormant pool (hibernated faculties, retrievable by relevance)")
+    pd.set_defaults(func=cmd_dormant)
+    pw = sub.add_parser("wake", parents=[common],
+                        help="wake dormant faculties back into the working set by name/id (or --all)")
+    pw.add_argument("selectors", nargs="*", default=[])
+    pw.add_argument("--all", action="store_true", help="wake every dormant faculty")
+    pw.add_argument("--reason", default="manual wake")
+    pw.set_defaults(func=cmd_wake)
+    prd = sub.add_parser("recall-dormant", parents=[common],
+                         help="show which dormant faculties would wake for an input (read-only)")
+    prd.add_argument("input")
+    prd.set_defaults(func=cmd_recall_dormant)
     return p
 
 
 def prune(root: Path, registry_root=None, min_fires: int = 2,
           grace_rings: int = 50, dry_run: bool = False,
           effectful: bool = False) -> dict:
-    """v3.12 rent-based demotion (self-audit: 61% of grown faculties fired <=1
-    time — dead on arrival). A grown faculty that has not fired at least
-    *min_fires* times, and whose birth is older than *grace_rings* rings, is
-    demoted back to emergent (reversible; the birth/promotion rings remain in
-    the chain — history is never rewritten, only the ACTIVE registry changes).
-    Junk-named faculties (is_junk_token on any name word) get no grace."""
+    """Rent-based HIBERNATION (v3.16; was demotion in v3.12). A grown faculty
+    that has not fired at least *min_fires* times, and whose birth is older
+    than *grace_rings* rings, is set DORMANT in place: the full definition
+    survives in grown.json, it leaves the per-turn working set, and it stays
+    retrievable by task relevance (retrieve_dormant) — waking on match exactly
+    like rings recalled from blockspace. Nothing is deleted; the birth and
+    promotion rings remain in the chain. Junk-named faculties (is_junk_token
+    on any name word) get no grace."""
     home = registry_home(root, registry_root)
     tc = Timechain(root)
     # fire census + birth heights from the chain
@@ -1175,46 +1389,44 @@ def prune(root: Path, registry_root=None, min_fires: int = 2,
                          (r.get("payload") or {}).get("name") or ""
                     birth.setdefault(nm.strip(), r.get("index", 0))
     grown = load_grown(home)
-    emergent = load_emergent(home)
-    demoted, kept = [], []
+    hibernated, kept = [], []
     for key in ("senses", "modalities"):
-        keep = []
         for f in grown.get(key, []):
+            if f.get("status") == "dormant":
+                continue                    # already out of the working set — no rent due
             fires = fire.get(f["name"], 0)
             born = birth.get(f["name"], 0)
             junk = any(is_junk_token(w) for w in re.findall(r"[A-Za-z0-9]+", f["name"]))
             grace_over = head < 0 or (head - born) >= grace_rings
             if fires < min_fires and (grace_over or junk):
-                demoted.append({"name": f["name"], "kind": key, "fires": fires,
-                                "junk_name": junk})
+                hibernated.append({"name": f["name"], "kind": key, "fires": fires,
+                                   "junk_name": junk})
+                if not dry_run:
+                    # v3.16: hibernate IN PLACE — the full definition survives,
+                    # retrievable by relevance; nothing is deleted or stripped.
+                    f["status"] = "dormant"
+                    f["dormant_since"] = now_iso()
+                    f["dormant_fires"] = fires
             else:
-                keep.append(f)
                 kept.append(f["name"])
-        if not dry_run:
-            grown[key] = keep
-    if not dry_run and demoted:
-        for d in demoted:
-            emergent["faculties"].append({
-                "eid": f"demoted-{len(emergent['faculties'])+1}",
-                "kind": "sense" if d["kind"] == "senses" else "modality",
-                "name": d["name"], "function": "(demoted: paid no rent)",
-                "category": "demoted", "recurrence": 0, "status": "demoted",
-            })
+    if not dry_run and hibernated:
         save_grown(home, grown)
-        save_emergent(home, emergent)
         try:
             tc.seal("prune", {
-                "summary": (f"pruned {len(demoted)} rent-delinquent grown "
-                            f"faculties back to emergent (kept {len(kept)})"),
-                "demoted": [d["name"] for d in demoted]})
+                "summary": (f"hibernated {len(hibernated)} rent-delinquent grown "
+                            f"faculties (dormant, retrievable by relevance; "
+                            f"kept {len(kept)} active)"),
+                "hibernated": [d["name"] for d in hibernated]})
         except Exception:
             pass
         try:
             import epochs as _epochs
-            _epochs.seal_epoch(root, reason=f"prune: demoted {len(demoted)}")
+            _epochs.seal_epoch(root, reason=f"prune: hibernated {len(hibernated)}")
         except Exception:
             pass
-    return {"demoted": demoted, "kept": len(kept), "head": head}
+    # "demoted" kept as an alias for pre-3.16 callers of the Python API.
+    return {"hibernated": hibernated, "demoted": hibernated, "kept": len(kept),
+            "head": head}
 
 
 def set_effect(root: Path, selector: str, effect_type: str, value: str = "",
@@ -1291,12 +1503,54 @@ def cmd_prune(args):
                 min_fires=args.min_fires, grace_rings=args.grace_rings,
                 dry_run=args.dry_run, effectful=getattr(args, "effectful", False))
     tag = "(dry run) " if args.dry_run else ""
-    print(f"{tag}demoted {len(res['demoted'])} faculties, kept {res['kept']}")
-    for d in res["demoted"][:20]:
+    print(f"{tag}hibernated {len(res['hibernated'])} faculties (dormant, retrievable "
+          f"by relevance — nothing deleted), kept {res['kept']} active")
+    for d in res["hibernated"][:20]:
         print(f"  - {d['name']} ({d['kind']}, fires={d['fires']}"
               + (", junk name" if d["junk_name"] else "") + ")")
-    if len(res["demoted"]) > 20:
-        print(f"  … and {len(res['demoted'])-20} more")
+    if len(res["hibernated"]) > 20:
+        print(f"  … and {len(res['hibernated'])-20} more")
+
+
+def cmd_dormant(args):
+    pool = dormant_pool(registry_home(args.root, args.registry_root))
+    if not pool:
+        print("  (dormant pool empty — every grown faculty is in the working set)")
+        return
+    for kind, f in pool:
+        since = str(f.get("dormant_since", ""))[:10]
+        hits = f.get("wake_hits", 0)
+        print(f"  [{kind}] {f['name']}  since={since or '?'}  fires-at-hibernation="
+              f"{f.get('dormant_fires', '?')}  wake_hits={hits}")
+    print(f"  {len(pool)} dormant — retrievable by relevance each turn; "
+          f"`wake <name>` reinstates manually")
+
+
+def cmd_wake(args):
+    names = ["*"] if args.all else list(args.selectors)
+    if not names:
+        print("  -> name at least one faculty (or pass --all)")
+        return
+    res = wake(args.root, names, reason=args.reason,
+               registry_root=getattr(args, "registry_root", None))
+    if not res["woken"]:
+        print("  -> no dormant faculty matched")
+        return
+    for w in res["woken"]:
+        print(f"  woke [{w['kind']}] {w['name']}")
+    if res.get("ring"):
+        r = res["ring"]
+        print(f"\n  sealed {r['ring_type']} Ring {r['index']}  {r['ring_hash'][:16]}..")
+
+
+def cmd_recall_dormant(args):
+    home = registry_home(args.root, args.registry_root)
+    hits = retrieve_dormant(home, args.input, args.context or "")
+    if not hits:
+        print("  (no dormant faculty is relevant to this input)")
+        return
+    for kind, f, score in hits:
+        print(f"  score={score}  [{kind}] {f['name']} — {short(f.get('function', ''), 90)}")
 
 
 def main(argv=None):
