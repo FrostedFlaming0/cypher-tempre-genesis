@@ -894,7 +894,7 @@ class Recall:
                  exclude_path=None, exclude_dir=None, source_only=False,
                  scan_window=None, use_index=False, index_limit=300, scorer="auto",
                  on=None, between=None, relative=None, asked_on=None,
-                 _fanout=None):
+                 _fanout=None, no_overlay=False):
         if embed and self.embedder is None:           # default to the stdlib embedder
             self.embedder = embmod.get_embedder("hashing")
         # TIME-INDEXED RECALL (V4 P2): cosine cannot retrieve by WHEN — "who did
@@ -1052,6 +1052,20 @@ class Recall:
             scored.append((score, r, lab, parts))
         scored.sort(key=lambda x: x[0], reverse=True)
 
+        # Local overlay seam: an optional recall_overlay.py beside this file may
+        # re-rank the scored candidates (bounded, audit-stamped in score_parts).
+        # The module is a LOCAL organ — absent from the published bundles — and
+        # the seam is neutral: no overlay, no effect; a broken overlay must
+        # never break recall. no_overlay=True recovers ground-truth ranking.
+        if scored and not no_overlay:
+            try:
+                import recall_overlay
+                scored = recall_overlay.rerank(self.tc.root, scored) or scored
+            except ImportError:
+                pass
+            except Exception:
+                pass
+
         # appetite: dissonance is the need signal. Low need -> pull little/none.
         # When the learner has CALIBRATED the curve (P(blocks fetched | dissonance)
         # from real fetch behaviour, adopted under policy guards), it replaces the
@@ -1062,7 +1076,14 @@ class Recall:
             bucket = next((b for b in appetite_curve.get("curve", [])
                            if b["lo"] <= dissonance <= b["hi"]), None)
         if bucket is not None:
-            appetite = min(max_blocks, max(0, round(bucket["mean_fetched"])))
+            # CEILING, not round: appetite is a CAP, not a quota. A bucket mean
+            # of 0.25 means "one block every four turns of demand" — rounding it
+            # to a permanent per-turn cap of 0 starves retrieval forever (the
+            # second face of the v3.21 starvation incident). Any nonzero
+            # historical demand permits at least one block; the score threshold
+            # still decides whether anything actually returns.
+            import math as _math
+            appetite = min(max_blocks, max(0, _math.ceil(bucket["mean_fetched"])))
         elif dissonance < 50:
             appetite = 0
         else:
@@ -1816,7 +1837,7 @@ class Recall:
 
     def seal(self, ring_type, summary, context="", external_scores=None, difficulty=0, files=None,
              window=POQ_WINDOW, relevant_rings=None, use_index=False, used_rings=None,
-             at_risk=None):
+             at_risk=None, frame=None):
         """`used_rings` is the model's DECLARED credit assignment: the ring indices
         whose content actually grounded this thought. Declaring them (a) fills the
         PoQ relevance window with exactly that evidence, so the conscience audits
@@ -1860,7 +1881,8 @@ class Recall:
                                       # the coverage gate audits aggregates against the
                                       # DECLARED evidence count (None = nothing declared)
                                       declared_evidence=(len(used_rings)
-                                                         if used_rings is not None else None))
+                                                         if used_rings is not None else None),
+                                      frame=frame)   # declared content provenance (topological)
         # TELEMETRY (use): the turn's outcome — every gate decision is a labeled
         # event (a REVISE/FORCE_UNCERTAINTY is signal too, not just a SEAL).
         self._emit("use", {

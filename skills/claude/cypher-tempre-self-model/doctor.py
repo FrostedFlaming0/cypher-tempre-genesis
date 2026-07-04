@@ -32,7 +32,8 @@ MODULES = ["timechain", "poq", "recall", "recall_cli", "cambium", "immune",
            "continuum", "chronosynaptic", "telemetry", "dormancy", "replay",
            "dream", "learner", "lens", "extractor", "hippocampus", "epochs",
            "modality_ops", "faculties", "guard", "task", "policy", "bench",
-           "router", "conjecture", "autobiography", "calibrators"]
+           "router", "conjecture", "autobiography", "calibrators",
+           "cphy", "recall_overlay", "keystore", "pqsign"]
 
 
 def _result(name, status, detail):

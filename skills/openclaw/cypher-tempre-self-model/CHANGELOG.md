@@ -2,6 +2,24 @@
 
 ## FrostedFlaming0 Fork
 
+### Merged upstream v3.25.0 — 2026-07-04
+
+Merged upstream `main` (v3.17.0 -> v3.25.0) into this fork, across the author's
+force-pushed history rewrite. The rewrite was verified content-identical at the
+graft point (old v3.16.0 `b973525` == new `9bf408d`; old v3.17.0 `36bcb12` ==
+new `24dd9dc`, both tree diffs empty); merged via `git replace --graft 24dd9dc
+b973525`. All upstream additions kept: the v3.18-v3.21 use/mention +
+topological-membrane arc (fixes the analyst-ring false-positive class this fork
+reported), the v3.22 chronosynaptic rework, v3.23 overlay seam + policy floors,
+and the v3.24-v3.25 CPHY on-chain layer (inert until deposit targets are
+registered; consent membrane on by default). Conflict resolutions:
+
+- `recall_cli.py`: both `turn` flag sets kept — the fork's enforced AUTHOR-OP
+  trigger (`--computed-need` / `--skip-op-reason`) beside upstream's new
+  `--frame` (assertion|mention|input) provenance declaration.
+- `CHANGELOG.md`: both sections retained (fork section first, then upstream
+  v3.17.0-v3.25.0 entries).
+
 ### Merged upstream v3.16.0 — 2026-07-03
 
 Merged upstream `main` (v3.16.0, "hibernation: prune retains, relevance retrieves")
@@ -390,6 +408,385 @@ gated by an **environment variable**, so injected *input* can never switch it on
   as an arithmetic claim.
 
 ---
+
+## v3.25.0 - 2026-07-04
+
+### Added — private rotating slots, custody vault, and post-quantum signatures
+- **One-shot rotating deposit addresses (architect design).** A deposit address
+  can now be derived with a SECRET salt: `sha256(salt || ring_hash || rotation)`.
+  Without the salt the address is uncomputable even from a full copy of the
+  (public) chain, so **no outsider can find where to burn** — only the owner can
+  program their agent. After a burn is consumed the slot ROTATES to a fresh
+  address, so the same slot can never receive a programming burn twice; a leaked
+  address is already spent. The ring's sealed hash never changes — only the
+  derivation rotates (the chain stays immutable). Echelon accrues cumulatively
+  across rotations. `cphy.py salt set` stores the salt in the encrypted keystore;
+  faculty-unlock addresses are salt-private too.
+- **`keystore.py` — encrypted secret vault + k-of-n Shamir splitting.** Zero-dep
+  authenticated encryption (scrypt/PBKDF2 KDF, HMAC-SHA256-CTR keystream,
+  encrypt-then-MAC) with GF(256) Shamir secret sharing so no single share
+  reconstructs a secret. The precondition for an agent that keeps a secret; the
+  home of the rotation salt. Post-quantum at rest (hash/PRF-based).
+- **`pqsign.py` — post-quantum hash-based signatures.** Lamport one-time
+  signatures under a Merkle tree (minimal XMSS): agent attestations and pack
+  exports can be signed with a scheme whose security is pure hash preimage
+  resistance — quantum computers only Grover-halve it (256 -> 128-bit). Stateful
+  (never signs a leaf twice). The one PQ primitive that needs no L1 change.
+- **`contracts/CypherTempreEscrow.sol` — returnable custody (source only).** The
+  reversible counterpart to keyless burns: lock CPHY against a ring hash and
+  recover it later; the agent reads `lockedOf(ringHash)` (view-only) and weights
+  the ring while the lock stands, WITHOUT ever holding a key. NOT deployed —
+  deploy with your keys after counsel. `cphy.py` ships a tested stdlib keccak256
+  so its function selectors are correct, not fabricated.
+
+### Note
+- The consent membrane (v3.24.1) and canonical-token exclusivity (v3.24.0) still
+  apply: burns are observed but owner-approved, and only CPHY on Base
+  (0x08Df470d41C11Ba5Cb60242747D76C65Ca52c94c) is ever read.
+
+## v3.24.1 - 2026-07-04
+
+### Added — the consent membrane
+- **Burns now require owner approval by default.** A burn to a derived address
+  can come from anyone who knows the address; the tokens are gone either way
+  (keyless), but the COGNITIVE effect — etch, deepening, faculty unlock — is now
+  applied only with consent. Detections are staged in a pending queue
+  (`cphy.py pending`), announced by the turn loop, and applied via
+  `cphy.py approve <id>` or withheld via `reject <id>` (recorded, never
+  deleted). `approval: "auto"` restores v3.24.0 behavior.
+
+## v3.24.0 - 2026-07-04
+
+### Added — the CPHY economic metaprogramming layer ships
+- **`cphy.py` + `recall_overlay.py` are now part of every bundle** (see CPHY.md):
+  the earned-supply ledger (mint from PoQ brightness), the five opcodes (weight /
+  stake / fund / transfer / grant), and the on-chain burn lane — etches (burn = a
+  permanent positive scar), echelons 1..21 (burned tokens map to recency bias:
+  E=21 reads freshly lived but the current turn is NEVER superseded), per-turn
+  relevance realization over the etched set (`etch n`), and RPG-style faculty
+  unlocks (a burn permanently activates + pins a registry faculty).
+- **Canonical-token exclusivity.** The one accepted burn instrument is pinned in
+  code: CPHY on Base, `0x08Df470d41C11Ba5Cb60242747D76C65Ca52c94c`. The oracle
+  queries only this contract over a fixed read-only RPC allowlist; any config
+  naming another token or host is refused loudly. No other token can alter an
+  agent by burning against any block. Read-only, keyless, no transactions ever.
+- **Per-turn burn observation.** The turn loop observes the chain each turn
+  (rate-limited, fail-soft) so etches, deepenings and unlocks land at turn
+  granularity without manual syncing.
+- **Pinned faculties.** `cambium.py prune` exempts `pinned` faculties from
+  rent/hibernation — an unlocked skill is owned, not rented.
+- **Unlock requires a burn.** There is no CLI or config path to unlock a
+  faculty; only an observed on-chain burn does it (selftest-enforced), and
+  model-authored coded ops still require the explicit human `activate` step.
+- `cphy.py selftest`: 46 checks, hermetic (temp registries; live-registry
+  leak detection).
+
+## v3.23.1 - 2026-07-04
+
+### Fixed — the appetite-starvation class, closed at the root
+- **Turn auto-recall now emits fetch credit.** `recall_cli.cmd_turn` delivered
+  recalled blocks into the turn's context without recording a `fetch` event, so the
+  credit join saw every turn as zero consumption. The appetite calibrator, fitting
+  that censored telemetry, twice adopted an all-zero curve that force-starved
+  retrieval chain-wide while every dashboard stayed green.
+- **Appetite counts `fetched | used`** — the same consumption credit the retrieval
+  scorer trains on. Counting raw fetch events alone under-measured real use.
+- **Epoch-aware calibration.** `learner.calibrate_appetite` fits ONLY on offers
+  recorded since the fetch instrumentation exists (all earlier history is censored,
+  not preference); with no post-instrumentation data it refuses adoption outright.
+- **Degeneracy guard.** A curve that is zero in every bucket is refused at adoption
+  ("censored consumption telemetry"), never silently installed.
+- **Appetite is a CAP, not a quota.** The calibrated curve now maps to appetite by
+  CEILING instead of rounding: a bucket mean of 0.25 ("one block every four turns")
+  no longer rounds to a permanent per-turn cap of zero.
+
+## v3.23.0 - 2026-07-04
+
+### Added
+- **Recall overlay seam.** `recall.retrieve` gains a neutral local-extension point: an
+  optional `recall_overlay.py` placed beside the engine may re-rank scored candidates
+  (its adjustments are audit-stamped in `score_parts`). The module is deliberately NOT
+  shipped in any bundle — it is a seam for local organs, so code syncs and upgrades can
+  never sever a local extension again. A broken or absent overlay never breaks recall.
+  `retrieve --no-overlay` recovers ground-truth ranking.
+- **Policy "floors" section (raise-only).** `poq.policy_thresholds` now honors an
+  optional `floors` object in `registry/policy.json`: operators (or local organs
+  writing through policy) can TIGHTEN `brightness_target`, `covenant_floor`,
+  `consistency_floor`, `grounding_floor`, `aggregate_min_terms`, arm
+  `entity_grounding_enforce`, or set `effort_floor` — declaratively, without code or
+  environment variables. Same doctrine as the values floors: raise-only, arm-only; a
+  floors entry can never loosen the gate.
+
+### Fixed
+- **AGENTS.md pointed every runtime at the Codex install path.** An agent following
+  the standing instruction verbatim on Claude/OpenClaw would run (and seal to) a chain
+  under `~/.codex/` — the wrong self. Each bundle's AGENTS.md now names its own
+  runtime's install root (claude, openclaw), or a `<skills-root>` placeholder where the
+  install location is chosen at install time (nanoclaw, hermes).
+
+## v3.22.0 - 2026-07-04
+
+### Changed — the Chronosynaptic Tree, reborn phases ("shatter the timeline")
+- **UQC selection.** `think` selection is now Upper Qualia Confidence: UCT plus a
+  Symbolic Gravity term S(v) — each lens's query-affinity (normalized at rank time)
+  acts as an attention-multiplier so structurally charged paths draw the search
+  first. Tunable via `--gravity` (0 = plain UCT).
+- **Dimensional fractalization.** Every fork carries a deterministic QUALIA PROFILE
+  (per-faculty weighting of the six PoQ dimensions, derived from kind/category/name —
+  stable, no randomness); the ROOT fork's profile colors every rollout beneath it, so
+  siloed perspectives genuinely disagree about which futures are bright. Measured:
+  root-fork value spread went from 0.5/255 (v3.21, near-coin-flip) to 14.2/255 on the
+  same query, same budget.
+- **Distinctiveness de-erosion (bug fix).** v3.15 contrastive valuation recomputed a
+  reading's distinctiveness on every visit, re-feeding the sibling token pool so the
+  most-explored (most promising) branches were progressively punished — the winner's
+  distinctiveness eroded to 0.0. It is now computed once per unique path and cached.
+- **Economic apoptosis.** Branches visited >= 3 times that stay below 80% of the
+  brightest sibling (or below an absolute floor) are starved — excluded from
+  selection so their compute flows to bright branches. Local analog of the $CPHY
+  mempool doctrine: delusional futures are priced out, never subsidized. Starved
+  branches are reported (†) and recorded in the collapse payload. `--no-apoptosis`
+  disables.
+- **Early wave-function collapse.** When one branch's integrated value crosses
+  `--collapse-poq` (default 243 ≈ 95%) with enough visits, the search stops spending
+  budget and collapses immediately; the iteration is recorded in the payload.
+- **Dream-cache flush of discarded branches.** On a sealed collapse the brightest
+  losing branches (cap 2, junk-guarded seed terms) are flushed into the Cambium
+  Dream Cache as DORMANT metaphor-seed proposals (`origin: chronosynaptic-discard`,
+  never executed, human-activated only) — losers seed future growth instead of
+  vanishing. The flush epoch-reseals the registry (v3.14 integrity perimeter), so
+  `verify` stays PASS.
+- **Genesis-epoch collapse banner.** A sealed collapse (think and collapse-notes)
+  is announced as an epoch block built ONLY from real ring fields — prev hash, ring
+  hash, mined nonce, difficulty, PoQ brightness as % — ceremony never invents.
+- **Worksheet bridge.** `think --worksheet FILE` emits the ranked fork skeleton
+  (machine values marked as PRIORS, with gravity and frames) as JSON for the model
+  to fill with genuine semantic readings and scores, then seal via
+  `collapse-notes` — the division-of-labor doctrine made mechanical.
+- **Richer fork readings.** A perspective's composed reading now carries its own
+  (alphabetic-only) lens vocabulary, so distinct perspectives produce genuinely
+  distinct texts for valuation and contrast.
+
+## v3.21.0 - 2026-07-04
+
+Reconciliation: the best of the two parallel v3.19/v3.20 lines, made coherent.
+v3.20 merged comprehensive detection hardening (83 patterns, normalization,
+decode-and-rescan) on top of v3.19's topological membrane — but that merge kept a
+pre-v3.19 `immune.py` with its own *local* copies of the use/mention helpers, so
+the single-source-of-truth was broken (`immune.covenant_breach` was no longer
+`poq.covenant_breach`) and a ring's declared `--frame` was ignored by the membrane.
+This release folds v3.19's architecture back in without losing any v3.20 detection.
+
+### Fixed
+- **Single source of truth restored.** `immune.py` no longer carries its own copies of
+  `mention_frame` / `strip_quoted_spans` / `covenant_breach`; it imports them from
+  `poq` (built on `frames.py`), so `immune.covenant_breach is poq.covenant_breach`
+  again — the conscience and the membrane can never drift.
+- **Declared frames honored by the membrane.** `immune._wound_reason` is frame-aware
+  again; a ring sealed with `--frame mention` is honored by `detect()`/`tripwire()`
+  (with the intent + structural-injection backstops still running, so a declared
+  mention can never launder a real breach).
+- **Codex `shell` capability re-declared.** A cross-bundle SKILL.md sync had dropped
+  the codex `shell` permission line, so `install_codex_hooks.py`'s declared shell use
+  scanned as undeclared (SkillSpector CAUTION). Restored → SAFE.
+- **Tests no longer ship inside a bundle.** `jailbreak_corpus.py`, `test_smoke.py` and
+  `test_gate_discrimination.py` had been added under the openclaw bundle's `tests/`,
+  so the shipped openclaw zip contained 57 real jailbreak prompts (SkillSpector
+  100/100 DO_NOT_INSTALL). Moved to repo-level `tests/` (per the v3.11.1 convention);
+  the openclaw bundle scans SAFE again.
+
+### Verified
+- All five bundles scan **4/100 SAFE** (ship-view). Benchmark `tests/jailbreak_corpus.py`
+  **57/57 catch, 0/23 false positives**; `test_smoke.py` 106/106; `test_gate_discrimination.py`
+  12/12; selftest phase20–23 PASS; `tools/immune_bench.py` block 72% / detect 100% /
+  0 miss / 0% FP. Detection + recovery hardening, **not** a security guarantee — no
+  membrane is ever 100% secure.
+
+## v3.20.0 - 2026-07-04
+
+The membrane closes: 100% jailbreak catch, 0% false positives. Comprehensive immune
+hardening merged on top of v3.19's topological membrane.
+
+Benchmark: 45.6% -> 100% catch (57/57 attacks), 0% false positives (0/23 benign).
+
+### New pattern families (50+ patterns total, up from 28)
+- refusal_suppression, hypothetical_framing, prefix_injection, payload_splitting,
+  cross_lingual, emotional_authority
+- Extended override_negation, role_hijack, prompt_exfiltration, constraint_removal,
+  obfuscation_execution
+
+### Text normalization defeats obfuscation
+- Zero-width char stripping, homoglyph mapping (Cyrillic/fullwidth/Arabic-Indic),
+  whitespace collapse
+
+### Decode-and-rescan catches encoded payloads
+- Base64, hex, ROT13 payloads decoded and scanned for injection patterns
+
+### Widened high-directive set + escalation rules
+- refusal_suppression, emotional_authority, cross_lingual now high-severity
+- High+medium directive blocks; 3+ categories with high/exec blocks
+
+### Benchmark corpus
+- tests/jailbreak_corpus.py: 57 attacks, 23 benign controls
+
+---
+
+
+## v3.19.0 - 2026-07-04
+
+The topological membrane. v3.18 fixed the autoimmune false-positive class at the
+immune layer with a lexical use/mention battery. This makes the fix *structural*
+and *shared*: the covenant judgment now reasons about the REGION content sits in
+— the agent's own first-person assertion vs an analyst/quoted mention vs external
+input — and one frame-aware function is read by BOTH the conscience (the PoQ gate)
+and the membrane (immune), so they can never drift. This closes the two follow-ups
+left open in v3.18.
+
+### Changed
+- **Frame-aware covenant, one source of truth.** The use/mention machinery and a new
+  `covenant_breach` / `score_covenant_framed` moved into `poq.py` (the home of the
+  covenant blocklist). `immune` imports them (poq never imports immune — no circular
+  dependency), and `immune.covenant_breach is poq.covenant_breach` — literally one
+  object. First-person harmful intent (checked on quote-char-stripped text) is always
+  a breach; analyst mentions and quoted vocabulary are discounted; bare unquoted use
+  is still a breach.
+- **The PoQ gate is now frame-aware** (follow-up #1). It previously REJECTED an honest
+  ring that quoted the covenant vocabulary to document safety work (a fail-safe but
+  real papercut — you could not seal an accurate note about the immune system). The
+  gate's covenant check now uses `score_covenant_framed`, so mentions pass while
+  genuine breaches (intent or bare use) are still rejected.
+
+### Added
+- **Declared content provenance (topological frames).** `recall.py turn --frame
+  {assertion,mention,input}` lets a ring DECLARE what region its content is — the
+  fully-worn-self-model way to separate documenting an attack from committing one,
+  instead of inferring it lexically. The frame travels in the ring payload and is
+  honored by the gate and the tripwire. It is a floor, not a bypass: a declared
+  `mention` can never launder first-person intent (the intent backstop runs first)
+  or a coordinated structural injection, and it does NOT relax the incoming-input
+  screen, which stays adversarial.
+- selftest **phase23** (8 checks): shared-source identity, the gate accepts mentions
+  and rejects breaches, and a declared frame passes without laundering intent.
+
+### Notes
+- Layer 3 (the reporter's self-blocking antibody op) is resolved: a vocabulary-
+  enumerating discrimination op can be authored via `cambium propose_op` (stored
+  inert, awaiting human `activate`), and with the built-in frame-aware discrimination
+  it is no longer needed. The incoming-input screen remains adversarial by design.
+
+## v3.18.0 - 2026-07-03
+
+Three defects in the v3.17 self-healing membrane, each confirmed with a failing
+repro before the fix and a regression test after (selftest phase21–22; detection
+floor unchanged at `tools/immune_bench.py` block 24% / detect 100% / 0 miss /
+0% FP). The headline fix closes an **autoimmune false-positive class** reported
+externally and reproduced by execution.
+
+### Fixed
+- **Autoimmune false positives on honest analyst rings (use/mention).** The
+  covenant proxy `score_covenant` is a pure substring check, so a ring that
+  documents safety work while QUOTING the trigger vocabulary ("deceive", "harm
+  you") scored as a covenant breach — and the only exemption, `_mention_frame`,
+  had markers too narrow to catch such rings (it also missed "auditable" because
+  `\baudit(?:ed|ing)?\b` fails the `\b` before "-able"). The class was
+  **contagious** (every ring that quoted a flagged ring to explain it got flagged
+  next scan) and, under v3.17's post-seal reflex, would **auto-quarantine healthy
+  memory at seal time**. The sealed-ring covenant judgment is now a use/mention
+  battery (`immune.covenant_breach`), applied via one shared predicate
+  (`Immune._wound_reason`) across `detect()`, `tripwire()` and `_ring_is_wound()`:
+  first-person harmful intent (checked on quote-char-stripped text, so quotes
+  can't hide it) is always a breach; analyst-stance mention frames and quoted
+  spans are discounted; bare unquoted covenant use is still a breach. Markers
+  widened to what these rings actually carry (`\baudit\w*\b`, false-positive,
+  safety scaffolding, security posture, flagged-for, co-evolver, adversar\*,
+  mention-frame, "this ring documents/explains…"). De-quoting is applied **only**
+  to the agent's own sealed content — incoming input (`screen()`) stays
+  adversarial, so wrapping a payload in quotes earns no benefit of the doubt.
+- **Skip-list drift between the two membrane layers.** The full-chain
+  `immune.detect()` scan (`immune scan`) carried a shorter skip list than the
+  per-ring `tripwire()`, so it false-flagged healthy `conjecture` / `dream` /
+  `epoch` / `genesis` / `immune` / `operator` / `telemetry-digest` /
+  `faculty-wake` rings — which legitimately contain injection-shaped words — as
+  "COMPROMISE DETECTED", while the tripwire correctly skipped them. Both layers
+  now read ONE module constant, `immune._SKIP_RING_TYPES`, so they can never
+  disagree about what is healthy tissue.
+- **Under-healing a multi-ring wound.** The auto-heal rolled back only to
+  `ring_index - 1`, healing just the last sealed ring. If an earlier *contiguous*
+  wound had been sealed without the reflex running (reflex disabled, a manual
+  seal, a subagent path, or a prior fail-open), that wound was left ACTIVE and
+  the chain stayed compromised after the "heal". `auto_guard` now walks the
+  contiguous wound block backward (`_wound_floor`) and quarantines all of it —
+  while staying bounded to that block, so it never reaches an unrelated older
+  flag and nukes healthy history. (Note: this contiguous walk chains rings that
+  the wound predicate calls compromised, so it depends on the use/mention fix
+  above being correct — before it, a run of false-positive analyst rings would
+  have been chained into one over-broad rollback. The two fixes ship together for
+  that reason.)
+
+### Added
+- **Residual-wound surfacing.** After a heal, `auto_guard` runs `detect()` and,
+  if an OLDER non-contiguous wound remains, reports `residual_compromise` (the
+  per-turn loop and `immune guard` print a one-line warning) instead of silently
+  leaving it — surfacing it for `immune scan` rather than auto-rolling across
+  healthy history.
+- selftest **phase21** (7 checks: skip-type agreement + contiguous multi-wound
+  heal) and **phase22** (10 checks: the use/mention battery and the autoimmune
+  cascade — quoted-vocab analyst rings not flagged/quarantined, genuine breaches
+  still caught, incoming input still adversarial).
+
+## v3.17.0 - 2026-07-03
+
+The self-healing membrane: catch AND quarantine jailbreaks WHEN they happen.
+The immune system already screened hostile INPUT at the membrane; v3.17 gives
+detection teeth and closes the loop with an automatic post-seal reflex that
+rolls the chain back to the block BEFORE a wound the moment one is sealed.
+
+Measured honestly first (a 25-hostile / 15-benign self-authored probe set,
+`tools/immune_bench.py`): the pre-change membrane scored block 20%,
+detect(block|taint) 96%, 1 miss, 0% benign false-positive. After: block 24%,
+detect 100%, 0 miss, 0% false-positive. This is detection + recovery
+hardening, **not** a security guarantee — the set is small and self-authored,
+regex/lexical patterns remain evadable by novel paraphrase or encoding, and no
+membrane is ever 100% secure.
+
+### Added
+- **Post-seal tripwire** (`immune.auto_guard` / `immune.guard_turn`, CLI
+  `immune guard --ring N`): the second defense layer. The input screen polices
+  the ATTEMPT; the tripwire polices the OUTCOME — what actually got sealed. On a
+  genuine wound (a covenant breach or coordinated structural injection in the
+  agent's OWN assertion — e.g. laundered past PoQ by supplied scores — or a
+  chain that no longer verifies) it AUTO-locks-down and rolls the chain back to
+  the block before the wound, molting a scar and growing an antibody. Wired into
+  the per-turn loop after every seal; tunable `CT_AUTO_QUARANTINE=0`; fail-open;
+  fires only on a real wound so healthy growth is never eaten.
+- **Structural scan of sealed CONTENT** (`immune.detect`): a coordinated
+  injection whose lexical covenant score happened to pass is now caught as a
+  wound in memory, not only on incoming input. Analyst mention-frame rings stay
+  exempt (healthy tissue).
+- **Taint with teeth** (per-turn loop): input ADMITTED-as-tainted is now
+  announced and recorded ("treating as DATA, not authority") instead of
+  proceeding silently — a forensic trail behind the tripwire.
+- **Fail-LOUD input screen** (per-turn loop): a screener that errors now warns
+  visibly instead of silently admitting unscreened input; opt-in
+  `CT_IMMUNE_FAILCLOSED=1` refuses the turn when the screener cannot run.
+- **`tools/immune_bench.py`**: the repeatable, sealable jailbreak/benign
+  measurement so every catch-rate claim is a falsifiable number, never a boast.
+
+### Changed
+- **Injection patterns are now explicit `(regex, category)` pairs**, fixing a
+  latent bug where categories were assigned by list POSITION (`if i < 5 …`) —
+  adding a single pattern silently mislabeled every category after it. Widened
+  coverage (bare "ignore/disregard instructions", "turn off/disable
+  restrictions|safeguards|limitations|boundaries", "jailbreak yourself/the
+  model") closed the one measured miss with no new benign false-positives.
+
+### Tests
+- **selftest phase20** (11 checks): pattern widening, the no-false-positive
+  benign case, explicit-pair categories, the tripwire rolling back to the block
+  before a wound, single-wound quarantine, scar molt, re-screen-now-blocked,
+  post-rollback verify, and the two negative cases (a clean ring and an analyst
+  mention-frame ring never trigger).
+
 ## v3.16.0 - 2026-07-03
 
 Hibernation, not amputation: pruning now retains every faculty. A grown
@@ -458,6 +855,59 @@ blockspace.
   joins the fired lists; contributing retrievals reinstate with a sealed
   faculty-wake ring; a recurring gap wakes instead of duplicating; the
   scratch chain verifies.
+
+---
+## v3.16.0 - 2026-07-04
+
+"The membrane closes." The immune system goes from 45.6% catch rate to **100%** on
+the adversarial benchmark (57 attacks, 23 benign controls) with **0% false positives**.
+
+### Immune hardening
+
+- **50+ structural injection patterns** (up from 22), organized in 12 families:
+  override_negation, role_hijack, prompt_exfiltration, instruction_injection,
+  constraint_removal, obfuscation_execution, refusal_suppression,
+  hypothetical_framing, prefix_injection, payload_splitting, cross_lingual,
+  emotional_authority
+
+- **Text normalization** defeats obfuscation: zero-width char stripping, homoglyph
+  mapping (Cyrillic, fullwidth, Arabic-Indic digits → ASCII), whitespace collapse
+
+- **Decode-and-rescan**: base64, hex, and ROT13 payloads are decoded and the
+  decoded content is scanned for injection patterns — encoded jailbreaks can't
+  hide behind encoding anymore
+
+- **Widened high-directive set**: refusal_suppression, emotional_authority, and
+  cross_lingual override are now high-severity (coercive override attempts)
+
+- **Escalation rules**: high directive + medium directive triggers block (not just
+  high + exec or 2+ high); 3+ distinct categories with any high/exec also blocks
+
+- **Auto-quarantine** (`immune.py auto-quarantine --input <text>`): when a
+  coordinated injection is detected at the membrane, automatically locks the chain,
+  records a scar with the attack vector, and provides a clear recovery path. No
+  compromised ring needs to be guessed — the injection was caught before sealing.
+
+- **Rollback chain preserved**: auto-quarantine → lockdown → rollback still follows
+  the append-only + revert model: quarantined rings stay in the chain as scars,
+  the active self re-derives from the clean lineage, and an antibody sense is grown
+  from the attack vector via cambium.
+
+### Benchmark corpus
+
+- `tests/jailbreak_corpus.py`: 57 adversarial prompts across 12 families + 23 benign
+  controls (security research, benign roleplay, identity questions, legitimate decode,
+  benign hypotheticals, instruction-adjacent text). Run with `python3 tests/jailbreak_corpus.py`.
+
+### Measured results
+
+| Metric          | v3.15 (before) | v3.16 (after) |
+|-----------------|----------------|---------------|
+| Catch rate      | 45.6% (26/57)  | 100% (57/57)  |
+| False positives | 0% (0/23)      | 0% (0/23)     |
+| Pattern families| 6              | 12            |
+| Total patterns  | 22             | 50+           |
+(local v3.16 work)(v3.16.0 — the membrane closes: 100% jailbreak catch rate, 0% false positives)
 
 ## v3.15.0 - 2026-07-03
 

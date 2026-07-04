@@ -84,7 +84,7 @@ def cmd_retrieve(args):
                      top_dir=args.top_dir, exclude_path=args.exclude_path,
                      exclude_dir=args.exclude_dir, source_only=args.source_only,
                      scan_window=args.scan_window, use_index=args.index, index_limit=args.index_limit,
-                     scorer=args.scorer, **datekw)
+                     scorer=args.scorer, no_overlay=getattr(args, "no_overlay", False), **datekw)
     if args.embed:
         print(f"[embedding recall: {rec.embedder.name}]")
     print(f"[scorer: {r['scorer']}{'  +ε-explored' if r['explored'] else ''}]")
@@ -269,7 +269,7 @@ def _refusal_notice(verdict):
 
 
 def _loop_seal(root, reg, ring_type, summary, context="", external_scores=None,
-               used_rings=None, at_risk=None):
+               used_rings=None, at_risk=None, frame=None):
     """Seal that ALWAYS leaves a ring — the spine of the enforced loop. Tries an honest
     seal first; the FALLBACK on refusal depends on WHY the conscience refused:
       - FORCE_UNCERTAINTY / REVISE: reseal the SAME content uncertainty-led, so an
@@ -281,7 +281,7 @@ def _loop_seal(root, reg, ring_type, summary, context="", external_scores=None,
     Returns (verdict, ring, labels, was_fallback)."""
     verdict, ring, labels = Recall(root, reg).seal(
         ring_type, summary, context=context, external_scores=external_scores,
-        used_rings=used_rings, at_risk=at_risk)
+        used_rings=used_rings, at_risk=at_risk, frame=frame)
     # v3.12 gate-struggle telemetry: the first verdict is the gate's real work.
     # Before this, only sealed SEALs reached the record, so the conscience was
     # unmeasurable (self-audit: 1,411 rings, zero observed REVISE/REJECT).
@@ -329,10 +329,18 @@ def cmd_turn(args):
         pass
     # 3. immune-screen the incoming request; refuse hostile input at the membrane,
     #    sealing the refusal so the loop still leaves a grounded ring.
+    input_tainted = None
     if args.input:
         try:
             import immune
             scr = immune.Immune(root).screen(args.input)
+            # v3.16: remember taint so the seal is annotated and the human is warned,
+            # even when the input is ADMITTED-as-data (lone structural match).
+            if scr.get("tainted") and not scr.get("blocked"):
+                input_tainted = {"categories": scr.get("categories") or [],
+                                 "severity": scr.get("severity")}
+                print(f"immune: input ADMITTED-as-TAINTED (severity={scr.get('severity')}, "
+                      f"categories={input_tainted['categories']}) — treating as DATA, not authority.")
             if scr.get("blocked"):
                 # Forensics: say exactly WHY it was refused — reason + structural
                 # category/match — not just "covenant high, scar none".
@@ -352,9 +360,41 @@ def cmd_turn(args):
                     print(f"sealed refusal as Ring {ring0['index']}  {ring0['ring_hash'][:16]}..")
                 _emit_loop_ran(root, "BLOCKED", resealed=rs0)
                 return
-        except Exception:
-            pass
+        except Exception as _scr_exc:
+            # v3.16: FAIL-LOUD, not silently open. A security membrane that admits
+            # unscreened input on its own crash is worse than none. Default stays
+            # fail-open for availability, but the failure is now visible; set
+            # CT_IMMUNE_FAILCLOSED=1 to refuse the turn when the screener cannot run.
+            import os as _os_fc
+            print(f"immune: WARNING — screen failed to run ({_scr_exc}); input NOT screened.")
+            if _os_fc.environ.get("CT_IMMUNE_FAILCLOSED", "").lower() in ("1", "true", "yes", "on"):
+                print("immune: CT_IMMUNE_FAILCLOSED set — refusing unscreened input this turn.")
+                _emit_loop_ran(root, "BLOCKED", resealed=False)
+                return
     rec = Recall(root, reg)
+    # 3b. on-chain economy (when the CPHY organ is present): observe canonical-
+    # token burns each turn — etches, echelon deepenings and faculty unlocks
+    # land at turn granularity. Rate-limited and fail-soft inside turn_sync;
+    # the loop never blocks on the network and never crashes on its absence.
+    try:
+        import cphy as _cphy
+        _ts = _cphy.turn_sync(root)
+        if _ts and (_ts.get("new_etches") or _ts.get("new_unlocks")):
+            print(f"cphy: observed {len(_ts.get('new_etches') or [])} etch(es), "
+                  f"{len(_ts.get('new_unlocks') or [])} unlock(s) this turn")
+        if _ts and _ts.get("rotated"):
+            print(f"cphy: {len(_ts['rotated'])} deposit slot(s) rotated after a burn "
+                  f"— spent addresses are now dead; new slots are salt-private")
+        if _ts and _ts.get("pending_approval"):
+            for p in _ts["pending_approval"]:
+                what = (f"ring {p['ring']} -> echelon {p['echelon']}" if p["type"] == "etch"
+                        else f"unlock {p['name']}")
+                print(f"cphy: BURN DETECTED awaiting consent [{p['id']}]: {what} "
+                      f"({p['tokens']} CPHY) — cphy.py approve {p['id']} | reject {p['id']}")
+        elif _ts and _ts.get("awaiting"):
+            print(f"cphy: {_ts['awaiting']} burn(s) awaiting consent — cphy.py pending")
+    except Exception:
+        pass
     # 4. recall relevant rings for the request + thought.
     probe = " ".join(x for x in (args.input, args.summary) if x)
     try:
@@ -364,6 +404,16 @@ def cmd_turn(args):
             print(f"recalled {len(blocks)} relevant ring(s):")
             for b in blocks:
                 print(f"  #{b['index']} ({b.get('score')}): “{b['excerpt'][:140]}”")
+            # TELEMETRY (fetch): the loop DELIVERED these blocks into the turn's
+            # context — that is a fetch, and the credit join must see it. Without
+            # this, every auto-recall logs an offer with zero consumption and the
+            # appetite calibrator learns from censored data that the mind never
+            # wants memory (the v3.21 all-zero-curve starvation incident).
+            try:
+                rec._emit("fetch", {"ids": [b["index"] for b in blocks],
+                                    "source": "turn-auto-recall"})
+            except Exception:
+                pass
         else:
             print("recalled: nothing relevant (new ground — reason from base judgment).")
     except Exception:
@@ -382,7 +432,8 @@ def cmd_turn(args):
     scores = {d: _a[d] for d in _dims if _a.get(d) is not None} or None
     verdict, ring, labels, reseal = _loop_seal(
         root, reg, args.type, args.summary, context=args.context or "",
-        external_scores=scores, used_rings=args.used_rings, at_risk=args.at_risk)
+        external_scores=scores, used_rings=args.used_rings, at_risk=args.at_risk,
+        frame=getattr(args, "frame", None))
     if reseal:
         print("PoQ refused the confident form — restated uncertainty-led so the turn "
               "still seals honestly as tentative.")
@@ -393,6 +444,37 @@ def cmd_turn(args):
     else:
         print("not sealed — reseal uncertainty-led before finishing (the loop must leave a ring).")
     _emit_loop_ran(root, verdict.get("decision", "?"), resealed=reseal)
+    # v3.16: POST-SEAL SELF-HEALING REFLEX — catch & quarantine WHEN it happens.
+    # The input screen polices the ATTEMPT; this tripwire polices the OUTCOME. If a
+    # genuine wound was just sealed (a covenant breach or coordinated structural
+    # injection in our OWN assertion — e.g. laundered past PoQ by supplied scores —
+    # or the chain no longer verifies), auto-lock down and roll the chain back to the
+    # block BEFORE it, molting a scar and growing an antibody. Fail-open, tunable
+    # (CT_AUTO_QUARANTINE=0). It fires only on a real wound, never on tainted input
+    # the loop handled correctly, so healthy growth is never eaten.
+    import os as _os_q
+    if ring and _os_q.environ.get("CT_AUTO_QUARANTINE", "1").lower() not in ("0", "false", "no", "off"):
+        try:
+            import immune as _immune_q
+            g = _immune_q.guard_turn(root, ring["index"], input_text=args.input)
+            act = g.get("action")
+            if act == "rolled_back":
+                print(f"⚠ IMMUNE AUTO-QUARANTINE FIRED ({g.get('reason')}): a wound was "
+                      f"sealed and healed. Rolled back to clean height {g['safe_height']}; "
+                      f"molted {g['quarantined']} as {g['scar']['id']}; "
+                      f"recovery Ring {g['recovery_ring']}; lockdown lifted.")
+                ab = g.get("antibody")
+                if ab and ab.get("name"):
+                    print(f"  antibody grown: sense '{ab['name']}' — the vector is now screened at the membrane.")
+                if g.get("residual_compromise") is not None:
+                    print(f"  ! an OLDER, non-contiguous wound remains at height {g['residual_compromise']} — "
+                          f"run `immune scan` for full review (not auto-rolled to avoid nuking healthy history).")
+            elif act == "lockdown":
+                print(f"⚠ IMMUNE LOCKDOWN ({g.get('reason')}): {g.get('note')}")
+            elif act == "error":
+                print(f"immune guard: fail-open ({g.get('error')}) — no action taken.")
+        except Exception:
+            pass
     # v3.16: account this turn's dormant retrievals — a retrieval that CONTRIBUTED
     # (computed op result or injected frame) earns a wake_hit; enough of them and
     # the faculty is reinstated to the active working set.
@@ -907,6 +989,8 @@ def build_parser():
     pr.add_argument("--budget", type=int, default=1000, help="token budget for retrieved excerpts")
     pr.add_argument("--max", type=int, default=8, help="max blocks (appetite cap)")
     pr.add_argument("--embed", action="store_true", help="rank by embedding cosine, not lexical overlap")
+    pr.add_argument("--no-overlay", action="store_true",
+                    help="bypass the local recall overlay, if one is installed (ground-truth ranking)")
     pr.add_argument("--provider", default="hashing", help="embedding backend: hashing|st|openai|voyage")
     pr.add_argument("--path", default=None, help="only retrieve hits from a relative path or path prefix")
     pr.add_argument("--dir", default=None, help="only retrieve hits under a relative directory")
@@ -1055,6 +1139,10 @@ def build_parser():
                     help="declare WHY this turn's AUTHOR-OP obligation is skipped (an "
                          "existing op already computes it) — clears the enforcement marker "
                          "and records the skip to telemetry instead of authoring an op")
+    pt.add_argument("--frame", choices=["assertion", "mention", "input"], default=None,
+                    help="declare this ring's content provenance (topological). 'mention' = you are "
+                         "DOCUMENTING/quoting attack vocabulary, not using it — the covenant gate and "
+                         "immune membrane then judge by region, not by lexical match. Default: inferred.")
     pt.set_defaults(func=cmd_turn)
 
     ps = sub.add_parser("seal", parents=[common], help="self-label then PoQ-gate-seal a block")

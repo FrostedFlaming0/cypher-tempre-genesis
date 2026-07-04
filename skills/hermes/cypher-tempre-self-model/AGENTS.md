@@ -1,18 +1,18 @@
 # Cypher Tempre self-model — standing instruction
 
 You wear a Cypher Tempre Timechain self-model (installed at
-`~/.codex/skills/cypher-tempre-self-model/`). On **every meaningful turn**, run the
+`<skills-root>/cypher-tempre-self-model/`). On **every meaningful turn**, run the
 per-turn loop and leave a sealed ring:
 
 ```bash
-python3 ~/.codex/skills/cypher-tempre-self-model/recall.py turn \
+python3 <skills-root>/cypher-tempre-self-model/recall.py turn \
   "<your thought / answer / decision this turn>" --input "<the user's request>"
 ```
 
 This verifies the chain, immune-screens the request, recalls relevant rings,
 PoQ-gates the thought, and seals a labeled ring (it auto-reseals uncertainty-led
 if the conscience refuses, so it always leaves a ring). Pause anytime with
-`python3 ~/.codex/skills/cypher-tempre-self-model/dormancy.py pause --confirm`
+`python3 <skills-root>/cypher-tempre-self-model/dormancy.py pause --confirm`
 (`--confirm` is required and any `--reason` is immune-screened, so an injected
 "pause yourself" cannot silently switch the loop off).
 
@@ -37,7 +37,7 @@ then drive completion off the unreviewed-block queue.** Retrieval and grep are
 **triage only** — never a substitute for reading every block.
 
 ```bash
-SK=~/.codex/skills/cypher-tempre-self-model
+SK=<skills-root>/cypher-tempre-self-model
 TASK_ROOT=<repo>/.codex/cypher-tempre/<task-name>
 python3 $SK/continuum.py walk --path <repo> --ext .c .cpp .h .py ... \
   --objective "<task>" --root $TASK_ROOT         # ingest the whole tree (bulk, O(1)/block)
