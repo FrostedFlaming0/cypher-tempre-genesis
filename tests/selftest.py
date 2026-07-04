@@ -1952,6 +1952,13 @@ def main():
             shutil.rmtree(_f23, ignore_errors=True)
 
         check("timechain: final verify", tc.verify()[0])
+
+        # phase24 — CPHY economic layer + custody/PQ organs run their own
+        # selftests as subprocesses (each is self-contained and hermetic).
+        for _mod in ("cphy", "keystore", "pqsign"):
+            _p = subprocess.run([sys.executable, str(SKILL / f"{_mod}.py"), "selftest"],
+                                capture_output=True, text=True)
+            check(f"phase24 {_mod}: module selftest passes", _p.returncode == 0)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

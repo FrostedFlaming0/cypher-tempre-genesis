@@ -773,10 +773,44 @@ def save_onchain_cfg(root, cfg):
     atomic_write_json(onchain_cfg_path(root), cfg)
 
 
-def ring_deposit_address(ring_hash: str) -> str:
-    """Deterministic keyless deposit address for one ring: the first 160 bits
-    of its ring hash. Valid on any EVM chain; no key exists — proof-of-burn."""
-    return "0x" + ring_hash[:40]
+def ring_deposit_address(ring_hash: str, salt: str = "", rotation: int = 0) -> str:
+    """Keyless deposit address for a ring. With no salt it is the legacy public
+    form (first 160 bits of the ring hash). With a SECRET salt it is a ROTATING
+    one-shot slot (architect design, v3.25):
+
+        address = "0x" + sha256(salt || ring_hash || rotation)[:40]
+
+    Properties this buys:
+      * PRIVATE   — without the secret salt the address is uncomputable even
+                    from a full copy of the (public) chain: outsiders cannot
+                    find where to burn, so they cannot program your agent.
+      * ONE-SHOT  — after a burn is consumed at rotation r, the agent advances
+                    to r+1: a DIFFERENT address. The same slot can never
+                    receive a programming burn twice; a leaked address is spent.
+      * IMMUTABLE — the ring's sealed hash never changes (the chain is
+                    untouched); only the DERIVATION rotates. The 'hash shifts'
+                    is a shifting address, not a rewritten block.
+    Salt lives in the encrypted keystore (keystore.py), never on the chain."""
+    if not salt and not rotation:
+        return "0x" + ring_hash[:40]
+    digest = sha256_hex(f"{salt}|{ring_hash}|{rotation}".encode())
+    return "0x" + digest[:40]
+
+
+def _cfg_salt(root, cfg) -> str:
+    """The secret rotation salt. Resolved from (1) the encrypted keystore entry
+    'cphy-rotation-salt' when CT_VAULT_PASSPHRASE is set, else (2) cfg['salt']
+    for headless/dev use, else '' (legacy public addresses). Kept OUT of the
+    chain and out of git — it is the private half of the one-shot scheme."""
+    import os as _os
+    pw = _os.environ.get("CT_VAULT_PASSPHRASE")
+    if pw:
+        try:
+            import keystore
+            return keystore.get(root, "cphy-rotation-salt", pw).decode()
+        except Exception:
+            pass
+    return cfg.get("salt", "")
 
 
 def eth_balance_of(rpc: str, token: str, holder: str, timeout=15) -> int:
@@ -805,18 +839,29 @@ def onchain_target(root, frm=None, to=None, match=None) -> dict:
     if not indices:
         raise RuntimeError("selection matched no rings")
     by_idx = {r["index"]: r for r in tc.load()}
+    salt = _cfg_salt(root, cfg)
     added = []
     for i in indices:
         rh = by_idx[i]["ring_hash"]
-        cfg["targets"][str(i)] = {"address": ring_deposit_address(rh),
-                                  "ring_hash": rh[:16]}
-        added.append({"ring": i, "deposit_address": ring_deposit_address(rh)})
+        existing = (cfg["targets"].get(str(i)) or {})
+        rot = existing.get("rotation", 0)           # preserve any prior rotation
+        addr = ring_deposit_address(rh, salt, rot)
+        cfg["targets"][str(i)] = {"address": addr, "ring_hash": rh[:16],
+                                  "rotation": rot, "salted": bool(salt)}
+        added.append({"ring": i, "deposit_address": addr, "rotation": rot,
+                      "private": bool(salt)})
     save_onchain_cfg(root, cfg)
     return {"token": cfg["token"], "chain": cfg["chain"],
+            "private_rotating": bool(salt),
             "density_per_token": cfg["density_per_token"], "targets": added,
-            "WARNING": ("deposit addresses are hash-derived and KEYLESS — "
-                        "tokens sent there are permanently unspendable "
-                        "(proof-of-burn). Send a dust amount first.")}
+            "WARNING": ("deposit addresses are hash-derived and KEYLESS — tokens "
+                        "sent there are permanently unspendable (proof-of-burn). "
+                        + ("PRIVATE ROTATING slots: only the salt holder can "
+                           "compute these; each accepts ONE burn then rotates."
+                           if salt else
+                           "PUBLIC addresses (no salt set): anyone who sees the "
+                           "chain can compute them — set a rotation salt for "
+                           "one-shot privacy. Send a dust amount first."))}
 
 
 def onchain_sync(root, timeout=15) -> dict:
@@ -830,17 +875,34 @@ def onchain_sync(root, timeout=15) -> dict:
     if not (cfg.get("targets") or cfg.get("faculty_targets")):
         raise RuntimeError("nothing to sync — register targets first (onchain target)")
     cfg["token"] = token
+    salt = _cfg_salt(root, cfg)
     st = compile_state(read_ledger(root))
     prev = st.get("onchain") or {}
-    obs, errors = {}, []
+    obs, errors, rotated = {}, [], []
+    by_idx = {r["index"]: r for r in Timechain(root).load()}
     for idx, t in sorted((cfg.get("targets") or {}).items(), key=lambda kv: int(kv[0])):
         try:
             raw = eth_balance_of(rpc, token, t["address"], timeout=timeout)
-            tokens = round(raw / 1e18, 6)
-            if tokens:
-                obs[idx] = tokens
+            here = round(raw / 1e18, 6)
+            # cumulative burned tokens for this ring across ALL rotations —
+            # echelon is a property of the memory, not of one one-shot slot.
+            base = round(t.get("burned_total", 0.0), 6)
+            total = round(base + here, 6)
+            if total >= ETCH_THRESHOLD:
+                obs[idx] = total
+            if here >= ETCH_THRESHOLD and salt:
+                # ONE-SHOT: this slot is spent — bank it and rotate to a fresh,
+                # salt-derived address so the same slot can never be burned to
+                # (or griefed) twice. Only the salt holder can compute the next.
+                t["burned_total"] = total
+                t["rotation"] = int(t.get("rotation", 0)) + 1
+                rh = by_idx[int(idx)]["ring_hash"]
+                t["address"] = ring_deposit_address(rh, salt, t["rotation"])
+                rotated.append({"ring": int(idx), "new_rotation": t["rotation"]})
         except Exception as exc:
             errors.append({"ring": idx, "error": str(exc)[:90]})
+    if rotated:
+        save_onchain_cfg(root, cfg)         # persist advanced rotations + banks
     if obs != {k: v for k, v in prev.items()} and not errors:
         append_event(root, "onchain-observe", {
             "token": cfg["token"], "chain": cfg["chain"],
@@ -891,16 +953,18 @@ def onchain_sync(root, timeout=15) -> dict:
                 new_unlocks.append({**res, "faculty": fkey})
     return {"observed": obs, "changed": obs != prev, "errors": errors,
             "new_etches": new_etches, "new_unlocks": new_unlocks,
-            "pending_approval": staged,
+            "pending_approval": staged, "rotated": rotated,
             "awaiting": len([x for x in load_pending(root) if x["status"] == "pending"]),
             "total_burned_to_blockspace": round(sum(obs.values()), 6)}
 
 
-def faculty_deposit_address(kind: str, fid: int, name: str) -> str:
-    """Deterministic keyless deposit address for one faculty — derived from
-    its registry identity, so the address IS the skill point's slot."""
+def faculty_deposit_address(kind: str, fid: int, name: str, salt: str = "") -> str:
+    """Keyless deposit address for one faculty — derived from its registry
+    identity, so the address IS the skill point's slot. With a secret salt the
+    address is PRIVATE (uncomputable without it), so only the owner can unlock
+    the faculty; an unlock is a one-time event so no rotation is needed."""
     return "0x" + sha256_hex(canonical({"faculty": kind, "id": int(fid),
-                                        "name": name}))[:40]
+                                        "name": name, "salt": salt}))[:40]
 
 
 def _find_faculty(root, kind: str, fid: int):
@@ -921,11 +985,12 @@ def etch_faculty_target(root, kind: str, fid: int) -> dict:
     cfg = load_onchain_cfg(root)
     cfg["token"] = _canonical_token(cfg)      # CPHY and nothing else, ever
     cfg["chain"] = CANONICAL_CHAIN
-    addr = faculty_deposit_address(kind, fid, f["name"])
+    salt = _cfg_salt(root, cfg)
+    addr = faculty_deposit_address(kind, fid, f["name"], salt)
     fkey = f"{kind}:{fid}"
     cfg.setdefault("faculty_targets", {})[fkey] = {
         "kind": kind, "id": int(fid), "name": f["name"], "address": addr,
-        "status": f.get("status", "active")}
+        "salted": bool(salt), "status": f.get("status", "active")}
     save_onchain_cfg(root, cfg)
     return {"faculty": fkey, "name": f["name"],
             "current_status": f.get("status", "active"),
@@ -963,6 +1028,89 @@ def apply_faculty_unlock(root, kind: str, fid: int) -> dict:
 def etch_recall_n(root) -> int:
     cfg = load_onchain_cfg(root)
     return int(cfg.get("etch_recall_n", DEFAULT_ETCH_RECALL_N))
+
+
+# --- keccak-256 (stdlib; EVM's hash — needed for correct function selectors) --
+_KECCAK_RC = [
+    0x0000000000000001, 0x0000000000008082, 0x800000000000808A, 0x8000000080008000,
+    0x000000000000808B, 0x0000000080000001, 0x8000000080008081, 0x8000000000008009,
+    0x000000000000008A, 0x0000000000000088, 0x0000000080008009, 0x000000008000000A,
+    0x000000008000808B, 0x800000000000008B, 0x8000000000008089, 0x8000000000008003,
+    0x8000000000008002, 0x8000000000000080, 0x000000000000800A, 0x800000008000000A,
+    0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008]
+_KECCAK_ROT = [
+    [0, 36, 3, 41, 18], [1, 44, 10, 45, 2], [62, 6, 43, 15, 61],
+    [28, 55, 25, 21, 56], [27, 20, 39, 8, 14]]
+
+
+def _keccak_f(a):
+    m = (1 << 64) - 1
+    for rc in _KECCAK_RC:
+        c = [a[x][0] ^ a[x][1] ^ a[x][2] ^ a[x][3] ^ a[x][4] for x in range(5)]
+        d = [c[(x - 1) % 5] ^ (((c[(x + 1) % 5] << 1) | (c[(x + 1) % 5] >> 63)) & m)
+             for x in range(5)]
+        for x in range(5):
+            for y in range(5):
+                a[x][y] ^= d[x]
+        b = [[0] * 5 for _ in range(5)]
+        for x in range(5):
+            for y in range(5):
+                r = _KECCAK_ROT[x][y]
+                b[y][(2 * x + 3 * y) % 5] = ((a[x][y] << r) | (a[x][y] >> (64 - r))) & m if r else a[x][y]
+        for x in range(5):
+            for y in range(5):
+                a[x][y] = b[x][y] ^ (~b[(x + 1) % 5][y] & b[(x + 2) % 5][y])
+        a[0][0] ^= rc
+    return a
+
+
+def keccak256(data: bytes) -> bytes:
+    rate = 136                                   # 1088-bit rate for keccak-256
+    pad = bytearray(data) + b"\x01"
+    while len(pad) % rate != 0:
+        pad.append(0)
+    pad[-1] ^= 0x80
+    a = [[0] * 5 for _ in range(5)]
+    for off in range(0, len(pad), rate):
+        blk = pad[off:off + rate]
+        for i in range(rate // 8):
+            lane = int.from_bytes(blk[i * 8:i * 8 + 8], "little")
+            a[i % 5][i // 5] ^= lane
+        a = _keccak_f(a)
+    out = bytearray()
+    for i in range(4):                           # 32 bytes = 4 lanes
+        out += a[i % 5][i // 5].to_bytes(8, "little")
+    return bytes(out[:32])
+
+
+def evm_selector(signature: str) -> str:
+    """First 4 bytes of keccak256(signature), as EVM function selectors are."""
+    return "0x" + keccak256(signature.encode()).hex()[:8]
+
+
+def escrow_locked_of(root, ring_hash_hex: str, timeout=8) -> float:
+    """Read totalLocked for a ring from a DEPLOYED escrow contract (returnable
+    lane). Requires cfg['escrow'] = the contract address the OWNER deployed;
+    absent that, this lane is dormant. Read-only view call — no keys, no gas."""
+    cfg = load_onchain_cfg(root)
+    escrow = cfg.get("escrow")
+    if not escrow:
+        raise RuntimeError("no escrow contract configured — deploy "
+                           "contracts/CypherTempreEscrow.sol with your keys and "
+                           "set cfg['escrow'] to its address (returnable lane)")
+    rh = ring_hash_hex[:64].rjust(64, "0")
+    data = evm_selector("lockedOf(bytes32)") + rh
+    import urllib.request
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_call",
+                       "params": [{"to": escrow, "data": data}, "latest"]}).encode()
+    req = urllib.request.Request(_allowed_rpc(cfg), data=body,
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": "cypher-tempre-cphy/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        out = json.loads(r.read())
+    if "result" not in out:
+        raise RuntimeError(f"rpc error: {out.get('error')}")
+    return round(int(out["result"], 16) / 1e18, 6)
 
 
 def onchain_gate(root, wallet: str) -> dict:
@@ -1160,6 +1308,34 @@ def cmd_anchor(args):
     if args.verified_json:
         meta = json.loads(Path(args.verified_json).read_text())
     print(json.dumps(anchor(args.root, args.address, args.chain, meta), indent=2))
+
+
+def cmd_salt(args):
+    import os as _os
+    cfg = load_onchain_cfg(args.root)
+    if args.action == "status":
+        salt = _cfg_salt(args.root, cfg)
+        print(json.dumps({"private_rotating": bool(salt),
+                          "source": ("keystore" if _os.environ.get("CT_VAULT_PASSPHRASE")
+                                     else "cfg" if cfg.get("salt") else "none"),
+                          "note": "with a salt set, deposit addresses are "
+                                  "uncomputable by outsiders and rotate one-shot"}, indent=2))
+        return
+    pw = args.passphrase or _os.environ.get("CT_VAULT_PASSPHRASE")
+    value = args.value or sha256_hex(canonical({"r": now_iso(), "e": _os.urandom(16).hex()}))
+    if pw:
+        import keystore
+        keystore.put(args.root, "cphy-rotation-salt", value.encode(), pw)
+        where = "encrypted keystore (registry/cphy/vault.json)"
+    else:
+        cfg["salt"] = value
+        save_onchain_cfg(args.root, cfg)
+        where = ("onchain.json cleartext — set CT_VAULT_PASSPHRASE and re-run "
+                 "'salt set' to store it encrypted instead")
+    print(json.dumps({"salt_set": True, "stored_in": where,
+                      "next": "re-run 'onchain target …' to derive private "
+                              "rotating addresses; existing public targets stay public "
+                              "until re-registered"}, indent=2))
 
 
 def cmd_etch(args):
@@ -1555,6 +1731,47 @@ def cmd_selftest(args):
         ok("registering a faculty target does NOT unlock it — only a burn does",
            f9002.get("status") == "dormant" and not f9002.get("pinned"))
 
+        # ---- rotating one-shot private deposit slots (architect design) ----
+        rh3 = rings_all[3]["ring_hash"]
+        pub = ring_deposit_address(rh3)
+        priv0 = ring_deposit_address(rh3, "s3cr3t-salt", 0)
+        priv1 = ring_deposit_address(rh3, "s3cr3t-salt", 1)
+        ok("salted address is PRIVATE (differs from public; needs the salt)",
+           priv0 != pub and priv0 != ring_deposit_address(rh3, "other-salt", 0))
+        ok("ring hash is UNCHANGED — only the derivation rotates (immutable chain)",
+           rings_all[3]["ring_hash"] == rh3)
+        ok("each rotation yields a DIFFERENT one-shot address",
+           priv0 != priv1 and len(priv1) == 42)
+        # mock the on-chain read: rotation 0 slot funded with 1 token, then spent
+        _real_bal = globals()["eth_balance_of"]
+        cfgs = load_onchain_cfg(root)
+        cfgs["token"] = CANONICAL_CPHY
+        cfgs["salt"] = "s3cr3t-salt"
+        cfgs["approval"] = "auto"
+        cfgs["targets"] = {"3": {"address": priv0, "ring_hash": rh3[:16],
+                                 "rotation": 0, "burned_total": 0.0, "salted": True}}
+        save_onchain_cfg(root, cfgs)
+        funded = {"addr": priv0}
+        globals()["eth_balance_of"] = lambda rpc, tok, holder, timeout=15: (
+            int(1e18) if holder == funded["addr"] else 0)
+        r1 = onchain_sync(root)
+        t_after = load_onchain_cfg(root)["targets"]["3"]
+        ok("burn observed -> etch AND slot rotates to rotation 1",
+           any(e["ring"] == 3 for e in r1["new_etches"])
+           and t_after["rotation"] == 1 and t_after["address"] == priv1)
+        ok("the spent rotation-0 slot can never be programmed again",
+           t_after["address"] != priv0)
+        # deepen: fund the NEW slot; cumulative echelon rises across rotations
+        funded["addr"] = priv1
+        r2 = onchain_sync(root)
+        ok("burning the rotated slot DEEPENS cumulatively (E rises across slots)",
+           any(e["ring"] == 3 and e["echelon"] == 2 for e in r2["new_etches"]))
+        globals()["eth_balance_of"] = _real_bal
+        # restore a clean config for the approval-membrane test below
+        save_onchain_cfg(root, {"token": CANONICAL_CPHY, "chain": "base",
+                                "rpc": DEFAULT_RPC, "density_per_token": 1.0,
+                                "targets": {}, "approval": "require"})
+
         # ---- approval membrane: consent gates cognition, not money ----
         stg = _stage_pending(root, {"type": "etch", "ring": 6, "tokens": 3.0,
                                     "echelon": 3, "address": "0x" + "6" * 40})
@@ -1578,6 +1795,21 @@ def cmd_selftest(args):
            f9002r.get("status") == "dormant"
            and any(x["id"] == stg2["id"] and x["status"] == "rejected"
                    for x in load_pending(root)))
+
+        # ---- keccak256 + EVM selectors (escrow returnable lane) ----
+        ok("keccak256 matches known vectors (empty, abc)",
+           keccak256(b"").hex() == "c5d2460186f7233c927e7db2dcc703c0e500b653"
+                                   "ca82273b7bfad8045d85a470"
+           and keccak256(b"abc").hex().startswith("4e03657aea45a94f"))
+        ok("EVM selectors are correct (transfer, balanceOf canonical)",
+           evm_selector("transfer(address,uint256)") == "0xa9059cbb"
+           and evm_selector("balanceOf(address)") == "0x70a08231")
+        try:
+            escrow_locked_of(root, "ab" * 32)
+            ok("escrow lane dormant until owner deploys + configures it", False)
+        except RuntimeError as e:
+            ok("escrow lane dormant until owner deploys + configures it",
+               "no escrow" in str(e))
 
         events = read_ledger(root)
         ok("ledger hash chain verifies", verify_ledger(events)[0])
@@ -1712,6 +1944,13 @@ def main():
     po.add_argument("--match", default=None)
     po.add_argument("--wallet", default=None, help="holder wallet for gate")
     po.set_defaults(func=cmd_onchain)
+
+    psalt = sub.add_parser("salt", parents=[common],
+                           help="set the SECRET rotation salt -> private one-shot deposit addresses")
+    psalt.add_argument("action", choices=["set", "status"])
+    psalt.add_argument("--value", default=None, help="salt (omit to generate a random 32-byte one)")
+    psalt.add_argument("--passphrase", default=None, help="vault passphrase (or $CT_VAULT_PASSPHRASE)")
+    psalt.set_defaults(func=cmd_salt)
 
     pap = sub.add_parser("approve", parents=[common],
                          help="consent to a detected burn (applies its etch/unlock)")

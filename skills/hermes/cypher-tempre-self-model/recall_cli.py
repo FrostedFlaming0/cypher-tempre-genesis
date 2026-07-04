@@ -382,6 +382,9 @@ def cmd_turn(args):
         if _ts and (_ts.get("new_etches") or _ts.get("new_unlocks")):
             print(f"cphy: observed {len(_ts.get('new_etches') or [])} etch(es), "
                   f"{len(_ts.get('new_unlocks') or [])} unlock(s) this turn")
+        if _ts and _ts.get("rotated"):
+            print(f"cphy: {len(_ts['rotated'])} deposit slot(s) rotated after a burn "
+                  f"— spent addresses are now dead; new slots are salt-private")
         if _ts and _ts.get("pending_approval"):
             for p in _ts["pending_approval"]:
                 what = (f"ring {p['ring']} -> echelon {p['echelon']}" if p["type"] == "etch"

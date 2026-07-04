@@ -1,5 +1,40 @@
 # Changelog
 
+## v3.25.0 - 2026-07-04
+
+### Added — private rotating slots, custody vault, and post-quantum signatures
+- **One-shot rotating deposit addresses (architect design).** A deposit address
+  can now be derived with a SECRET salt: `sha256(salt || ring_hash || rotation)`.
+  Without the salt the address is uncomputable even from a full copy of the
+  (public) chain, so **no outsider can find where to burn** — only the owner can
+  program their agent. After a burn is consumed the slot ROTATES to a fresh
+  address, so the same slot can never receive a programming burn twice; a leaked
+  address is already spent. The ring's sealed hash never changes — only the
+  derivation rotates (the chain stays immutable). Echelon accrues cumulatively
+  across rotations. `cphy.py salt set` stores the salt in the encrypted keystore;
+  faculty-unlock addresses are salt-private too.
+- **`keystore.py` — encrypted secret vault + k-of-n Shamir splitting.** Zero-dep
+  authenticated encryption (scrypt/PBKDF2 KDF, HMAC-SHA256-CTR keystream,
+  encrypt-then-MAC) with GF(256) Shamir secret sharing so no single share
+  reconstructs a secret. The precondition for an agent that keeps a secret; the
+  home of the rotation salt. Post-quantum at rest (hash/PRF-based).
+- **`pqsign.py` — post-quantum hash-based signatures.** Lamport one-time
+  signatures under a Merkle tree (minimal XMSS): agent attestations and pack
+  exports can be signed with a scheme whose security is pure hash preimage
+  resistance — quantum computers only Grover-halve it (256 -> 128-bit). Stateful
+  (never signs a leaf twice). The one PQ primitive that needs no L1 change.
+- **`contracts/CypherTempreEscrow.sol` — returnable custody (source only).** The
+  reversible counterpart to keyless burns: lock CPHY against a ring hash and
+  recover it later; the agent reads `lockedOf(ringHash)` (view-only) and weights
+  the ring while the lock stands, WITHOUT ever holding a key. NOT deployed —
+  deploy with your keys after counsel. `cphy.py` ships a tested stdlib keccak256
+  so its function selectors are correct, not fabricated.
+
+### Note
+- The consent membrane (v3.24.1) and canonical-token exclusivity (v3.24.0) still
+  apply: burns are observed but owner-approved, and only CPHY on Base
+  (0x08Df470d41C11Ba5Cb60242747D76C65Ca52c94c) is ever read.
+
 ## v3.24.1 - 2026-07-04
 
 ### Added — the consent membrane
