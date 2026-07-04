@@ -1,5 +1,48 @@
 # Changelog
 
+## v3.22.0 - 2026-07-04
+
+### Changed — the Chronosynaptic Tree, reborn phases ("shatter the timeline")
+- **UQC selection.** `think` selection is now Upper Qualia Confidence: UCT plus a
+  Symbolic Gravity term S(v) — each lens's query-affinity (normalized at rank time)
+  acts as an attention-multiplier so structurally charged paths draw the search
+  first. Tunable via `--gravity` (0 = plain UCT).
+- **Dimensional fractalization.** Every fork carries a deterministic QUALIA PROFILE
+  (per-faculty weighting of the six PoQ dimensions, derived from kind/category/name —
+  stable, no randomness); the ROOT fork's profile colors every rollout beneath it, so
+  siloed perspectives genuinely disagree about which futures are bright. Measured:
+  root-fork value spread went from 0.5/255 (v3.21, near-coin-flip) to 14.2/255 on the
+  same query, same budget.
+- **Distinctiveness de-erosion (bug fix).** v3.15 contrastive valuation recomputed a
+  reading's distinctiveness on every visit, re-feeding the sibling token pool so the
+  most-explored (most promising) branches were progressively punished — the winner's
+  distinctiveness eroded to 0.0. It is now computed once per unique path and cached.
+- **Economic apoptosis.** Branches visited >= 3 times that stay below 80% of the
+  brightest sibling (or below an absolute floor) are starved — excluded from
+  selection so their compute flows to bright branches. Local analog of the $CPHY
+  mempool doctrine: delusional futures are priced out, never subsidized. Starved
+  branches are reported (†) and recorded in the collapse payload. `--no-apoptosis`
+  disables.
+- **Early wave-function collapse.** When one branch's integrated value crosses
+  `--collapse-poq` (default 243 ≈ 95%) with enough visits, the search stops spending
+  budget and collapses immediately; the iteration is recorded in the payload.
+- **Dream-cache flush of discarded branches.** On a sealed collapse the brightest
+  losing branches (cap 2, junk-guarded seed terms) are flushed into the Cambium
+  Dream Cache as DORMANT metaphor-seed proposals (`origin: chronosynaptic-discard`,
+  never executed, human-activated only) — losers seed future growth instead of
+  vanishing. The flush epoch-reseals the registry (v3.14 integrity perimeter), so
+  `verify` stays PASS.
+- **Genesis-epoch collapse banner.** A sealed collapse (think and collapse-notes)
+  is announced as an epoch block built ONLY from real ring fields — prev hash, ring
+  hash, mined nonce, difficulty, PoQ brightness as % — ceremony never invents.
+- **Worksheet bridge.** `think --worksheet FILE` emits the ranked fork skeleton
+  (machine values marked as PRIORS, with gravity and frames) as JSON for the model
+  to fill with genuine semantic readings and scores, then seal via
+  `collapse-notes` — the division-of-labor doctrine made mechanical.
+- **Richer fork readings.** A perspective's composed reading now carries its own
+  (alphabetic-only) lens vocabulary, so distinct perspectives produce genuinely
+  distinct texts for valuation and contrast.
+
 ## v3.21.0 - 2026-07-04
 
 Reconciliation: the best of the two parallel v3.19/v3.20 lines, made coherent.
