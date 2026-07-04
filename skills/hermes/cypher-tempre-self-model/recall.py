@@ -882,7 +882,7 @@ class Recall:
                  exclude_path=None, exclude_dir=None, source_only=False,
                  scan_window=None, use_index=False, index_limit=300, scorer="auto",
                  on=None, between=None, relative=None, asked_on=None,
-                 _fanout=None):
+                 _fanout=None, no_overlay=False):
         if embed and self.embedder is None:           # default to the stdlib embedder
             self.embedder = embmod.get_embedder("hashing")
         # TIME-INDEXED RECALL (V4 P2): cosine cannot retrieve by WHEN — "who did
@@ -1039,6 +1039,20 @@ class Recall:
                 )
             scored.append((score, r, lab, parts))
         scored.sort(key=lambda x: x[0], reverse=True)
+
+        # Local overlay seam: an optional recall_overlay.py beside this file may
+        # re-rank the scored candidates (bounded, audit-stamped in score_parts).
+        # The module is a LOCAL organ — absent from the published bundles — and
+        # the seam is neutral: no overlay, no effect; a broken overlay must
+        # never break recall. no_overlay=True recovers ground-truth ranking.
+        if scored and not no_overlay:
+            try:
+                import recall_overlay
+                scored = recall_overlay.rerank(self.tc.root, scored) or scored
+            except ImportError:
+                pass
+            except Exception:
+                pass
 
         # appetite: dissonance is the need signal. Low need -> pull little/none.
         # When the learner has CALIBRATED the curve (P(blocks fetched | dissonance)

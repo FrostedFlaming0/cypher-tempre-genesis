@@ -339,6 +339,21 @@ def policy_thresholds():
                                        int((pol.get("poq") or {}).get(
                                            "aggregate_min_terms",
                                            t["aggregate_min_terms"])))
+        # v3.23: OPTIONAL "floors" policy section — an operator (or a local
+        # organ writing through policy) may TIGHTEN the gate declaratively.
+        # Same doctrine as the values floors: raise-only, arm-only; a floors
+        # entry can never loosen a threshold below its default/calibrated value.
+        fl = pol.get("floors") or {}
+        if fl:
+            for k in ("brightness_target", "covenant_floor", "consistency_floor",
+                      "grounding_floor", "aggregate_min_terms"):
+                if fl.get(k) is not None:
+                    t[k] = max(t[k], int(fl[k]))
+            if fl.get("entity_grounding_enforce"):
+                t["entity_grounding_enforce"] = True     # arm-only, never disarm
+            if fl.get("effort_floor") is not None:
+                t["effort_floor"] = max(int(fl["effort_floor"]),
+                                        int(t.get("effort_floor") or 0))
     except Exception:
         pass                       # a broken policy file must never disable the gate
     return t

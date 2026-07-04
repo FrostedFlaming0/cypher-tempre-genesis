@@ -84,7 +84,7 @@ def cmd_retrieve(args):
                      top_dir=args.top_dir, exclude_path=args.exclude_path,
                      exclude_dir=args.exclude_dir, source_only=args.source_only,
                      scan_window=args.scan_window, use_index=args.index, index_limit=args.index_limit,
-                     scorer=args.scorer, **datekw)
+                     scorer=args.scorer, no_overlay=getattr(args, "no_overlay", False), **datekw)
     if args.embed:
         print(f"[embedding recall: {rec.embedder.name}]")
     print(f"[scorer: {r['scorer']}{'  +ε-explored' if r['explored'] else ''}]")
@@ -747,6 +747,8 @@ def build_parser():
     pr.add_argument("--budget", type=int, default=1000, help="token budget for retrieved excerpts")
     pr.add_argument("--max", type=int, default=8, help="max blocks (appetite cap)")
     pr.add_argument("--embed", action="store_true", help="rank by embedding cosine, not lexical overlap")
+    pr.add_argument("--no-overlay", action="store_true",
+                    help="bypass the local recall overlay, if one is installed (ground-truth ranking)")
     pr.add_argument("--provider", default="hashing", help="embedding backend: hashing|st|openai|voyage")
     pr.add_argument("--path", default=None, help="only retrieve hits from a relative path or path prefix")
     pr.add_argument("--dir", default=None, help="only retrieve hits under a relative directory")

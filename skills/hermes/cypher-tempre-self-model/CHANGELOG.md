@@ -1,5 +1,29 @@
 # Changelog
 
+## v3.23.0 - 2026-07-04
+
+### Added
+- **Recall overlay seam.** `recall.retrieve` gains a neutral local-extension point: an
+  optional `recall_overlay.py` placed beside the engine may re-rank scored candidates
+  (its adjustments are audit-stamped in `score_parts`). The module is deliberately NOT
+  shipped in any bundle — it is a seam for local organs, so code syncs and upgrades can
+  never sever a local extension again. A broken or absent overlay never breaks recall.
+  `retrieve --no-overlay` recovers ground-truth ranking.
+- **Policy "floors" section (raise-only).** `poq.policy_thresholds` now honors an
+  optional `floors` object in `registry/policy.json`: operators (or local organs
+  writing through policy) can TIGHTEN `brightness_target`, `covenant_floor`,
+  `consistency_floor`, `grounding_floor`, `aggregate_min_terms`, arm
+  `entity_grounding_enforce`, or set `effort_floor` — declaratively, without code or
+  environment variables. Same doctrine as the values floors: raise-only, arm-only; a
+  floors entry can never loosen the gate.
+
+### Fixed
+- **AGENTS.md pointed every runtime at the Codex install path.** An agent following
+  the standing instruction verbatim on Claude/OpenClaw would run (and seal to) a chain
+  under `~/.codex/` — the wrong self. Each bundle's AGENTS.md now names its own
+  runtime's install root (claude, openclaw), or a `<skills-root>` placeholder where the
+  install location is chosen at install time (nanoclaw, hermes).
+
 ## v3.22.0 - 2026-07-04
 
 ### Changed — the Chronosynaptic Tree, reborn phases ("shatter the timeline")
