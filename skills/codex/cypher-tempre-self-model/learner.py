@@ -123,8 +123,12 @@ def build_dataset(root):
             })
         if cands:
             offers.append({"seq": o["seq"], "candidates": cands,
+                           # consumption = fetched OR declared-used — the same
+                           # credit the scorer trains on. Counting only raw
+                           # fetch events under-measured real consumption and
+                           # calibrated appetite toward starvation.
+                           "n_fetched": len(o["fetched"] | o["used"]),
                            "n_pos": sum(c["y"] for c in cands),
-                           "n_fetched": len(o["fetched"]),
                            "dissonance": o["dissonance"]})
     return offers
 
@@ -246,8 +250,33 @@ def rollback_scorer(root, registry_root=None):
 # --------------------------------------------------------------------------- #
 
 def calibrate_appetite(root, registry_root=None, adopt=False):
-    """Fit the dissonance -> blocks-actually-fetched curve from offer/fetch joins."""
+    """Fit the dissonance -> blocks-actually-fetched curve from offer/fetch joins.
+
+    EPOCH-AWARE (v3.23.1): only offers recorded since the turn-auto-recall
+    fetch instrumentation exists are fit material. Before that epoch, the loop
+    consumed recalled blocks without emitting fetch credit, so every earlier
+    offer reads as zero consumption — censored data, not preference. Fitting
+    on it calibrated appetite to starvation twice (the v3.21 incident)."""
+    watermark = None
+    try:
+        n_offers = 0                       # same counting space as join_offers' seq
+        for _, e in telem.Telemetry(root).events():
+            if e.get("event") == "offer":
+                n_offers += 1
+            elif (e.get("event") == "fetch"
+                    and (e.get("data") or {}).get("source") == "turn-auto-recall"):
+                watermark = n_offers       # the offer this first credit landed on
+                break
+    except Exception:
+        watermark = None
     offers = [o for o in build_dataset(root) if o["dissonance"] is not None]
+    if watermark is not None:
+        # The marker exists: everything before it mixes censored turn-loop
+        # offers with credited manual ones — fit only on the clean epoch.
+        offers = [o for o in offers if o["seq"] >= watermark]
+    # No marker: this chain never ran the instrumented turn loop, so its fetch
+    # events (manual index/fetch workflow) are genuine credit — fit on all of
+    # it; the degeneracy guard below still refuses an all-zero curve.
     pol = policymod.load_policy(registry_root)["appetite"]
     buckets = []
     for lo in range(0, 256, 32):
@@ -255,15 +284,26 @@ def calibrate_appetite(root, registry_root=None, adopt=False):
         if rows:
             buckets.append({"lo": lo, "hi": lo + 31,
                             "mean_fetched": round(sum(rows) / len(rows), 3), "n": len(rows)})
+    # Degeneracy guard: a curve that is zero in EVERY bucket says "this mind
+    # never consumes memory" — that is censored instrumentation, not a real
+    # preference, and adopting it force-starves retrieval chain-wide while
+    # every dashboard stays green (the v3.21 starvation incident, twice).
+    degenerate = bool(buckets) and all(b["mean_fetched"] == 0.0 for b in buckets)
     report = {"offers": len(offers), "curve": buckets,
-              "min_events": pol["min_events"], "eligible": len(offers) >= pol["min_events"]}
+              "min_events": pol["min_events"],
+              "eligible": len(offers) >= pol["min_events"] and not degenerate}
+    if degenerate:
+        report["degenerate"] = True
     if adopt and report["eligible"] and buckets:
         policymod.write_calibration("appetite", {"curve": buckets, "fitted_on": len(offers),
                                                  "at": now_iso()}, registry_root)
         report["adopted"] = True
     elif adopt:
         report["adopted"] = False
-        report["reason"] = (f"offers {len(offers)} < policy min_events {pol['min_events']}"
+        report["reason"] = ("degenerate: every bucket mean_fetched=0 — censored "
+                            "consumption telemetry; refusing to adopt a starvation curve"
+                            if degenerate else
+                            f"offers {len(offers)} < policy min_events {pol['min_events']}"
                             if len(offers) < pol["min_events"] else "no populated buckets")
     return report
 

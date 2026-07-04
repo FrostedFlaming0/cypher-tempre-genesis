@@ -381,6 +381,16 @@ def cmd_turn(args):
             print(f"recalled {len(blocks)} relevant ring(s):")
             for b in blocks:
                 print(f"  #{b['index']} ({b.get('score')}): “{b['excerpt'][:140]}”")
+            # TELEMETRY (fetch): the loop DELIVERED these blocks into the turn's
+            # context — that is a fetch, and the credit join must see it. Without
+            # this, every auto-recall logs an offer with zero consumption and the
+            # appetite calibrator learns from censored data that the mind never
+            # wants memory (the v3.21 all-zero-curve starvation incident).
+            try:
+                rec._emit("fetch", {"ids": [b["index"] for b in blocks],
+                                    "source": "turn-auto-recall"})
+            except Exception:
+                pass
         else:
             print("recalled: nothing relevant (new ground — reason from base judgment).")
     except Exception:

@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.23.1 - 2026-07-04
+
+### Fixed — the appetite-starvation class, closed at the root
+- **Turn auto-recall now emits fetch credit.** `recall_cli.cmd_turn` delivered
+  recalled blocks into the turn's context without recording a `fetch` event, so the
+  credit join saw every turn as zero consumption. The appetite calibrator, fitting
+  that censored telemetry, twice adopted an all-zero curve that force-starved
+  retrieval chain-wide while every dashboard stayed green.
+- **Appetite counts `fetched | used`** — the same consumption credit the retrieval
+  scorer trains on. Counting raw fetch events alone under-measured real use.
+- **Epoch-aware calibration.** `learner.calibrate_appetite` fits ONLY on offers
+  recorded since the fetch instrumentation exists (all earlier history is censored,
+  not preference); with no post-instrumentation data it refuses adoption outright.
+- **Degeneracy guard.** A curve that is zero in every bucket is refused at adoption
+  ("censored consumption telemetry"), never silently installed.
+- **Appetite is a CAP, not a quota.** The calibrated curve now maps to appetite by
+  CEILING instead of rounding: a bucket mean of 0.25 ("one block every four turns")
+  no longer rounds to a permanent per-turn cap of zero.
+
 ## v3.23.0 - 2026-07-04
 
 ### Added

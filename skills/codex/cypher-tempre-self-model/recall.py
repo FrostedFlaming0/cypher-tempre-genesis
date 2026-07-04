@@ -1064,7 +1064,14 @@ class Recall:
             bucket = next((b for b in appetite_curve.get("curve", [])
                            if b["lo"] <= dissonance <= b["hi"]), None)
         if bucket is not None:
-            appetite = min(max_blocks, max(0, round(bucket["mean_fetched"])))
+            # CEILING, not round: appetite is a CAP, not a quota. A bucket mean
+            # of 0.25 means "one block every four turns of demand" — rounding it
+            # to a permanent per-turn cap of 0 starves retrieval forever (the
+            # second face of the v3.21 starvation incident). Any nonzero
+            # historical demand permits at least one block; the score threshold
+            # still decides whether anything actually returns.
+            import math as _math
+            appetite = min(max_blocks, max(0, _math.ceil(bucket["mean_fetched"])))
         elif dissonance < 50:
             appetite = 0
         else:
