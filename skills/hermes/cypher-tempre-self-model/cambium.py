@@ -1088,6 +1088,9 @@ def prune(root: Path, registry_root=None, min_fires: int = 2,
         for f in grown.get(key, []):
             if f.get("status") == "dormant":
                 continue                    # already out of the working set — no rent due
+            if f.get("pinned"):
+                kept.append(f["name"])      # pinned (permanently unlocked): rent-exempt,
+                continue                    # never hibernates — an owned skill, not a tenant
             fires = fire.get(f["name"], 0)
             born = birth.get(f["name"], 0)
             junk = any(is_junk_token(w) for w in re.findall(r"[A-Za-z0-9]+", f["name"]))

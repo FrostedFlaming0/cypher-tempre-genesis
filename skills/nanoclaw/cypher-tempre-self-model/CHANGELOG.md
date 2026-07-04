@@ -1,5 +1,31 @@
 # Changelog
 
+## v3.24.0 - 2026-07-04
+
+### Added — the CPHY economic metaprogramming layer ships
+- **`cphy.py` + `recall_overlay.py` are now part of every bundle** (see CPHY.md):
+  the earned-supply ledger (mint from PoQ brightness), the five opcodes (weight /
+  stake / fund / transfer / grant), and the on-chain burn lane — etches (burn = a
+  permanent positive scar), echelons 1..21 (burned tokens map to recency bias:
+  E=21 reads freshly lived but the current turn is NEVER superseded), per-turn
+  relevance realization over the etched set (`etch n`), and RPG-style faculty
+  unlocks (a burn permanently activates + pins a registry faculty).
+- **Canonical-token exclusivity.** The one accepted burn instrument is pinned in
+  code: CPHY on Base, `0x08Df470d41C11Ba5Cb60242747D76C65Ca52c94c`. The oracle
+  queries only this contract over a fixed read-only RPC allowlist; any config
+  naming another token or host is refused loudly. No other token can alter an
+  agent by burning against any block. Read-only, keyless, no transactions ever.
+- **Per-turn burn observation.** The turn loop observes the chain each turn
+  (rate-limited, fail-soft) so etches, deepenings and unlocks land at turn
+  granularity without manual syncing.
+- **Pinned faculties.** `cambium.py prune` exempts `pinned` faculties from
+  rent/hibernation — an unlocked skill is owned, not rented.
+- **Unlock requires a burn.** There is no CLI or config path to unlock a
+  faculty; only an observed on-chain burn does it (selftest-enforced), and
+  model-authored coded ops still require the explicit human `activate` step.
+- `cphy.py selftest`: 46 checks, hermetic (temp registries; live-registry
+  leak detection).
+
 ## v3.23.1 - 2026-07-04
 
 ### Fixed — the appetite-starvation class, closed at the root

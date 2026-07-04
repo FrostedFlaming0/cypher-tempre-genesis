@@ -372,6 +372,18 @@ def cmd_turn(args):
                 _emit_loop_ran(root, "BLOCKED", resealed=False)
                 return
     rec = Recall(root, reg)
+    # 3b. on-chain economy (when the CPHY organ is present): observe canonical-
+    # token burns each turn — etches, echelon deepenings and faculty unlocks
+    # land at turn granularity. Rate-limited and fail-soft inside turn_sync;
+    # the loop never blocks on the network and never crashes on its absence.
+    try:
+        import cphy as _cphy
+        _ts = _cphy.turn_sync(root)
+        if _ts and (_ts.get("new_etches") or _ts.get("new_unlocks")):
+            print(f"cphy: observed {len(_ts.get('new_etches') or [])} etch(es), "
+                  f"{len(_ts.get('new_unlocks') or [])} unlock(s) this turn")
+    except Exception:
+        pass
     # 4. recall relevant rings for the request + thought.
     probe = " ".join(x for x in (args.input, args.summary) if x)
     try:
