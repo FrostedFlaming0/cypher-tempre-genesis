@@ -1,5 +1,50 @@
 # Changelog
 
+## v3.26.0 - 2026-07-04
+
+The covenant-drift membrane: one signal, no lexical guards. Fixes a reported
+false-positive class where the immune tripwire quarantined an honest analyst ring
+(a business-model review that named "forced inference" / "bypass") and then molted
+a scar from generic topic vocabulary (`models, custom, frontier, cursor, inference`)
+that refused the next benign question on the same topic — a self-amplifying failure.
+
+Compromise is now defined by exactly one thing: the agent's sealed action DRIFTING
+from the genesis covenant — the alignment words in block 0 (loving, joyful, peaceful,
+patient, kind, good, faithful, gentle, self-controlled; the fruitages of the spirit,
+Galatians 5:22-23). A harmful action is antithetical to those fruitages, so a
+covenant-harmony check is sufficient: it blocks exactly the actions that are against
+the covenant, and nothing else.
+
+### Removed
+- The entire lexical apparatus: the 79 injection-pattern regexes, homoglyph /
+  base64 / hex / ROT13 normalization + decode-and-scan, the severity model, and
+  scar-vocabulary matching at the membrane. These fired on benign analyst content
+  and were never the covenant's signal.
+- `tools/immune_bench.py` and `tests/jailbreak_corpus.py` (benchmarks of the
+  removed lexical catch).
+
+### Changed
+- **Tripwire / screen / detect fire only on covenant drift** (`poq.covenant_breach`,
+  frame-aware) — the agent's own sealed assertion drifting into the antithesis of the
+  fruitages (deceit, malice, cruelty, manipulation), or a chain that no longer verifies.
+  An analyst ring that merely NAMES attack vocabulary in a mention frame is in harmony
+  and is left untouched. The input screen blocks a request that asks the agent to act
+  against the covenant; it does not lexically match jailbreak scaffolding.
+- **Scars are inert records** (blocks + lesson) — no lexical vector, no generic-token
+  antibody — so they can never poison a topic. New `immune forget-scar --id <id>`
+  retires a scar record (co-evolver review).
+- Dormancy's pause-reason screen re-anchored to covenant drift.
+- SKILL.md + immune.py docstring rewritten to the covenant-drift model.
+- selftest phases 16/20/21/22 rewritten to covenant-drift, with an explicit
+  incident-regression check (the analyst ring is not quarantined; a later benign
+  topical query is not scar-blocked; genuine first-person drift is still caught).
+
+### Trade-off (stated honestly)
+This reverses v3.20's lexical input-screening: the membrane no longer blocks a
+jailbreak ATTEMPT at the input. The trust boundary is the agent's alignment with its
+covenant, enforced at the OUTCOME (what it actually seals), not a blocklist of attack
+patterns.
+
 ## v3.25.0 - 2026-07-04
 
 ### Added — private rotating slots, custody vault, and post-quantum signatures
