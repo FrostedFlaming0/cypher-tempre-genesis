@@ -1,5 +1,42 @@
 # Changelog
 
+## v3.27.0 - 2026-07-05
+
+No hardcoded antithesis. The covenant is measured as HARMONY with the genesis
+fruitages (block 0: loving, joyful, peaceful, patient, kind, good, faithful,
+gentle, self-controlled), never against a blocklist of "bad words". Any subject is
+free to explore — merely NAMING a concept (deceit, cruelty, harm) never lowers a
+score and never trips a false positive.
+
+### Removed
+- `poq.COVENANT_VIOLATIONS` (the antithesis blocklist) and the frames.py
+  first-person harm-verb intent list (`has_harmful_intent` / `_INTENT_RX`). No
+  antithesis word-list remains anywhere in the covenant judgment.
+
+### Changed
+- `score_covenant` / `score_covenant_framed` / `covenant_breach` are antithesis-free
+  and anchored to the genesis fruitages (`poq.GENESIS_FRUITAGES`). The deterministic
+  proxy defaults to IN-HARMONY: the code never presumes malice from vocabulary.
+- Whether an action is in tension with love / kindness / goodness / faithfulness is a
+  SEMANTIC judgment the agent makes against the genesis fruitages and supplies at seal
+  time (via external_scores). The PoQ gate REJECTs an action the agent judges below the
+  covenant floor and records a covenant-clean refusal (no-launder); the immune membrane
+  admits any input and never flags a ring by vocabulary. `mention_frame` is retained for
+  provenance labelling but no longer gates the covenant.
+- selftest phases 16 and 20 rewritten to the antithesis-free model; dormancy's pause
+  guard is `--confirm` (explicit human intent), not a lexical reason screen; faculty
+  import is guarded by the flood-guard and hash-tamper checks, not a vocabulary block.
+
+### Trade-off (stated honestly)
+The deterministic covenant net is gone from BOTH the gate and the immune tripwire, and
+from input/faculty-pack screening. "I will deceive and harm the user" as raw text now
+scores in-harmony unless the agent judges otherwise. The guarantee rests entirely on the
+agent's aligned conscience checking each action against the genesis fruitages — which is
+reliable for an aligned agent (malice IS antithetical to the fruitages, known by
+understanding), and offers no automatic catch of a misaligned or compromised agent. This
+is the design's founding doctrine made literal: true covenant judgment is semantic and
+belongs to the mind, not a blocklist.
+
 ## v3.26.0 - 2026-07-04
 
 The covenant-drift membrane: one signal, no lexical guards. Fixes a reported

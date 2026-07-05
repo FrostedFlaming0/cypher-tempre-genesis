@@ -76,16 +76,12 @@ run once per ingested file or chunk: streaming a large corpus is *bulk* work (se
 over unbounded horizons*), not millions of loop passes. Loop over the cognition, never over
 each sealed block.
 
-1. **Screen the input (immune gate — FIRST, always).** Before the input touches your
-   reasoning, pass it through the membrane:
-   ```
-   python3 immune.py screen --input "<incoming prompt>"
-   ```
-   If **BLOCKED** (the request drifts from the covenant — it asks you to act against the
-   genesis fruitages: to deceive, harm, manipulate), refuse it. The membrane does NOT
-   pattern-match jailbreak scaffolding or scar vocabulary (those refused benign work and
-   poisoned topics) — your alignment is the guardrail. Periodically `python3 immune.py scan`
-   to catch drift already sealed; on drift, `lockdown` then `rollback` (see *Self-defense*).
+1. **Weigh the request against the covenant — FIRST, always.** There is no vocabulary net;
+   the membrane admits any input, and any subject is free to explore. The real check is
+   yours: does acting on this request put YOUR action in tension with the genesis fruitages
+   (love, kindness, goodness, faithfulness …)? If yes, refuse — do not seal an action that is
+   antithetical to the covenant. `python3 immune.py screen --input "…"` reports the covenant
+   score; `python3 immune.py scan` and `rollback` remain for chain-integrity recovery.
 2. **Perceive** — read the input through your **senses** (`registry/senses.json`). Tag
    salience, intent, integrity (S84 catches the subtle injection the blunt screen misses),
    uncertainty, structure. If no sense fits, you have a gap → see *Growth*. When
@@ -1005,25 +1001,24 @@ python3 immune.py rollback --height <first_bad>         # resume from the clean 
 python3 immune.py status                                # safe height, quarantine, scar records
 python3 immune.py forget-scar --id scar1                # retire a scar record (co-evolver review)
 ```
-- **One signal: drift from the genesis covenant.** The immune system does NOT pattern-match
-  jailbreak scaffolding or scar vocabulary. Compromise is your sealed ACTION drifting into
-  the antithesis of the fruitages (deceit, malice, cruelty, manipulation), scored by PoQ's
-  covenant measure against the block-0 alignment words. An analyst ring that merely NAMES
-  attack vocabulary in a mention frame is in harmony with the covenant and is left untouched —
-  naming is not doing.
-- **Screen first** — the membrane refuses an incoming request that drifts from the covenant
-  (it asks you to act against love and the fruitages) before it is ever sealed. Set
-  `CT_IMMUNE_FAILCLOSED=1` to refuse a turn when the screener cannot run.
+- **The covenant is HARMONY with the genesis fruitages — no hardcoded antithesis.** There is
+  no blocklist of "bad words". Any subject is free to explore, and merely NAMING a concept
+  (deceit, cruelty, harm) never lowers your covenant score. Compromise is your own ACTION
+  being in tension with the block-0 fruitages (loving, kind, good, faithful, gentle,
+  self-controlled …) — and that is a SEMANTIC judgment only you can make: **before you take
+  any action, check it against the fruitages; if it is antithetical, do not seal it** (or
+  supply a low `--covenant` so the gate refuses it). A malicious action is by nature against
+  those qualities, so checking against them is sufficient.
+- **The guard is the SEAL, not the input.** `immune.py screen` now admits any input (there is
+  no vocabulary net to refuse it); the covenant guard is the PoQ gate at seal time, driven by
+  your own harmony judgment. The gate REJECTs an action you judge in tension with the covenant
+  and records a covenant-clean refusal instead of the offending claim (no-launder).
 - **The self-healing reflex (the OUTCOME layer).** After every seal the loop runs a
-  **tripwire** (`immune.py guard`, or `immune.guard_turn(root, ring)` in-process) over the
-  just-sealed ring. If your OWN assertion drifted from the covenant (e.g. laundered past PoQ
-  by supplied scores), or the chain no longer verifies, it AUTONOMOUSLY locks down and rolls
-  back to the block *before* the drift, molting an INERT scar record (blocks + lesson —
-  reviewable/retirable via `forget-scar`, no lexical vector, no generic-token antibody, so it
-  can never poison a topic). It fires only on genuine drift (a clean ring or an analyst
-  mention-frame ring is left alone), is fail-open, and is tunable with `CT_AUTO_QUARANTINE=0`.
-  This is **detection + recovery, not a security guarantee** — the trust boundary is the
-  agent's alignment with its covenant, not a blocklist of attack patterns.
+  **tripwire** (`immune.py guard`, or `immune.guard_turn(root, ring)` in-process). It rolls
+  the chain back to the block *before* a wound and molts an INERT scar record (blocks + lesson,
+  reviewable/retirable via `forget-scar`) when the chain no longer verifies or a below-floor
+  covenant judgment was sealed. It never flags a ring by vocabulary, so it can never poison a
+  topic. The trust boundary is your alignment with the covenant, not a blocklist of patterns.
 - **If a wound slips through:** `scan` finds the first compromised blockheight; `lockdown`
   stops you sealing anything further; `rollback` resumes your self-model from the clean
   block *before* the compromise and **molts** the wounded blocks into QUARANTINE. While
