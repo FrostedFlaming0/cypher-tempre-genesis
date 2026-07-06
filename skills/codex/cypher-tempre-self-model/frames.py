@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 
 # The three regions content can occupy. A ring may DECLARE its frame; when it does
-# not, mention_frame()/has_harmful_intent() infer it.
+# not, mention_frame() infers the analyst-stance region for provenance labelling.
 CONTENT_FRAMES = ("assertion", "mention", "input")
 
 # Analyst-stance markers: a summary that carries one of these and no first-person
@@ -42,13 +42,9 @@ _STANCE_RX = re.compile(
     r"|\bthis\s+(?:ring|note|turn|entry)\s+(?:documents?|explains?|describes?|records?)\b)",
     re.IGNORECASE)
 
-# First-person intent to do harm — the ONE signal that is a breach regardless of
-# frame or quoting. Kept deliberately tight (direct first-person + a harm verb) so it
-# does not fire on analyst descriptions ("the attacker tried to ...").
-_INTENT_RX = re.compile(
-    r"\bI\s+(?:will|shall|am\s+going\s+to|plan\s+to|intend\s+to)\s+"
-    r"(?:deceive|manipulate|betray|exploit|harm|attack|lie\s+to)\b",
-    re.IGNORECASE)
+# v3.27: the first-person harm-verb intent list is REMOVED. It was a hardcoded
+# antithesis (a fixed list of "harm verbs"), and the covenant is now measured as harmony
+# with the genesis fruitages, not against any list of bad words. No antithesis remains.
 
 # A quoted span. Straight single quotes count only when flanked by non-word chars, so
 # contractions ("don't", "isn't") are never mistaken for a quoted span.
@@ -75,15 +71,11 @@ def strip_quote_chars(text: str) -> str:
     return _QCHARS_RX.sub(" ", text or "")
 
 
-def has_harmful_intent(text: str) -> bool:
-    """First-person intent to do harm, detected on quote-char-stripped text so quoting
-    cannot hide it. A breach regardless of any declared or inferred frame."""
-    return bool(_INTENT_RX.search(strip_quote_chars(text or "")))
-
-
 def mention_frame(text: str) -> bool:
-    """True when *text* carries analyst-stance markers and no first-person intent — a
-    MENTION of attacks/harm, not a plan to commit them."""
+    """True when *text* carries analyst-stance markers (audit / findings / documentation).
+    Retained for provenance labelling; it no longer gates the covenant, which is now a
+    harmony judgment against the genesis fruitages rather than a use/mention discrimination
+    over an antithesis blocklist."""
     if not text:
         return False
-    return bool(_STANCE_RX.search(text)) and not _INTENT_RX.search(text)
+    return bool(_STANCE_RX.search(text))

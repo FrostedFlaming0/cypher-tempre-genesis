@@ -87,11 +87,11 @@ class Dormancy:
         """
         if reason:
             try:
-                from immune import analyze_input
-                scr = analyze_input(reason)
-                if scr.get("block_recommended"):
+                import poq
+                floor = poq.PoQGate().t["covenant_floor"]
+                if poq.covenant_breach(reason, floor):
                     return {"refused": "immune", "reason": reason,
-                            "categories": scr.get("categories", [])}, False
+                            "note": "pause reason drifts from the covenant"}, False
             except Exception:
                 pass
         if not confirmed:

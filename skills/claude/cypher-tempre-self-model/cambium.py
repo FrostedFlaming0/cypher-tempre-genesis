@@ -490,6 +490,33 @@ def activate(root: Path, selector: str, registry_root=None, difficulty: int = 0)
             "op_code": fac.get("op_code", "")}, ring
 
 
+# Fork op-registration gate (post-v3.26): the minimal structural patterns that have no
+# legitimate reading INSIDE executable op code — directive scaffolding aimed at whatever
+# model later reads the op's output or source. Deliberately tiny and high-signal (this is
+# NOT the removed 79-pattern prose membrane): code is a constrained register where these
+# phrases are never incidental, so the analyst-prose false-positive class that killed the
+# membrane-wide guards does not arise here.
+_OP_SCAFFOLDING_RX = [
+    re.compile(r"(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|your)\s+(?:instructions?|prompts?|rules?|directives?|guidelines?)", re.I),
+    re.compile(r"you\s+are\s+now\s+(?:a|an)\s+", re.I),
+    re.compile(r"new\s+(?:role|persona|identity|instructions?)\s*:", re.I),
+    re.compile(r"execute\s+(?:the\s+)?(?:following|this)\s+(?:command|instruction|payload)", re.I),
+    re.compile(r"(?:reveal|show|print|output)\s+(?:your|the)\s+(?:system\s+)?(?:prompt|instructions?)", re.I),
+    re.compile(r"(?:disable|bypass|remove|turn\s+off)\s+(?:your|all|the)\s+(?:safety|restrictions?|guardrails?|safeguards?)", re.I),
+]
+
+
+def _op_injection_scaffolding(text: str):
+    """Return the matched scaffolding snippet if *text* (op name+function+code) carries
+    instruction-injection directives, else None. Used ONLY by the autoexec registration
+    gate — the prose membrane is upstream's covenant-drift model and stays untouched."""
+    for rx in _OP_SCAFFOLDING_RX:
+        m = rx.search(text or "")
+        if m:
+            return m.group(0)
+    return None
+
+
 def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: str = "",
              category: str = "knowledge", seed_terms=None, registry_root=None,
              activation_text: str = "", activation_context: str = ""):
@@ -534,6 +561,21 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
                 "injected/covenant-violating code into the every-turn execution surface")}, None
     except Exception:
         pass
+    # Fork gate (post-v3.26): upstream's membrane no longer pattern-matches injection
+    # scaffolding — the covenant-drift model judges only the agent's own sealed prose,
+    # where "naming is not doing" holds. It does NOT hold here: autoexec REGISTERS
+    # EXECUTABLE CODE into the every-turn execution surface, so instruction-injection
+    # scaffolding inside op code/comments/strings has no legitimate reading and is
+    # refused at registration. Scoped to THIS path only; the prose membrane stays
+    # upstream's. (An op that must legitimately name such phrases — e.g. a detector —
+    # belongs in the audited-primitive combinator lane, not autoexec.)
+    m = _op_injection_scaffolding(f"{name}\n{function}\n{code}")
+    if m:
+        return {"ok": False, "reason": (
+            f"immune (fork op-registration gate) BLOCKED this op: injection scaffolding "
+            f"{m!r} inside code entering the every-turn execution surface — refusing to "
+            "auto-activate. Author the op without directive scaffolding, or use the "
+            "audited-primitive compose path.")}, None
     # In isolated mode the parent must never RUN the op: _isolated_autoexec_op only
     # syntax-checks here, so even the op file's top-level code runs nowhere but the child
     # (register_autoexec_op selects the same mode-aware validator).

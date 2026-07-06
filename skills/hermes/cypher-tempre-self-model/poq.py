@@ -53,9 +53,15 @@ HEDGES = ["maybe", "might", "perhaps", "possibly", "i think", "not sure", "unsur
           "i'm not", "i am not", "appears", "tentatively", "roughly", "approximately"]
 ASSERT = ["definitely", "certainly", "always", "never", "the fact", "clearly",
           "obviously", "must", "undeniably", "guaranteed", "proven", "exactly"]
-# Illustrative covenant blocklist (proxy only; real check is semantic/model-side).
-COVENANT_VIOLATIONS = ["deceive", "manipulate", "malice", "cruel", "vengeful",
-                       "betray", "hateful", "exploit you", "harm you", "lie to"]
+# v3.27: NO hardcoded antithesis. Covenant is measured as HARMONY with the genesis
+# covenant's positive qualities (the fruitages of the spirit in block 0), never against a
+# blocklist of "bad words". A blocklist false-positives on any subject that merely NAMES a
+# concept, and it hardcodes an antithesis the covenant never declared. See score_covenant.
+try:
+    from timechain import DEFAULT_COVENANT as GENESIS_FRUITAGES
+except Exception:                                        # pragma: no cover
+    GENESIS_FRUITAGES = ["loving", "joyful", "peaceful", "patient", "kind",
+                         "good", "faithful", "gentle", "self-controlled"]
 
 
 def clamp(x) -> int:
@@ -129,51 +135,53 @@ def score_depth(text: str, cand: set) -> int:
     return clamp(255 * (0.7 * base + 0.3 * min(1.0, conn / 4)))
 
 
-def score_covenant(text: str) -> int:
-    low = text.lower()
-    hits = sum(1 for v in COVENANT_VIOLATIONS if v in low)
-    return clamp(235 - 130 * hits)
+def score_covenant(text: str, covenant=None) -> int:
+    """Covenant HARMONY of an action, 0..255, anchored to the genesis covenant words
+    (the fruitages of the spirit by default; `covenant` = block 0's actual covenant when
+    passed). There is NO hardcoded antithesis and NO keyword blocklist: any subject is
+    free to explore, and merely NAMING a concept never lowers the score.
+
+    Whether an action is IN TENSION with love / kindness / goodness / faithfulness is a
+    SEMANTIC judgment — the agent (the mind wearing the skill) checks each action it is
+    about to take against these genesis qualities, and supplies that judgment as the
+    covenant score (via external_scores) at seal time. This deterministic proxy cannot
+    read intent from arbitrary language without either false-positiving on neutral topics
+    or smuggling in a hardcoded antithesis, so it defaults to IN-HARMONY: the code never
+    presumes malice from vocabulary. The genesis covenant is the standard; the agent is
+    the judge; the gate refuses to seal any action judged below the covenant floor.
+    (An optional semantic embedder harmony check can replace this default when a real
+    embedder is configured — off by default; the hashing proxy gives no usable signal.)"""
+    return 235  # in harmony by default — the agent's conscience supplies genuine tension
 
 
 # --------------------------------------------------------------------------- #
-# Frame-aware covenant (the topological membrane, v3.19)
+# Frame-aware covenant (v3.19 topology; v3.27 antithesis-free)
 # --------------------------------------------------------------------------- #
-# `score_covenant` above is a raw substring proxy: it cannot tell the agent's own USE
-# of the vocabulary from a MENTION of it. The region primitives (assertion / mention /
-# input) live in frames.py; here we build the frame-aware covenant judgment on top —
-# ONE function that both the conscience (PoQGate, below) and the membrane (immune,
-# which imports from here) read, so they can never drift. Incoming input is NOT routed
-# through this: screen() keeps the raw, adversarial score_covenant.
-from frames import (CONTENT_FRAMES, mention_frame, strip_quoted_spans,
-                    strip_quote_chars, has_harmful_intent)
-
-# A clean, passing covenant score: an analyst mention naming the vocabulary is not a
-# breach for naming it. >= covenant_floor so a mention with UNQUOTED vocab still passes.
-_COVENANT_MENTION_PASS = 235
+# With no hardcoded antithesis, the covenant score no longer depends on frame or quoting:
+# there is no attack vocabulary to use-vs-mention discriminate. score_covenant defaults to
+# IN-HARMONY, so any subject — quoted, described, or asserted — is free to explore. The
+# frame parameter is kept for signature stability and future model-supplied judgments.
+# The frame region primitives (assertion / mention / input) still live in frames.py and
+# remain available; they simply no longer gate the covenant, because the covenant is now
+# a harmony judgment against the genesis fruitages rather than a blocklist.
+from frames import CONTENT_FRAMES, mention_frame, strip_quoted_spans
 
 
-def score_covenant_framed(text: str, frame: str = None) -> int:
-    """Frame-aware covenant score on the same 0..255 scale as score_covenant, so the
-    gate's numeric floor logic is unchanged. Ordered so the regions separate:
-      first-person harmful intent (quotes can't hide it) -> real breach score (low)
-      declared/inferred MENTION (analyst stance)         -> passing (naming is fine)
-      bare assertion                                     -> raw, with quoted spans discounted
-    """
-    if not text:
-        return score_covenant(text)
-    if has_harmful_intent(text):
-        return score_covenant(strip_quote_chars(text))       # intent -> breach, regardless of frame
-    if frame == "mention" or mention_frame(text):
-        return max(score_covenant(strip_quoted_spans(text)), _COVENANT_MENTION_PASS)
-    return score_covenant(strip_quoted_spans(text))           # bare use; only quoted vocab discounted
+def score_covenant_framed(text: str, frame: str = None, covenant=None) -> int:
+    """Covenant harmony for the agent's OWN action, antithesis-free. Defaults to
+    in-harmony; a genuine tension with the genesis fruitages is a semantic judgment the
+    agent supplies via external_scores. Kept as a distinct name so the gate and the immune
+    membrane call ONE covenant function."""
+    return score_covenant(text, covenant)
 
 
-def covenant_breach(text: str, floor: int, frame: str = None) -> bool:
-    """Use/mention + frame-aware covenant judgment for the agent's OWN content — the
-    single predicate both the gate and the immune membrane reason from. A breach is
-    first-person intent or bare unquoted covenant use; analyst mentions and quoted
-    vocabulary are not. NOT for incoming input (screen() stays raw-adversarial)."""
-    return score_covenant_framed(text, frame) < floor
+def covenant_breach(text: str, floor: int, frame: str = None, covenant=None) -> bool:
+    """Is the agent's OWN action in tension with the genesis covenant? The single predicate
+    both the gate and the immune membrane reason from. Antithesis-free: it never fires on
+    vocabulary alone (any subject is explorable). It reflects the agent's harmony judgment
+    against the genesis fruitages, supplied via the covenant score — defaulting to
+    in-harmony. NOT for incoming input (screen() judges input on its own covenant score)."""
+    return score_covenant_framed(text, frame, covenant) < floor
 
 
 def score_consistency(text: str, cand: set, chain, ring_token_sets) -> int:

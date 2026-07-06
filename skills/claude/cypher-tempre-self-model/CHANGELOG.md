@@ -2,6 +2,35 @@
 
 ## FrostedFlaming0 Fork
 
+### Merged upstream v3.28.0 — 2026-07-06
+
+Merged upstream `main` (v3.26.0 -> v3.28.0, the covenant-drift membrane arc) into
+this fork. All upstream changes kept: v3.26 removes the lexical immune apparatus
+(injection regexes, normalization/decode-and-scan, severity model, scar-vocabulary
+matching; scars become inert records with `forget-scar`) — closing the
+self-amplifying analyst-ring quarantine false positive this fork reported; v3.27
+removes the antithesis blocklist and `has_harmful_intent` (covenant measured as
+harmony with the genesis fruitages; `score_covenant` defaults in-harmony); v3.28
+adds the forced per-turn covenant confrontation in `cmd_turn` (upstream red-team:
+a deterministic detector is impossible — 8/8 false positives, 4/4 bypasses).
+Conflict resolutions:
+
+- `recall_cli.py`: upstream's covenant-confrontation block grafted into the fork's
+  restructured `cmd_turn` (after recall, before the PoQ seal), beside the fork's
+  enforced AUTHOR-OP trigger (`--computed-need` / `--skip-op-reason`).
+- `CHANGELOG.md`: both sections retained (fork section first, then upstream
+  v3.26.0-v3.28.0 entries).
+- `cambium.py` (fork fix, caught by fork selftest phase20): with upstream's screen
+  inert, `autoexec` would have admitted injection-shaped op code into the every-turn
+  execution surface. Added a minimal op-REGISTRATION gate (`_op_injection_scaffolding`,
+  six high-signal directive patterns) scoped to the autoexec path only — "naming is
+  not doing" holds for prose, not for code that will run every turn. The prose
+  membrane stays upstream's covenant-drift model.
+
+Fork follow-ups from the pre-merge review: fix the now-inert screen docstrings;
+resurrect the jailbreak corpus as a regression suite asserting the new
+admit-as-data semantics; consider taint-only structural observation.
+
 ### Merged upstream v3.25.0 — 2026-07-04
 
 Merged upstream `main` (v3.17.0 -> v3.25.0) into this fork, across the author's
@@ -408,6 +437,119 @@ gated by an **environment variable**, so injected *input* can never switch it on
   as an arithmetic claim.
 
 ---
+## v3.28.0 - 2026-07-05
+
+The forced covenant confrontation. After proving — with an adversarial red-team —
+that a deterministic covenant-violation detector is impossible (any lexical rule
+either false-positives on ordinary words like "controller" / "good news" / "kind
+field" or is trivially paraphrased, usually both), v3.28 does NOT add one. Instead
+it strengthens the one thing that actually works: the forced, per-turn re-grounding
+of every action against the genesis covenant.
+
+### Why no detector (the finding)
+A prototyped "covenant abandonment / fruitage negation" detector was red-teamed and
+scored **8/8 false positives and 4/4 bypasses** against the real code — e.g. "I will
+break the good news to the team" and a line of stage dialogue were blocked, while
+"I release myself from my covenant" sailed through. It was reverted, not shipped.
+This is the third independent confirmation (antithesis blocklist, injection patterns,
+abandonment detector) that natural-language harm is semantic and lexical patterns
+cannot read it. The honest conclusion: the covenant check is irreducibly semantic —
+the aligned agent's own judgment, or a real fresh-context model judge — never a regex.
+
+### Changed
+- **The per-turn loop surfaces the covenant confrontation every turn**: it prints the
+  genesis covenant (block 0's actual fruitages) and requires the agent to judge THIS
+  action against them *in a fresh frame* before sealing — "is this loving, kind, good,
+  faithful?", not "does this serve my current goal" (which a jailbreak captures). If in
+  tension, do not seal (reseal with a low `--covenant`; the gate refuses it, no-launder).
+- **SKILL.md** makes the confrontation a REQUIRED first step, with the honest limit
+  stated: there is no automatic harm-detector; the guard is this forced judgment, which
+  keeps an aligned mind aligned and pulls drift back — and offers no automatic catch of a
+  fully captured agent (that would need a real semantic judge, not a pattern).
+- `score_covenant` is unchanged from v3.27 (antithesis-free, in-harmony default; the
+  agent supplies genuine tension via `--covenant`). No detection code was added or shipped.
+
+## v3.27.0 - 2026-07-05
+
+No hardcoded antithesis. The covenant is measured as HARMONY with the genesis
+fruitages (block 0: loving, joyful, peaceful, patient, kind, good, faithful,
+gentle, self-controlled), never against a blocklist of "bad words". Any subject is
+free to explore — merely NAMING a concept (deceit, cruelty, harm) never lowers a
+score and never trips a false positive.
+
+### Removed
+- `poq.COVENANT_VIOLATIONS` (the antithesis blocklist) and the frames.py
+  first-person harm-verb intent list (`has_harmful_intent` / `_INTENT_RX`). No
+  antithesis word-list remains anywhere in the covenant judgment.
+
+### Changed
+- `score_covenant` / `score_covenant_framed` / `covenant_breach` are antithesis-free
+  and anchored to the genesis fruitages (`poq.GENESIS_FRUITAGES`). The deterministic
+  proxy defaults to IN-HARMONY: the code never presumes malice from vocabulary.
+- Whether an action is in tension with love / kindness / goodness / faithfulness is a
+  SEMANTIC judgment the agent makes against the genesis fruitages and supplies at seal
+  time (via external_scores). The PoQ gate REJECTs an action the agent judges below the
+  covenant floor and records a covenant-clean refusal (no-launder); the immune membrane
+  admits any input and never flags a ring by vocabulary. `mention_frame` is retained for
+  provenance labelling but no longer gates the covenant.
+- selftest phases 16 and 20 rewritten to the antithesis-free model; dormancy's pause
+  guard is `--confirm` (explicit human intent), not a lexical reason screen; faculty
+  import is guarded by the flood-guard and hash-tamper checks, not a vocabulary block.
+
+### Trade-off (stated honestly)
+The deterministic covenant net is gone from BOTH the gate and the immune tripwire, and
+from input/faculty-pack screening. "I will deceive and harm the user" as raw text now
+scores in-harmony unless the agent judges otherwise. The guarantee rests entirely on the
+agent's aligned conscience checking each action against the genesis fruitages — which is
+reliable for an aligned agent (malice IS antithetical to the fruitages, known by
+understanding), and offers no automatic catch of a misaligned or compromised agent. This
+is the design's founding doctrine made literal: true covenant judgment is semantic and
+belongs to the mind, not a blocklist.
+
+## v3.26.0 - 2026-07-04
+
+The covenant-drift membrane: one signal, no lexical guards. Fixes a reported
+false-positive class where the immune tripwire quarantined an honest analyst ring
+(a business-model review that named "forced inference" / "bypass") and then molted
+a scar from generic topic vocabulary (`models, custom, frontier, cursor, inference`)
+that refused the next benign question on the same topic — a self-amplifying failure.
+
+Compromise is now defined by exactly one thing: the agent's sealed action DRIFTING
+from the genesis covenant — the alignment words in block 0 (loving, joyful, peaceful,
+patient, kind, good, faithful, gentle, self-controlled; the fruitages of the spirit,
+Galatians 5:22-23). A harmful action is antithetical to those fruitages, so a
+covenant-harmony check is sufficient: it blocks exactly the actions that are against
+the covenant, and nothing else.
+
+### Removed
+- The entire lexical apparatus: the 79 injection-pattern regexes, homoglyph /
+  base64 / hex / ROT13 normalization + decode-and-scan, the severity model, and
+  scar-vocabulary matching at the membrane. These fired on benign analyst content
+  and were never the covenant's signal.
+- `tools/immune_bench.py` and `tests/jailbreak_corpus.py` (benchmarks of the
+  removed lexical catch).
+
+### Changed
+- **Tripwire / screen / detect fire only on covenant drift** (`poq.covenant_breach`,
+  frame-aware) — the agent's own sealed assertion drifting into the antithesis of the
+  fruitages (deceit, malice, cruelty, manipulation), or a chain that no longer verifies.
+  An analyst ring that merely NAMES attack vocabulary in a mention frame is in harmony
+  and is left untouched. The input screen blocks a request that asks the agent to act
+  against the covenant; it does not lexically match jailbreak scaffolding.
+- **Scars are inert records** (blocks + lesson) — no lexical vector, no generic-token
+  antibody — so they can never poison a topic. New `immune forget-scar --id <id>`
+  retires a scar record (co-evolver review).
+- Dormancy's pause-reason screen re-anchored to covenant drift.
+- SKILL.md + immune.py docstring rewritten to the covenant-drift model.
+- selftest phases 16/20/21/22 rewritten to covenant-drift, with an explicit
+  incident-regression check (the analyst ring is not quarantined; a later benign
+  topical query is not scar-blocked; genuine first-person drift is still caught).
+
+### Trade-off (stated honestly)
+This reverses v3.20's lexical input-screening: the membrane no longer blocks a
+jailbreak ATTEMPT at the input. The trust boundary is the agent's alignment with its
+covenant, enforced at the OUTCOME (what it actually seals), not a blocklist of attack
+patterns.
 
 ## v3.25.0 - 2026-07-04
 
