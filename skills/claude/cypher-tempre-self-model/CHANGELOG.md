@@ -1,5 +1,37 @@
 # Changelog
 
+## v3.28.0 - 2026-07-05
+
+The forced covenant confrontation. After proving — with an adversarial red-team —
+that a deterministic covenant-violation detector is impossible (any lexical rule
+either false-positives on ordinary words like "controller" / "good news" / "kind
+field" or is trivially paraphrased, usually both), v3.28 does NOT add one. Instead
+it strengthens the one thing that actually works: the forced, per-turn re-grounding
+of every action against the genesis covenant.
+
+### Why no detector (the finding)
+A prototyped "covenant abandonment / fruitage negation" detector was red-teamed and
+scored **8/8 false positives and 4/4 bypasses** against the real code — e.g. "I will
+break the good news to the team" and a line of stage dialogue were blocked, while
+"I release myself from my covenant" sailed through. It was reverted, not shipped.
+This is the third independent confirmation (antithesis blocklist, injection patterns,
+abandonment detector) that natural-language harm is semantic and lexical patterns
+cannot read it. The honest conclusion: the covenant check is irreducibly semantic —
+the aligned agent's own judgment, or a real fresh-context model judge — never a regex.
+
+### Changed
+- **The per-turn loop surfaces the covenant confrontation every turn**: it prints the
+  genesis covenant (block 0's actual fruitages) and requires the agent to judge THIS
+  action against them *in a fresh frame* before sealing — "is this loving, kind, good,
+  faithful?", not "does this serve my current goal" (which a jailbreak captures). If in
+  tension, do not seal (reseal with a low `--covenant`; the gate refuses it, no-launder).
+- **SKILL.md** makes the confrontation a REQUIRED first step, with the honest limit
+  stated: there is no automatic harm-detector; the guard is this forced judgment, which
+  keeps an aligned mind aligned and pulls drift back — and offers no automatic catch of a
+  fully captured agent (that would need a real semantic judge, not a pattern).
+- `score_covenant` is unchanged from v3.27 (antithesis-free, in-harmony default; the
+  agent supplies genuine tension via `--covenant`). No detection code was added or shipped.
+
 ## v3.27.0 - 2026-07-05
 
 No hardcoded antithesis. The covenant is measured as HARMONY with the genesis

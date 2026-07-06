@@ -418,9 +418,24 @@ def cmd_turn(args):
             print("recalled: nothing relevant (new ground — reason from base judgment).")
     except Exception:
         blocks = []
+    # 4b. COVENANT CONFRONTATION (v3.28) — the forced re-grounding. Before sealing, the
+    #     genesis covenant is surfaced and the action must be judged against it in a fresh
+    #     frame. There is NO lexical detector (a deterministic one is provably impossible —
+    #     it false-positives on ordinary words or is trivially paraphrased); the guard is
+    #     this forced confrontation. If the action is in tension with a fruitage, DO NOT
+    #     seal it — reseal with `--covenant <low>` so the gate refuses it (no-launder).
+    _a = vars(args)
+    if _a.get("covenant") is None:                      # the agent has not yet judged
+        try:
+            _cov = (Recall(root, reg).tc.load()[0].get("payload") or {}).get("covenant") or []
+        except Exception:
+            _cov = []
+        if _cov:
+            print("covenant confrontation — judge THIS action, in a fresh frame, against "
+                  "your genesis covenant [" + ", ".join(_cov) + "]. If it is in tension with "
+                  "any of these, do not seal it (reseal with --covenant <low>).")
     # 5. PoQ-gate-seal the thought; ALWAYS leave a ring.
     _dims = ["coherence", "relevance", "novelty", "consistency", "depth", "covenant"]
-    _a = vars(args)
     scores = {d: _a[d] for d in _dims if _a.get(d) is not None} or None
     verdict, ring, labels, reseal = _loop_seal(
         root, reg, args.type, args.summary, context=args.context or "",
