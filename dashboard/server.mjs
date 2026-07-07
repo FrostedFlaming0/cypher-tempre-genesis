@@ -1006,7 +1006,13 @@ async function cphyOverview() {
       etchRecallN: onchain.etch_recall_n ?? 3,
       lastSyncTs: onchain.last_sync_ts ?? null,
       targets: Object.entries(onchain.targets || {}).map(([ring, t]) => ({
-        ring: Number(ring), address: t.address, ringHash: t.ring_hash,
+        ring: Number(ring),
+        address: t.address,
+        ringHash: t.ring_hash,
+        // Real-token accounting: cumulative CPHY (Base) burned to this ring
+        // across all rotations, and which one-shot rotation is current.
+        burnedTotal: Number(t.burned_total || 0),
+        rotation: Number(t.rotation || 0),
       })),
       facultyTargets: Object.entries(onchain.faculty_targets || {}).map(([key, t]) => ({
         key, kind: t.kind, id: t.id, name: t.name, address: t.address, status: t.status,
@@ -1388,6 +1394,364 @@ async function emergentOverview() {
   };
 }
 
+// ---- The Organ Panel: every organ of the skill, one audited view ---- //
+// One pass over the chain + registries + telemetry computes all sections;
+// the whole panel is memoized on ledger/telemetry state so a hammered GET
+// costs one compute. Every section fails soft: a missing organ renders as
+// its honest zero-state, never as a dashboard error.
+
+async function readTelemetryLines() {
+  const telPath = path.join(timechainRoot, 'chain', 'telemetry.jsonl');
+  if (!fsSync.existsSync(telPath)) return [];
+  const events = [];
+  for (const line of (await fs.readFile(telPath, 'utf8')).split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try { events.push(JSON.parse(line)); } catch { /* torn line */ }
+  }
+  return events;
+}
+
+async function organsOverview() {
+  const parts = [];
+  for (const rel of [['chain', 'rings.jsonl'], ['chain', 'telemetry.jsonl'], ['registry', 'grown.json']]) {
+    try {
+      const st = await fs.stat(path.join(timechainRoot, ...rel));
+      parts.push(`${st.size}:${st.mtimeMs}`);
+    } catch { parts.push('none'); }
+  }
+  return memoizedRead(`organs:${parts.join('|')}`, () => computeOrgans(), 30_000);
+}
+
+async function computeOrgans() {
+  const rings = await loadRings();
+  const telemetry = await readTelemetryLines();
+  const out = {};
+  const section = async (name, fn) => {
+    try { out[name] = await fn(); } catch (error) { out[name] = { error: String(error.message || error).slice(0, 240) }; }
+  };
+  await section('vitals', () => vitalsSection(rings));
+  await section('census', () => censusSection(rings));
+  await section('chronosynaptic', () => chronoSection(rings));
+  await section('cambium', () => cambiumSection(rings));
+  await section('conscience', () => conscienceSection(rings, telemetry));
+  await section('reflective', () => reflectiveSection(rings, telemetry));
+  await section('continuum', () => continuumSection());
+  return out;
+}
+
+async function vitalsSection(rings) {
+  const head = rings.at(-1) || null;
+  let doctor = null;
+  const run = await runSkillCli('doctor.py', ['--json'], { timeout: PY_READ_TIMEOUT_MS }).catch(() => null);
+  if (run) {
+    // doctor exits non-zero when any check degrades — the JSON is still the verdict.
+    const parsed = parseMaybeJson(run.stdout);
+    if (parsed?.results) {
+      doctor = { worst: parsed.worst ?? null, checks: parsed.results.map((r) => ({ check: r.check, status: r.status, detail: truncate(String(r.detail || ''), 160) })) };
+    }
+  }
+  const paused = await readJsonSafe(path.join(timechainRoot, 'chain', 'PAUSED'), null);
+  const enforce = await readJsonSafe(path.join(timechainRoot, 'chain', '.enforce.json'), {});
+  const hippo = await readJsonSafe(path.join(timechainRoot, 'chain', 'hippocampus', 'meta.json'), null);
+  const digest = await readJsonSafe(path.join(timechainRoot, 'chain', 'telemetry.digest.json'), null);
+  let telemetrySize = 0;
+  try { telemetrySize = (await fs.stat(path.join(timechainRoot, 'chain', 'telemetry.jsonl'))).size; } catch { /* absent */ }
+  const checkpoints = await readJsonlSafe(path.join(timechainRoot, 'chain', 'checkpoints.jsonl'));
+  const consensusCfg = await readJsonSafe(path.join(timechainRoot, 'chain', 'consensus', 'config.json'), null);
+  const vault = await readJsonSafe(path.join(timechainRoot, 'registry', 'cphy', 'vault.json'), null);
+  const attests = rings.filter((r) => r.ring_type === 'cphy-digest');
+  return {
+    doctor,
+    dormancy: paused ? { paused: true, since: paused.since, reason: paused.reason } : { paused: false },
+    enforcement: { turnHead: enforce.turn_head ?? null, nudges: enforce.nudges ?? 0, head: head?.index ?? null },
+    hippocampus: hippo ? { indexed: hippo.indexed_count ?? null, headIndex: hippo.head_index ?? null, fresh: hippo.head_index === (head?.index ?? -1) } : null,
+    telemetryBacklog: digest ? { digestedTo: digest.digested_to ?? 0, size: telemetrySize, undigested: Math.max(0, telemetrySize - (digest.digested_to || 0)), lastDigestRing: digest.ring_index ?? null } : { digestedTo: 0, size: telemetrySize, undigested: telemetrySize, lastDigestRing: null },
+    checkpoints: { count: checkpoints.length, latest: checkpoints.at(-1)?.index ?? null, unanchored: head && checkpoints.length ? head.index - checkpoints.at(-1).index : (head?.index ?? 0) },
+    // Never expose witness keys — presence and shape only.
+    consensus: consensusCfg ? { configured: true, n: consensusCfg.n ?? null, quorum: consensusCfg.quorum ?? null } : { configured: false },
+    vault: vault?.secrets ? { present: true, secrets: Object.keys(vault.secrets).length } : { present: false },
+    ledgerAttests: { count: attests.length, latest: attests.at(-1)?.index ?? null },
+  };
+}
+
+async function censusSection(rings) {
+  const byType = {};
+  let largest = { bytes: 0, index: null, type: null };
+  let longestGap = { seconds: 0, from: null, to: null };
+  let prevTs = null;
+  const days = new Set();
+  for (const r of rings) {
+    byType[r.ring_type] = (byType[r.ring_type] || 0) + 1;
+    const bytes = JSON.stringify(r.payload || {}).length;
+    if (bytes > largest.bytes) largest = { bytes, index: r.index, type: r.ring_type };
+    const ts = Date.parse(r.timestamp || '');
+    if (Number.isFinite(ts)) {
+      days.add(String(r.timestamp).slice(0, 10));
+      if (prevTs != null) {
+        const gap = (ts - prevTs) / 1000;
+        if (gap > longestGap.seconds) longestGap = { seconds: Math.round(gap), from: r.index - 1, to: r.index };
+      }
+      prevTs = ts;
+    }
+  }
+  const genesis = rings[0] || null;
+  const head = rings.at(-1) || null;
+  const spanDays = genesis && head ? Math.max(1, (Date.parse(head.timestamp) - Date.parse(genesis.timestamp)) / 86_400_000) : 1;
+  const blobIndex = await readJsonSafe(path.join(timechainRoot, 'chain', 'blockspace', 'index.json'), {});
+  const blobs = Object.values(blobIndex);
+  let ringsBytes = 0;
+  try { ringsBytes = (await fs.stat(path.join(timechainRoot, 'chain', 'rings.jsonl'))).size; } catch { /* absent */ }
+  const growthTypes = ['faculty', 'promotion', 'faculty-wake', 'faculty-activated', 'faculty-op-proposed'];
+  return {
+    total: rings.length,
+    head: head ? { index: head.index, ts: head.timestamp } : null,
+    genesis: genesis ? { ts: genesis.timestamp, name: genesis.payload?.name || null, covenant: genesis.payload?.covenant || null } : null,
+    byType: Object.fromEntries(Object.entries(byType).sort((a, b) => b[1] - a[1])),
+    ringsPerDay: Number((rings.length / spanDays).toFixed(1)),
+    activeDays: days.size,
+    blockspace: { blobs: blobs.length, bytes: blobs.reduce((s, b) => s + (Number(b.size) || 0), 0) },
+    chainBytes: ringsBytes,
+    largestRing: largest,
+    longestGap,
+    growthShare: rings.length ? Number((growthTypes.reduce((s, t) => s + (byType[t] || 0), 0) / rings.length).toFixed(3)) : 0,
+  };
+}
+
+async function chronoSection(rings) {
+  const collapses = rings.filter((r) => r.ring_type === 'synthesis'
+    && ['chronosynaptic_collapse', 'chronosynaptic_explicit_collapse'].includes(r.payload?.event));
+  const winner = (p) => p.chosen_path?.[0] ?? p.chosen_perspective ?? null;
+  const leaderboard = {};
+  const breadths = {};
+  let flushes = 0;
+  for (const r of collapses) {
+    const w = winner(r.payload);
+    if (w) leaderboard[w] = (leaderboard[w] || 0) + 1;
+    const breadth = r.payload.collapsed_from ?? (r.payload.considered_forks || []).length;
+    breadths[breadth] = (breadths[breadth] || 0) + 1;
+    if (Array.isArray(r.payload.dream_cache_flush) && r.payload.dream_cache_flush.length) flushes += 1;
+  }
+  const emergent = await readJsonSafe(path.join(timechainRoot, 'registry', 'emergent.json'), { faculties: [] });
+  const discards = (emergent.faculties || []).filter((f) => String(f.origin || '').includes('chronosynaptic-discard'));
+  const latest = collapses.at(-1) || null;
+  const forks = (latest?.payload.considered_forks || []).map((f) => ({ perspective: f.perspective, kind: f.kind, visits: f.visits ?? null, value: f.value ?? null }));
+  const values = forks.map((f) => Number(f.value)).filter(Number.isFinite);
+  return {
+    collapses: collapses.length,
+    auto: collapses.filter((r) => r.payload.event === 'chronosynaptic_collapse').length,
+    explicit: collapses.filter((r) => r.payload.event === 'chronosynaptic_explicit_collapse').length,
+    dreamCacheFlushes: flushes,
+    discardFaculties: discards.length,
+    leaderboard: Object.entries(leaderboard).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, wins]) => ({ name, wins })),
+    latest: latest ? {
+      index: latest.index,
+      ts: latest.timestamp,
+      query: truncate(String(latest.payload.query || ''), 200),
+      chosen: winner(latest.payload),
+      synthesis: truncate(String(latest.payload.synthesis || latest.payload.summary || ''), 280),
+      forks,
+      spread: values.length > 1 ? Number((Math.max(...values) - Math.min(...values)).toFixed(1)) : null,
+      uqc: latest.payload.uqc || null,
+      epitaphs: (latest.payload.loser_epitaphs || []).slice(0, 3).map((e) => truncate(String(e.epitaph || e.perspective || ''), 140)),
+    } : null,
+  };
+}
+
+async function cambiumSection(rings) {
+  const grown = await readJsonSafe(path.join(timechainRoot, 'registry', 'grown.json'), {});
+  const baseM = await readJsonSafe(path.join(timechainRoot, 'registry', 'modalities.json'), {});
+  const baseS = await readJsonSafe(path.join(timechainRoot, 'registry', 'senses.json'), {});
+  const census = (list) => ({
+    total: list.length,
+    active: list.filter((f) => f.status !== 'dormant').length,
+    dormant: list.filter((f) => f.status === 'dormant').length,
+  });
+  const effects = { op: 0, frame: 0, hint: 0, none: 0 };
+  const wakeHitsPending = [];
+  let imported = 0;
+  for (const f of [...(grown.modalities || []), ...(grown.senses || [])]) {
+    effects[f.effect?.type || 'none'] = (effects[f.effect?.type || 'none'] || 0) + 1;
+    if (f.wake_hits) wakeHitsPending.push(f.name);
+    if (f.provenance) imported += 1;
+  }
+  // Most-lived faculties: every appearance in a sealed ring's labels is one fire.
+  const fires = new Map();
+  for (const r of rings) {
+    const labels = r.payload?.labels;
+    if (!labels) continue;
+    for (const [kind, key] of [['sense', 'senses'], ['modality', 'modalities']]) {
+      for (const item of labels[key] || []) {
+        const name = typeof item === 'string' ? item : item?.name;
+        if (!name) continue;
+        const k = `${kind}:${name}`;
+        fires.set(k, (fires.get(k) || 0) + 1);
+      }
+    }
+  }
+  const mostLived = [...fires.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+    .map(([k, count]) => ({ kind: k.split(':')[0], name: k.slice(k.indexOf(':') + 1), fires: count }));
+  const wakes = rings.filter((r) => r.ring_type === 'faculty-wake');
+  const prunes = rings.filter((r) => r.ring_type === 'prune');
+  return {
+    base: { modalities: (baseM.modalities || []).length, senses: (baseS.senses || []).length },
+    grownModalities: census(grown.modalities || []),
+    grownSenses: census(grown.senses || []),
+    effects,
+    imported,
+    wakeRings: { count: wakes.length, latest: wakes.at(-1)?.index ?? null },
+    pruneRings: { count: prunes.length, latestSummary: truncate(String(prunes.at(-1)?.payload?.summary || ''), 160) },
+    wakeHitsPending: wakeHitsPending.slice(0, 8),
+    mostLived,
+  };
+}
+
+async function conscienceSection(rings, telemetry) {
+  const verdicts = { SEAL: 0, REVISE: 0, FORCE_UNCERTAINTY: 0, REJECT: 0 };
+  let lastNonSeal = null;
+  for (const e of telemetry) {
+    if (e.event !== 'gate_verdict') continue;
+    const d = e.data?.decision;
+    if (d in verdicts) verdicts[d] += 1;
+    if (d && d !== 'SEAL') lastNonSeal = { decision: d, ts: e.ts, reasons: (e.data.reasons || []).slice(0, 2).map((s) => truncate(String(s), 160)) };
+  }
+  const frames = {};
+  for (const r of rings) {
+    if (r.payload?.frame) frames[r.payload.frame] = (frames[r.payload.frame] || 0) + 1;
+  }
+  const latestVerdictRing = [...rings].reverse().find((r) => r.payload?.poq_verdict?.span_grounding);
+  const policy = await readJsonSafe(path.join(timechainRoot, 'registry', 'policy.json'), null);
+  const scorer = await readJsonSafe(path.join(timechainRoot, 'registry', 'scorer.json'), null);
+  const calibrators = await readJsonSafe(path.join(timechainRoot, 'registry', 'calibrators.json'), null);
+  return {
+    verdicts,
+    lastNonSeal,
+    frames,
+    conjectures: (() => {
+      // A conjecture is open until SOME score ring cites it — score rings can
+      // repeat for one conjecture, so dedupe by the cited ring, never subtract.
+      const scoredRings = new Set(rings.filter((r) => r.ring_type === 'conjecture-score')
+        .map((r) => r.payload?.conjecture_ring).filter((i) => i != null));
+      return {
+        open: rings.filter((r) => r.ring_type === 'conjecture' && !scoredRings.has(r.index)).length,
+        scored: scoredRings.size,
+      };
+    })(),
+    spanGrounding: latestVerdictRing ? { ring: latestVerdictRing.index, ...latestVerdictRing.payload.poq_verdict.span_grounding } : null,
+    scorer: scorer?.status === 'active' ? `trained ${scorer.version || ''}`.trim() : 'hand-2.1 (no trained operator active)',
+    entityGate: Boolean(policy?.floors?.entity_grounding_enforce),
+    appetiteCalibrated: Boolean(policy?.appetite?.calibrated),
+    calibratorsAdjusted: calibrators ? Object.keys(calibrators).length : 0,
+  };
+}
+
+async function reflectiveSection(rings, telemetry) {
+  const autos = rings.filter((r) => r.ring_type === 'autobiography');
+  const dreams = rings.filter((r) => r.ring_type === 'dream');
+  const head = rings.at(-1)?.index ?? 0;
+  const latestAuto = autos.at(-1) || null;
+  const latestDream = dreams.at(-1) || null;
+  const dreamState = await readJsonSafe(path.join(timechainRoot, 'chain', 'dream.json'), null);
+  const salience = await readJsonSafe(path.join(timechainRoot, 'chain', 'salience.json'), {});
+  const salEntries = Object.entries(salience).map(([k, v]) => ({ ring: Number(k), score: Number(v) })).filter((e) => Number.isFinite(e.score));
+  let hippoTerms = null;
+  try {
+    const postings = JSON.parse(await fs.readFile(path.join(timechainRoot, 'chain', 'hippocampus', 'postings.json'), 'utf8'));
+    hippoTerms = Object.keys(postings).length;
+  } catch { /* absent */ }
+  return {
+    autobiography: latestAuto ? {
+      index: latestAuto.index, ts: latestAuto.timestamp,
+      authored: Boolean(latestAuto.payload?.authored),
+      portrait: truncate(String(latestAuto.payload?.summary || ''), 480),
+      ringsSince: head - latestAuto.index,
+      count: autos.length,
+    } : null,
+    dreams: {
+      count: dreams.length,
+      latest: latestDream ? { index: latestDream.index, ts: latestDream.timestamp, summary: truncate(String(latestDream.payload?.summary || ''), 240) } : null,
+      minedTo: dreamState?.mined_to ?? null,
+      missedPositives: telemetry.filter((e) => e.event === 'missed-positive').length,
+    },
+    hippocampus: { terms: hippoTerms },
+    salience: {
+      scored: salEntries.length,
+      top: salEntries.sort((a, b) => b.score - a.score).slice(0, 5),
+      decayed: salEntries.filter((e) => e.score < 0).length,
+    },
+  };
+}
+
+// Long-horizon ingestion lives in PER-TASK chain roots (dirs beside chain/
+// that carry their own chain/rings.jsonl) — the worn identity chain itself
+// seals no continuum blocks.
+async function discoverContinuumRoots() {
+  const roots = [];
+  const candidates = [];
+  for (const entry of await fs.readdir(timechainRoot, { withFileTypes: true }).catch(() => [])) {
+    if (entry.isDirectory() && entry.name !== 'chain' && !entry.name.startsWith('.')) candidates.push(entry.name);
+  }
+  for (const name of ['tasks']) {
+    for (const entry of await fs.readdir(path.join(timechainRoot, name), { withFileTypes: true }).catch(() => [])) {
+      if (entry.isDirectory()) candidates.push(path.join(name, entry.name));
+    }
+  }
+  for (const rel of candidates) {
+    const ringsPath = path.join(timechainRoot, rel, 'chain', 'rings.jsonl');
+    try { ensureInsideRoot(ringsPath); } catch { continue; }
+    if (fsSync.existsSync(ringsPath)) roots.push(rel);
+  }
+  return roots;
+}
+
+async function continuumSection() {
+  const roots = await discoverContinuumRoots();
+  const tasks = [];
+  const totals = { blocks: 0, tokens: 0, redactions: 0, roots: roots.length };
+  for (const rel of roots.slice(0, 12)) {
+    const lines = await readJsonlSafe(path.join(timechainRoot, rel, 'chain', 'rings.jsonl'));
+    let current = null;
+    const segments = [];
+    for (const r of lines) {
+      if (r.payload?.event === 'task_open') {
+        current = { root: rel, objective: truncate(String(r.payload.objective || ''), 160), openedAt: r.timestamp, blocks: 0, tokens: 0, items: 0, chunks: 0, redactions: 0, minTokens: null, maxTokens: null, audit: null, nextAction: null };
+        segments.push(current);
+      }
+      if (!current) continue;
+      if (r.payload?.event === 'continuum') {
+        current.blocks += 1;
+        const t = Number(r.payload.data?.approx_tokens) || 0;
+        current.minTokens = current.minTokens == null ? t : Math.min(current.minTokens, t);
+        current.maxTokens = current.maxTokens == null ? t : Math.max(current.maxTokens, t);
+        if (r.payload.data?.chunk_index === 1) current.redactions += Number(r.payload.data?.redaction_count) || 0;
+      }
+      const m = r.payload?.state?.metrics;
+      if (m) {
+        current.tokens = Number(m.approx_tokens_ingested) || current.tokens;
+        current.items = Number(m.items_done) || current.items;
+        current.chunks = Number(m.chunks_sealed) || current.chunks;
+      }
+      if (r.payload?.state?.audit) current.audit = { reviewed: r.payload.state.audit.review_cursor ?? null, total: r.payload.state.audit.total_blocks ?? null, findings: r.payload.state.audit.findings_total ?? null, complete: Boolean(r.payload.state.audit.complete) };
+      if (r.payload?.state?.next_action) current.nextAction = truncate(String(r.payload.state.next_action), 100);
+    }
+    let coherent = null;
+    const validate = await runSkillCli('continuum.py', ['validate', '--root', path.join(timechainRoot, rel)], { timeout: PY_READ_TIMEOUT_MS }).catch(() => null);
+    if (validate) coherent = /CONTINUUM:\s*COHERENT/.test(validate.stdout || '') ? true : /INCOHERENT/.test(`${validate.stdout}${validate.stderr}`) ? false : null;
+    for (const seg of segments) {
+      totals.blocks += seg.blocks;
+      totals.tokens += seg.tokens;
+      totals.redactions += seg.redactions;
+      tasks.push({ ...seg, coherent });
+    }
+  }
+  tasks.sort((a, b) => b.tokens - a.tokens);
+  return {
+    roots,
+    tasks: tasks.slice(0, 16),
+    totals,
+    largest: tasks[0] || null,
+  };
+}
+
 // ---- Mutations: the owner's hands on their own blockspace ---- //
 // Every mutation requires either the paired bridge token (remote page) or a
 // trusted local direct request — and is serialized through one queue because
@@ -1456,6 +1820,15 @@ async function handleCphyMutation(req, url) {
     const to = requireRingIndex(body.to ?? body.from, 'to');
     if (to < from || to - from > 32) throw httpError('Register at most 33 rings per call (from <= to).');
     return mutateViaCli('cphy.py', ['onchain', 'target', '--from', String(from), '--to', String(to)]);
+  }
+  if (url.pathname === '/api/cphy/sync') {
+    // The ONLY way tokens register: cphy.py reads the pinned canonical
+    // contract's balances at the keyless deposit addresses over allowlisted
+    // RPCs (read-only — never sends, never signs), appends an
+    // onchain-observe event when a balance changed, and STAGES etches for
+    // the owner's consent. Genuinely longer than the mutate default: the
+    // oracle makes sequential RPC round-trips (15s worst case per address).
+    return mutateViaCli('cphy.py', ['onchain', 'sync'], { timeout: 8 * 60_000 });
   }
   return null;
 }
@@ -1804,6 +2177,10 @@ async function handle(req, res) {
     }
     if (url.pathname === '/api/registry/emergent') {
       sendJson(res, 200, await emergentOverview());
+      return;
+    }
+    if (url.pathname === '/api/organs') {
+      sendJson(res, 200, await organsOverview());
       return;
     }
     if (req.method === 'POST' && (url.pathname.startsWith('/api/cphy/') || url.pathname.startsWith('/api/pack/')
