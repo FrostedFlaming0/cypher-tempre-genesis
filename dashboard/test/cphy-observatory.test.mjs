@@ -351,12 +351,37 @@ test('nursery paste surfaces a skill decline as an error, never as success', { s
   assert.equal(act.status, 422, 'an activate decline must not read as success');
 });
 
+test('organ panel computes census and fails soft on absent organs', async (t) => {
+  const root = await createCphyRoot();
+  const { child, port } = await startServer(root);
+  t.after(() => child.kill());
+
+  const { status, json } = await request(port, '/api/organs');
+  assert.equal(status, 200);
+  // Census from the 5 fixture rings.
+  assert.equal(json.census.total, 5);
+  assert.equal(json.census.genesis.name, 'fixture');
+  assert.equal(json.census.byType.genesis, 1);
+  // Absent organs render as honest zero-states, never errors.
+  assert.equal(json.vitals.doctor, null, 'no doctor.py in the fixture root');
+  assert.equal(json.vitals.consensus.configured, false);
+  assert.equal(json.continuum.totals.roots, 0, 'no per-task chain roots in the fixture');
+  // Only synthesis rings carrying a chronosynaptic_* event are collapses —
+  // other organs seal ring_type synthesis too, and must not be counted.
+  assert.equal(json.chronosynaptic.collapses, 0);
+  assert.equal(json.conscience.conjectures.scored, 0);
+  // Token-lane fields for the two-lane CPHY band.
+  const overview = await request(port, '/api/cphy/overview');
+  assert.equal(overview.json.onchain.targets[0].burnedTotal, 0);
+  assert.equal(overview.json.onchain.targets[0].rotation, 0);
+});
+
 test('observatory reads require pairing for remote origins; hostile origins refused', async (t) => {
   const root = await createCphyRoot();
   const { child, port } = await startServer(root);
   t.after(() => child.kill());
 
-  for (const pathname of ['/api/cphy/overview', '/api/cphy/blocks', '/api/retrieval/history', '/api/immune', '/api/forks', '/api/registry/emergent']) {
+  for (const pathname of ['/api/cphy/overview', '/api/cphy/blocks', '/api/retrieval/history', '/api/immune', '/api/forks', '/api/registry/emergent', '/api/organs']) {
     const hostile = await request(port, pathname, { headers: { origin: 'https://evil.example' } });
     assert.equal(hostile.status, 403, `${pathname} hostile`);
     const unpaired = await request(port, pathname, { headers: { origin: 'https://cyphertempre.ai' } });
@@ -398,6 +423,7 @@ test('mutation routes refuse unpaired remotes and validate their inputs', async 
     ['/api/immune/rollback', JSON.stringify({ height: 1, confirm: 'QUARANTINE 1' })],
     ['/api/registry/activate', JSON.stringify({ selector: 'E1' })],
     ['/api/registry/propose', JSON.stringify({ kind: 'sense', name: 'Remote Sense', function: 'x' })],
+    ['/api/cphy/sync', '{}'],
   ];
   for (const [pathname, body] of mutations) {
     const remote = await request(port, pathname, {
