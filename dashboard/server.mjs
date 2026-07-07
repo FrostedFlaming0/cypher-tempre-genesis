@@ -1341,6 +1341,53 @@ async function readJsonlSafe(file) {
   }).filter(Boolean);
 }
 
+// ---- The Emergent Nursery: Dream-Cache faculties -> the active self ---- //
+// The Dream Cache (registry/emergent.json) holds faculties the mind proposed
+// for itself. The nursery lets the owner COPY one out as JSON, PASTE one in
+// (it lands as an INERT proposal via cambium.py propose-op), and ACTIVATE one
+// into the active registry (cambium.py activate — the explicit human-consent
+// step). Op code is stored inert and never executed by any of this: the CLI
+// returns it for the owner to place in active_ops.py by hand.
+
+async function emergentOverview() {
+  const emergent = await readJsonSafe(path.join(timechainRoot, 'registry', 'emergent.json'), { faculties: [] });
+  const grown = await readJsonSafe(path.join(timechainRoot, 'registry', 'grown.json'), {});
+  const baseModalities = await readJsonSafe(path.join(timechainRoot, 'registry', 'modalities.json'), {});
+  const baseSenses = await readJsonSafe(path.join(timechainRoot, 'registry', 'senses.json'), {});
+  const faculties = (emergent.faculties || []).map((f) => ({
+    eid: f.eid ?? null,
+    kind: f.kind === 'modality' ? 'modality' : 'sense',
+    name: String(f.name || ''),
+    function: truncate(String(f.function || ''), 400),
+    category: f.category || 'knowledge',
+    origin: f.origin || null,
+    seedTerms: (f.seed_terms || []).slice(0, 16),
+    status: f.status || 'emergent',
+    recurrence: f.recurrence ?? 1,
+    bornAt: f.born_at || null,
+    promotedToId: f.promoted_to_id ?? null,
+    // Full op code up to the paste cap (20k) so a copied faculty round-trips
+    // intact; the UI truncates for DISPLAY only.
+    opCode: f.op_code ? truncate(String(f.op_code), 20000) : null,
+    opCodeChars: f.op_code ? String(f.op_code).length : 0,
+  }));
+  // Lifecycle in the wild: 'emergent' (sprouted), 'proposed'/'proposal'
+  // (model-authored, awaiting the human), 'promoted' (recurrence path) and
+  // 'activated' (human path) — the last two are already in the active self.
+  const inSelf = (f) => f.promotedToId != null || f.status === 'activated' || f.status === 'promoted';
+  return {
+    doctrine: 'The Dream Cache proposes; the owner disposes. Nothing model-authored runs on activation — op code stays inert until you place it in active_ops.py yourself.',
+    faculties,
+    counts: {
+      emergent: faculties.filter((f) => !inSelf(f) && f.status === 'emergent').length,
+      proposed: faculties.filter((f) => !inSelf(f) && (f.status === 'proposed' || f.status === 'proposal')).length,
+      inSelf: faculties.filter(inSelf).length,
+      activeModalities: (baseModalities.modalities || []).length + (grown.modalities || []).length,
+      activeSenses: (baseSenses.senses || []).length + (grown.senses || []).length,
+    },
+  };
+}
+
 // ---- Mutations: the owner's hands on their own blockspace ---- //
 // Every mutation requires either the paired bridge token (remote page) or a
 // trusted local direct request — and is serialized through one queue because
@@ -1480,6 +1527,106 @@ async function handleChainMutation(req, url) {
     }
     const lesson = cleanMemo(body.lesson || 'dashboard-initiated rollback', 400);
     return mutateViaCli('immune.py', ['rollback', '--height', String(height), '--lesson', lesson]);
+  }
+  return null;
+}
+
+// Names/selectors become argparse POSITIONALS or option values — a leading
+// dash would be read as a flag, so the first char must be alphanumeric.
+const FACULTY_NAME_RX = /^[A-Za-z0-9][A-Za-z0-9 .'’-]{2,79}$/;
+const SEED_TERM_RX = /^[A-Za-z0-9][A-Za-z0-9_-]{0,24}$/;
+
+// cambium's propose-op/activate mutate files INSIDE the epoch hash perimeter
+// (emergent.json, grown.json) but — unlike wake/prune — do not reseal it.
+// Reseal here so the owner's own dashboard edit never reads as TAMPERED.
+// Fail-soft: the mutation already succeeded; a reseal failure is reported.
+async function resealRegistryEpoch(reason) {
+  try {
+    const run = await enqueueMutation(() => runSkillCli('epochs.py', ['seal', '--reason', reason.slice(0, 120)]));
+    return { resealed: run.ok, note: (run.stdout || run.stderr || '').trim().split(/\r?\n/).pop() || '' };
+  } catch (error) {
+    return { resealed: false, note: error.message };
+  }
+}
+
+async function handleRegistryMutation(req, url) {
+  requireMutationAuth(req);
+  if (url.pathname === '/api/registry/activate') {
+    const body = await jsonBody(req);
+    const selector = String(body.selector || '').trim();
+    if (!FACULTY_NAME_RX.test(selector) && !/^E\d{1,6}$/.test(selector)) {
+      throw httpError('selector must be an emergent eid (like E12) or the faculty name.');
+    }
+    const outcome = await mutateViaCli('cambium.py', ['activate', selector]);
+    const cliText = typeof outcome.result === 'string' ? outcome.result : JSON.stringify(outcome.result || '');
+    // cmd_activate declines with exit 0 ("-> no emergent proposal matched …");
+    // the registry, not the exit code, is the proof of activation.
+    if (/->\s*no emergent/i.test(cliText)) {
+      throw httpError(`The skill declined the activation: ${truncate(cliText.replace(/\s+/g, ' ').trim(), 300)}`, 422);
+    }
+    const after = await emergentOverview();
+    const selLc = selector.toLowerCase();
+    const faculty = after.faculties.find((f) => String(f.eid || '').toLowerCase() === selLc
+      || f.name.toLowerCase() === selLc) || null;
+    if (!faculty || (faculty.status !== 'activated' && faculty.promotedToId == null)) {
+      throw httpError(`Activation did not take — ${selector} is not marked active in the registry. CLI said: ${truncate(cliText, 200)}`, 502);
+    }
+    outcome.faculty = faculty;
+    outcome.epoch = await resealRegistryEpoch(`dashboard: activated ${selector}`);
+    return outcome;
+  }
+  if (url.pathname === '/api/registry/propose') {
+    // A pasted faculty may carry up to 20k of inert op code — the default
+    // 20k body cap would 413 before the friendlier 400 below could speak.
+    const body = await jsonBody(req, 64 * 1024);
+    const kind = body.kind === 'modality' ? 'modality' : body.kind === 'sense' ? 'sense' : null;
+    if (!kind) throw httpError("kind must be 'sense' or 'modality'.");
+    const name = String(body.name || '').trim();
+    if (!FACULTY_NAME_RX.test(name)) throw httpError('name must be 3-80 chars starting with a letter or digit.');
+    const func = cleanMemo(body.function, 400);
+    const category = /^[a-z][a-z-]{0,30}$/.test(String(body.category || '')) ? String(body.category) : 'knowledge';
+    const seedTerms = (Array.isArray(body.seedTerms) ? body.seedTerms : [])
+      .map((term) => String(term).trim().toLowerCase()).filter(Boolean);
+    if (seedTerms.length > 12 || seedTerms.some((term) => !SEED_TERM_RX.test(term))) {
+      throw httpError('seedTerms must be at most 12 short tokens (letters/digits/dash/underscore, no leading dash).');
+    }
+    const code = String(body.code || '');
+    if (code.length > 20000) throw httpError('op code too large (20k chars max) — it is stored inert, never executed.');
+    // Two skill-sanctioned lanes (both exit 0 even when they decline, so the
+    // registry itself — not the exit code — is the proof of what happened):
+    //  - WITH code: cambium propose-op -> INERT 'proposed' entry awaiting the
+    //    human Activate step (model-authored code never auto-runs).
+    //  - WITHOUT code: cambium grow --mode sprout -> the canonical promotion
+    //    path (PROMOTE_AT=1 enables it immediately, WITH an attached effect).
+    let outcome;
+    if (code) {
+      // --function=/--code= forms: argparse never misreads the value as a flag.
+      const args = ['propose-op', name, '--kind', kind, `--function=${func}`, '--category', category, `--code=${code}`];
+      if (seedTerms.length) args.push('--seed-terms', ...seedTerms);
+      outcome = await mutateViaCli('cambium.py', args);
+    } else {
+      const inputText = [name, ...seedTerms, func].join(' ').slice(0, 600);
+      const args = ['grow', inputText, '--mode', 'sprout', '--kind', kind, `--name=${name}`];
+      if (func) args.push(`--function=${func}`);
+      outcome = await mutateViaCli('cambium.py', args);
+    }
+    const cliText = typeof outcome.result === 'string' ? outcome.result : JSON.stringify(outcome.result || '');
+    // grow declines when existing faculties already cover the vocabulary;
+    // propose-op declines when code is missing. Surface a decline AS a decline.
+    if (/no growth|provide --code/i.test(cliText)) {
+      throw httpError(`The skill declined the paste: ${truncate(cliText.replace(/\s+/g, ' ').trim(), 300)}`, 422);
+    }
+    // The registry is the truth: find what the paste actually became. grow()
+    // appends 'Sensing'/'Reasoning' when the name lacks the kind suffix.
+    const after = await emergentOverview();
+    const nameLc = name.toLowerCase();
+    const faculty = after.faculties.slice().reverse().find((f) => {
+      const fn = f.name.toLowerCase();
+      return fn === nameLc || fn === `${nameLc} sensing` || fn === `${nameLc} reasoning`;
+    }) || null;
+    outcome.faculty = faculty;
+    outcome.epoch = await resealRegistryEpoch(`dashboard: pasted faculty ${name}`);
+    return outcome;
   }
   return null;
 }
@@ -1655,11 +1802,17 @@ async function handle(req, res) {
       sendJson(res, 200, await forkTree());
       return;
     }
+    if (url.pathname === '/api/registry/emergent') {
+      sendJson(res, 200, await emergentOverview());
+      return;
+    }
     if (req.method === 'POST' && (url.pathname.startsWith('/api/cphy/') || url.pathname.startsWith('/api/pack/')
-        || url.pathname === '/api/ring/seal' || url.pathname.startsWith('/api/immune/'))) {
+        || url.pathname === '/api/ring/seal' || url.pathname.startsWith('/api/immune/')
+        || url.pathname.startsWith('/api/registry/'))) {
       const outcome = (await handleCphyMutation(req, url))
         ?? (await handlePackMutation(req, url))
-        ?? (await handleChainMutation(req, url));
+        ?? (await handleChainMutation(req, url))
+        ?? (await handleRegistryMutation(req, url));
       if (outcome) {
         sendJson(res, 200, outcome);
         return;

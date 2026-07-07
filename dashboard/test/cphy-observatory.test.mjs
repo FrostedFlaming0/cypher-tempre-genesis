@@ -37,8 +37,21 @@ async function createCphyRoot() {
   await fs.mkdir(path.join(root, 'chain', 'blockspace', 'blobs'), { recursive: true });
   await fs.writeFile(path.join(root, 'SKILL.md'), '# Test Skill\n');
   await fs.writeFile(path.join(root, 'timechain.py'), '# test placeholder\n');
-  await fs.writeFile(path.join(root, 'registry', 'modalities.json'), JSON.stringify({ modalities: [] }));
-  await fs.writeFile(path.join(root, 'registry', 'senses.json'), JSON.stringify({ senses: [] }));
+  await fs.writeFile(path.join(root, 'registry', 'modalities.json'), JSON.stringify({ modalities: [{ id: 1, name: 'Base Modality' }] }));
+  await fs.writeFile(path.join(root, 'registry', 'senses.json'), JSON.stringify({ senses: [{ id: 1, name: 'Base Sense A' }, { id: 2, name: 'Base Sense B' }] }));
+  await fs.writeFile(path.join(root, 'registry', 'grown.json'), JSON.stringify({ modalities: [{ id: 9, name: 'Fixture-Done Reasoning' }], senses: [] }));
+  // The Dream Cache, exercising every lifecycle status the wild uses:
+  // 'emergent' (sprouted), 'proposal' (old spelling of a model-authored
+  // proposal, with inert op code), and 'promoted' (recurrence path — already
+  // part of the active self, so the nursery must not offer to activate it).
+  await fs.writeFile(path.join(root, 'registry', 'emergent.json'), JSON.stringify({
+    registry: 'emergent',
+    faculties: [
+      { eid: 'E1', kind: 'sense', name: 'Fixture-Drift Sensing', function: 'Detect fixture drift early.', category: 'structural', origin: 'sprout', seed_terms: ['fixture', 'drift'], status: 'emergent', recurrence: 2, born_at: '2026-07-01T00:00:00+00:00', promoted_to_id: null },
+      { eid: 'E2', kind: 'modality', name: 'Fixture-Splice Reasoning', function: 'Reason about pack splices.', category: 'knowledge', origin: 'model-authored proposal', seed_terms: ['splice'], status: 'proposal', op_code: 'def op(text):\n    return "inert"', recurrence: 1, born_at: '2026-07-02T00:00:00+00:00', promoted_to_id: null },
+      { eid: 'E3', kind: 'modality', name: 'Fixture-Done Reasoning', function: 'Already promoted by recurrence.', category: 'knowledge', origin: 'sprout', seed_terms: [], status: 'promoted', recurrence: 3, born_at: '2026-07-03T00:00:00+00:00', promoted_to_id: 9 },
+    ],
+  }));
   await fs.writeFile(path.join(root, 'chain', 'blockspace', 'index.json'), '{}');
 
   const rings = [
@@ -143,10 +156,15 @@ function request(port, pathname, { method = 'GET', headers = {}, body = null } =
   });
 }
 
+// 9500+: disjoint from bridge-security (8867-9366) and learning-overview
+// (8917-9416) — the three files run concurrently under one `node --test`.
+// A striding counter (not random) keeps servers WITHIN this file collision-free
+// too: some tests run three roots at once.
+let portCursor = 9500 + Math.floor(Math.random() * 200);
+
 async function startServer(root) {
-  // 9500-9899: disjoint from bridge-security (8867-9366) and learning-overview
-  // (8917-9416) — the three files run concurrently under one `node --test`.
-  const port = 9500 + Math.floor(Math.random() * 400);
+  portCursor += 7;
+  const port = portCursor;
   const child = spawn(process.execPath, [path.join(dashboardRoot, 'server.mjs')], {
     env: { ...process.env, CT_DASHBOARD_ROOT: root, CT_DASHBOARD_PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -286,12 +304,59 @@ test('immune and forks views link scars, recoveries, grafts and perspective fork
   assert.equal(forks.json.synthesisForks[0].forks[0].perspective, 'Lens A');
 });
 
+test('emergent nursery folds the Dream Cache with lifecycle-aware counts', async (t) => {
+  const root = await createCphyRoot();
+  const { child, port } = await startServer(root);
+  t.after(() => child.kill());
+
+  const { status, json } = await request(port, '/api/registry/emergent');
+  assert.equal(status, 200);
+  assert.equal(json.faculties.length, 3);
+  assert.deepEqual(json.counts, {
+    emergent: 1,
+    proposed: 1, // the old 'proposal' spelling counts as proposed
+    inSelf: 1,   // 'promoted' via recurrence is already part of the self
+    activeModalities: 2, // base 1 + grown 1
+    activeSenses: 2,     // base 2 + grown 0
+  });
+  const proposal = json.faculties.find((f) => f.eid === 'E2');
+  assert.match(proposal.opCode, /def op/, 'inert op code rides along for review and copy');
+  assert.equal(proposal.opCodeChars, 'def op(text):\n    return "inert"'.length);
+  const promoted = json.faculties.find((f) => f.eid === 'E3');
+  assert.equal(promoted.promotedToId, 9);
+  assert.deepEqual(json.faculties.find((f) => f.eid === 'E1').seedTerms, ['fixture', 'drift']);
+});
+
+test('nursery paste surfaces a skill decline as an error, never as success', { skip: !hasPython && 'python3 unavailable' }, async (t) => {
+  // cambium.py grow/propose-op/activate DECLINE with exit 0 (they print a
+  // "->" hint and write nothing) — the bridge must read the words, not the
+  // exit code, or a silent no-op reports as success.
+  const root = await createCphyRoot();
+  await fs.writeFile(path.join(root, 'cambium.py'), 'import sys\nprint("  -> dissonance 8 <= floor 40: existing faculties already cover this input; no growth.")\n');
+  const { child, port } = await startServer(root);
+  t.after(() => child.kill());
+
+  const paste = await request(port, '/api/registry/propose', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ kind: 'sense', name: 'Covered Vocabulary Sensing', function: 'x', seedTerms: ['fixture'] }),
+  });
+  assert.equal(paste.status, 422, 'a grow decline must not read as success');
+  assert.match(paste.json.error, /no growth/);
+
+  await fs.writeFile(path.join(root, 'cambium.py'), 'import sys\nprint("  -> no emergent proposal matched \'E9\'")\n');
+  const act = await request(port, '/api/registry/activate', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ selector: 'E9' }),
+  });
+  assert.equal(act.status, 422, 'an activate decline must not read as success');
+});
+
 test('observatory reads require pairing for remote origins; hostile origins refused', async (t) => {
   const root = await createCphyRoot();
   const { child, port } = await startServer(root);
   t.after(() => child.kill());
 
-  for (const pathname of ['/api/cphy/overview', '/api/cphy/blocks', '/api/retrieval/history', '/api/immune', '/api/forks']) {
+  for (const pathname of ['/api/cphy/overview', '/api/cphy/blocks', '/api/retrieval/history', '/api/immune', '/api/forks', '/api/registry/emergent']) {
     const hostile = await request(port, pathname, { headers: { origin: 'https://evil.example' } });
     assert.equal(hostile.status, 403, `${pathname} hostile`);
     const unpaired = await request(port, pathname, { headers: { origin: 'https://cyphertempre.ai' } });
@@ -331,6 +396,8 @@ test('mutation routes refuse unpaired remotes and validate their inputs', async 
     ['/api/ring/seal', JSON.stringify({ summary: 'a fixture annotation' })],
     ['/api/immune/forget-scar', JSON.stringify({ id: 'scar1' })],
     ['/api/immune/rollback', JSON.stringify({ height: 1, confirm: 'QUARANTINE 1' })],
+    ['/api/registry/activate', JSON.stringify({ selector: 'E1' })],
+    ['/api/registry/propose', JSON.stringify({ kind: 'sense', name: 'Remote Sense', function: 'x' })],
   ];
   for (const [pathname, body] of mutations) {
     const remote = await request(port, pathname, {
@@ -352,6 +419,12 @@ test('mutation routes refuse unpaired remotes and validate their inputs', async 
     ['/api/immune/forget-scar', { id: 'nope!' }, 400, 'malformed scar id'],
     ['/api/pack/import', { pack: {} }, 400, 'pack without rings[]'],
     ['/api/immune/rollback', { height: 1, confirm: 'nope' }, 428, 'rollback without the confirmation phrase'],
+    // Nursery inputs become argparse argv — leading dashes must never parse as flags.
+    ['/api/registry/activate', { selector: '--evil-flag' }, 400, 'dash-leading activate selector'],
+    ['/api/registry/propose', { kind: 'organ', name: 'Valid Name', function: 'x' }, 400, 'unknown faculty kind'],
+    ['/api/registry/propose', { kind: 'sense', name: '-Dashed Name', function: 'x' }, 400, 'dash-leading faculty name'],
+    ['/api/registry/propose', { kind: 'sense', name: 'Valid Name', function: 'x', seedTerms: ['-evil'] }, 400, 'dash-leading seed term'],
+    ['/api/registry/propose', { kind: 'sense', name: 'Valid Name', function: 'x', code: 'x'.repeat(20001) }, 400, 'op code above the 20k inert cap'],
   ];
   for (const [pathname, payload, expected, label] of cases) {
     const res = await request(port, pathname, {
