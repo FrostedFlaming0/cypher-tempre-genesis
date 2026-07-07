@@ -11,7 +11,8 @@
     "check": "node --check server.mjs && node --check public/app.js",
     "test:security": "node --test test/bridge-security.test.mjs",
     "test:learning": "node --test test/learning-overview.test.mjs",
-    "test": "node --test test/bridge-security.test.mjs test/learning-overview.test.mjs"
+    "test:cphy": "node --test test/cphy-observatory.test.mjs",
+    "test": "node --test test/bridge-security.test.mjs test/learning-overview.test.mjs test/cphy-observatory.test.mjs"
   },
   "dependencies": {},
   "engines": {

@@ -180,7 +180,11 @@ function applyCorsHeaders(req, res) {
 }
 
 function requireBridgePairing(req) {
-  if (!isRemoteOrigin(req)) return;
+  // The no-token local fast path is granted only when the request is BOTH
+  // local-looking AND arrives on a loopback socket — a forged `Origin: localhost`
+  // from a non-loopback client (possible only if the operator bound the bridge
+  // to a non-loopback address) is treated as remote and must present a token.
+  if (!isRemoteOrigin(req) && isLoopbackRemoteAddress(req.socket?.remoteAddress)) return;
   if (bridgeRecord(req)) return;
   const error = new Error('Pair this browser with the local Cypher Tempre bridge first.');
   error.status = 401;
@@ -354,12 +358,17 @@ if ok:
     report.append(f"verified {len(rings)} rings -> chain intact, all hashes link, blockspace consistent")
 print(json.dumps({"ok": ok, "report": report, "rings": len(rings)}))
 `;
+  // Bounded + memoized on chain state: a hammered GET must not fork unbounded
+  // python verifier processes. memoizedRead is defined below (hoisted at call time).
   try {
-    const { stdout } = await execFileAsync('python3', ['-c', script, timechainRoot], {
-      timeout: 20_000,
-      maxBuffer: 1024 * 1024,
+    const tag = await chainStateTag();
+    return await memoizedRead(`chain-verify:${tag}`, async () => {
+      const { stdout } = await execFileAsync('python3', ['-c', script, timechainRoot], {
+        timeout: 20_000,
+        maxBuffer: 1024 * 1024,
+      });
+      return JSON.parse(stdout);
     });
-    return JSON.parse(stdout);
   } catch (error) {
     return {
       ok: null,
@@ -771,12 +780,716 @@ async function blobPreview(hash) {
   };
 }
 
-async function jsonBody(req) {
+// --------------------------------------------------------------------------- //
+// P2 — the CPHY token metaprogramming observatory. Read lanes mirror the files
+// the economy itself replays (chain/cphy/ledger.jsonl is the source of truth;
+// registry/cphy/*.json are derived snapshots). Mutations shell out to the
+// skill's own CLIs — the bridge never invents an economic operation, it only
+// relays the owner's consent. Doctrine surfaced verbatim: tokens buy salience,
+// never truth (I1); the multiplier is clamped 0.25x-4x (I2); etches cap below
+// the current turn's top (ETCH_CEILING); the bridge makes NO outbound network
+// calls — on-chain burns are observed by the agent's own turn loop, never here.
+// --------------------------------------------------------------------------- //
+
+const EXP_CAP = 2.0;                 // mirrors cphy.py:60 — log2 clamp ±2 → [0.25x, 4x]
+const ETCH_MAX_ECHELON = 21;         // mirrors cphy.py:749
+const ETCH_CEILING = 0.97;           // mirrors cphy.py:751
+const MAX_PACK_BODY_BYTES = Math.max(1024 * 1024, Number(process.env.CT_DASHBOARD_MAX_PACK_BODY_BYTES || 8 * 1024 * 1024));
+const PY_READ_TIMEOUT_MS = 30_000;
+const PY_MUTATE_TIMEOUT_MS = 90_000;
+
+function clampMultiplier(exponent) {
+  const e = Math.max(-EXP_CAP, Math.min(EXP_CAP, Number(exponent) || 0));
+  return Number(Math.pow(2, e).toFixed(4));
+}
+
+async function readLedgerEvents() {
+  const ledgerPath = ensureInsideRoot(path.join(timechainRoot, 'chain', 'cphy', 'ledger.jsonl'));
+  if (!fsSync.existsSync(ledgerPath)) return [];
+  const text = await fs.readFile(ledgerPath, 'utf8');
+  return text.split(/\r?\n/).filter(Boolean).map((line) => {
+    try {
+      return JSON.parse(line);
+    } catch (error) {
+      return { kind: 'parse-error', error: error.message };
+    }
+  });
+}
+
+// One serialized queue for every operation that shells into the skill: the
+// economy's writers assume a single writer, and the ledger is append-only.
+let mutationQueue = Promise.resolve();
+function enqueueMutation(fn) {
+  const next = mutationQueue.then(fn, fn);
+  mutationQueue = next.catch(() => {});
+  return next;
+}
+
+// A bounded pool for READ shell-outs (chain verify, cphy audit, retrieval
+// preview). These are read-only so they need not serialize like writes, but
+// an already-trusted page must not be able to fork unbounded python processes
+// by hammering a GET — cap the concurrent count and queue the overflow.
+const MAX_READ_PROCS = Math.max(1, Number(process.env.CT_DASHBOARD_MAX_READ_PROCS || 2));
+let activeReadProcs = 0;
+const readWaiters = [];
+function enqueueRead(fn) {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      activeReadProcs += 1;
+      Promise.resolve().then(fn).then(resolve, reject).finally(() => {
+        activeReadProcs -= 1;
+        const next = readWaiters.shift();
+        if (next) next();
+      });
+    };
+    if (activeReadProcs < MAX_READ_PROCS) run();
+    else readWaiters.push(run);
+  });
+}
+
+// Short-TTL memo for read shell-outs keyed on the chain/ledger state they read,
+// so identical concurrent GETs reuse one subprocess instead of forking N.
+const readMemo = new Map();
+async function memoizedRead(key, fn, ttlMs = 4000) {
+  const hit = readMemo.get(key);
+  const now = memoNow();
+  if (hit && now - hit.at < ttlMs) return hit.value;
+  const value = await enqueueRead(fn);
+  readMemo.set(key, { value, at: memoNow() });
+  if (readMemo.size > 64) {
+    for (const k of readMemo.keys()) { readMemo.delete(k); if (readMemo.size <= 32) break; }
+  }
+  return value;
+}
+
+// A monotonic-ish clock that tolerates environments where Date is unavailable.
+function memoNow() {
+  try { return Date.now(); } catch { return 0; }
+}
+
+async function chainStateTag() {
+  // Cheap fingerprint of the two files the read shell-outs depend on.
+  const parts = [];
+  for (const rel of [['chain', 'rings.jsonl'], ['chain', 'cphy', 'ledger.jsonl']]) {
+    try {
+      const stat = await fs.stat(path.join(timechainRoot, ...rel));
+      parts.push(`${stat.size}:${stat.mtimeMs}`);
+    } catch {
+      parts.push('none');
+    }
+  }
+  return parts.join('|');
+}
+
+async function runSkillCli(scriptName, args, { timeout = PY_MUTATE_TIMEOUT_MS, env = {} } = {}) {
+  const script = path.join(timechainRoot, scriptName);
+  if (!fsSync.existsSync(script)) {
+    throw httpError(`${scriptName} not found in the paired skill root.`, 501);
+  }
+  try {
+    const { stdout, stderr } = await execFileAsync('python3', [script, ...args], {
+      cwd: timechainRoot,
+      timeout,
+      maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, ...env },
+    });
+    return { ok: true, stdout, stderr };
+  } catch (error) {
+    return { ok: false, stdout: error.stdout || '', stderr: error.stderr || '', message: error.message };
+  }
+}
+
+function parseMaybeJson(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+async function cphyOverview() {
+  const registryDir = path.join(timechainRoot, 'registry', 'cphy');
+  const [weights, onchain, anchor, pending, events] = await Promise.all([
+    readJsonSafe(path.join(registryDir, 'weights.json'), null),
+    readJsonSafe(path.join(registryDir, 'onchain.json'), null),
+    readJsonSafe(path.join(registryDir, 'anchor.json'), null),
+    readJsonSafe(path.join(registryDir, 'pending.json'), []),
+    readLedgerEvents(),
+  ]);
+
+  // Fold the ledger's on-chain lanes (weights.json carries only the lock lane).
+  // Mirror cphy.py's compile_state semantics exactly: on-chain observations and
+  // etch tokens are CUMULATIVE snapshots per ring, so later events REPLACE (never
+  // add to) earlier ones — compile_state keeps the LAST observation set and the
+  // LAST etch per ring, not the sum. Getting this wrong inflates the burn total.
+  let observed = {};              // ring index -> cumulative tokens observed on-chain (last-wins)
+  let observedRate = 1;           // density_per_token RECORDED IN the last observe event —
+                                  // compile_state/WeightMap apply this frozen rate, not the
+                                  // current config value, which diverges after a rate change
+  const etches = {};              // ring index -> {tokens (cumulative), echelon}
+  const unlockMap = new Map();    // faculty key -> last unlock event (cumulative tokens),
+                                  // mirroring compile_state's dict: last-wins, never summed
+  const kindCounts = {};
+  for (const ev of events) {
+    kindCounts[ev.kind] = (kindCounts[ev.kind] || 0) + 1;
+    if (ev.kind === 'onchain-observe' && ev.observations) {
+      observed = {};              // last-wins replacement, matching compile_state
+      for (const [idx, tokens] of Object.entries(ev.observations)) {
+        observed[idx] = Number(tokens) || 0;
+      }
+      observedRate = Number(ev.density_per_token ?? 1) || 1;
+    }
+    if (ev.kind === 'etch' && ev.ring != null) {
+      const tokens = Number(ev.tokens) || 0;
+      const echelon = Math.min(ETCH_MAX_ECHELON, Math.max(0, Math.trunc(tokens)));
+      // Deepening top-ups append a new etch whose tokens is the cumulative total;
+      // keep the latest (highest echelon), never accumulate across events.
+      etches[ev.ring] = { tokens, echelon, address: ev.address || null, ts: ev.ts || null };
+    }
+    // Faculty-unlock: cphy.py's append_event lets the faculty kind field shadow
+    // the top-level event kind (a skill-side collision), so the on-disk event
+    // reads kind='sense'/'modality'. Detect unlocks by their faculty_key instead.
+    if (ev.faculty_key != null || ev.kind === 'faculty-unlock') {
+      // Unlock tokens are the cumulative balance of the faculty's deposit
+      // address, so a repeated event for the same faculty REPLACES the earlier
+      // one (compile_state keys unlocks by faculty_key) — summing would double-count.
+      unlockMap.set(ev.faculty_key ?? `event-${ev.seq}`, { facultyKey: ev.faculty_key, kind: ev.faculty_kind ?? ev.kind, id: ev.id, name: ev.name, tokens: Number(ev.tokens) || 0, ts: ev.ts });
+    }
+  }
+  const unlocks = [...unlockMap.values()];
+  // Burn total = the LAST cumulative burn per etched ring + the LAST cumulative
+  // burn per unlocked faculty — never the sum of superseded snapshots.
+  const burnedTotal = Object.values(etches).reduce((sum, e) => sum + (Number(e.tokens) || 0), 0)
+    + unlocks.reduce((sum, u) => sum + (Number(u.tokens) || 0), 0);
+
+  // Ledger integrity: the skill's own replay is authoritative (python float repr
+  // differs from JS, so we do not re-hash in JS — we ask the organ itself).
+  // Fail-soft like verifyChainWithPython: a root without cphy.py still audits.
+  // Bounded + memoized on chain state so repeated GETs can't fork unbounded procs.
+  let auditLine = '';
+  let auditOk = null;
+  try {
+    const tag = await chainStateTag();
+    const audit = await memoizedRead(`cphy-audit:${tag}`, () => runSkillCli('cphy.py', ['audit'], { timeout: PY_READ_TIMEOUT_MS }));
+    auditLine = (audit.stdout || audit.stderr || '').trim().split(/\r?\n/).pop() || '';
+    // cmd_audit exits 1 on tamper (printing "FAIL  ..."), so ok:false with a
+    // FAIL line IS the tamper verdict — only an inconclusive failure (timeout,
+    // crash with no verdict) maps to null alongside a missing cphy.py.
+    auditOk = audit.ok
+      ? /AUDIT:\s*PASS/.test(auditLine)
+      : /FAIL/i.test(`${audit.stdout || ''}\n${audit.stderr || ''}`) ? false : null;
+  } catch {
+    auditLine = 'cphy.py not present in this root — ledger replay unavailable';
+  }
+
+  return {
+    present: Boolean(weights || onchain || events.length),
+    doctrine: 'CPHY programs attention, never truth: tokens buy retrieval salience (clamped 0.25x-4x), PoQ judgment is never for sale.',
+    supply: weights ? {
+      minted: weights.minted ?? null,
+      locked: weights.locked ?? null,
+      balance: weights.balance ?? null,
+      events: weights.events ?? events.length,
+      ledgerHead: weights.ledger_head ?? null,
+    } : null,
+    burnedTotal: Number(burnedTotal.toFixed(6)),
+    audit: { ok: auditOk, line: auditLine },
+    anchor,
+    onchain: onchain ? {
+      token: onchain.token ?? null,
+      chain: onchain.chain ?? null,
+      rpc: onchain.rpc ?? null,
+      densityPerToken: onchain.density_per_token ?? null,
+      approval: onchain.approval || 'require',
+      etchRecallN: onchain.etch_recall_n ?? 3,
+      lastSyncTs: onchain.last_sync_ts ?? null,
+      targets: Object.entries(onchain.targets || {}).map(([ring, t]) => ({
+        ring: Number(ring), address: t.address, ringHash: t.ring_hash,
+      })),
+      facultyTargets: Object.entries(onchain.faculty_targets || {}).map(([key, t]) => ({
+        key, kind: t.kind, id: t.id, name: t.name, address: t.address, status: t.status,
+      })),
+    } : null,
+    locks: (weights?.active_locks || []).map((lock) => ({
+      lockId: lock.lock_id,
+      op: lock.op,
+      amount: lock.amount,
+      // Bridge locks carry a_indices/b_indices instead of indices; both
+      // endpoints receive density (compile_exponents), so both are covered.
+      indices: lock.indices || [...(lock.a_indices || []), ...(lock.b_indices || [])],
+      memo: lock.memo || '',
+      ts: lock.ts || null,
+    })),
+    exponents: weights?.exponents || {},
+    observed,
+    observedRate,
+    etches,
+    unlocks,
+    pending: (Array.isArray(pending) ? pending : []).map((item) => ({
+      id: item.id,
+      status: item.status,
+      type: item.type,
+      ring: item.ring ?? null,
+      facultyKey: item.faculty_key ?? null,
+      name: item.name ?? null,
+      tokens: item.tokens ?? null,
+      address: item.address ?? null,
+      detected: item.detected ?? null,
+      resolved: item.resolved ?? null,
+    })),
+    ledgerKinds: kindCounts,
+    constants: { expCap: EXP_CAP, etchMaxEchelon: ETCH_MAX_ECHELON, etchCeiling: ETCH_CEILING },
+  };
+}
+
+// The per-block token audit map: every ring the economy touches, with the
+// weight it actually exerts on retrieval (clamped), what was burned to it,
+// and its dream-written salience RESONANCE. Note: chain/salience.json is a
+// SIGNED resonance overlay (dream.py), not a retrieval hit count — a positive
+// value is reinforced salience, a negative value is dampened. The true
+// surfacing frequency lives in the offer telemetry (see retrievalHistory).
+async function cphyBlocks() {
+  const overview = await cphyOverview();
+  const saliencePath = path.join(timechainRoot, 'chain', 'salience.json');
+  const resonance = await readJsonSafe(saliencePath, {});
+  const blocks = new Map();
+  const touch = (index) => {
+    const key = Number(index);
+    if (!blocks.has(key)) {
+      blocks.set(key, {
+        index: key, exponent: 0, multiplier: 1, locks: [], observedTokens: 0,
+        etch: null, depositAddress: null, resonance: Number(resonance[key] ?? resonance[String(key)] ?? 0),
+      });
+    }
+    return blocks.get(key);
+  };
+  for (const [idx, exp] of Object.entries(overview.exponents)) {
+    const b = touch(idx);
+    b.exponent = Number(exp) || 0;
+  }
+  for (const lock of overview.locks) {
+    for (const idx of lock.indices) {
+      const b = touch(idx);
+      b.locks.push(lock.lockId);
+    }
+  }
+  for (const [idx, tokens] of Object.entries(overview.observed)) {
+    const b = touch(idx);
+    b.observedTokens = tokens;
+    // WeightMap.load applies the rate FROZEN INTO the last observe event
+    // (positive contributions only) — not the current config rate.
+    b.exponent += Math.max(0, tokens) * (overview.observedRate ?? 1);
+  }
+  for (const [idx, etch] of Object.entries(overview.etches)) {
+    const b = touch(idx);
+    b.etch = etch;
+  }
+  for (const target of overview.onchain?.targets || []) {
+    const b = touch(target.ring);
+    b.depositAddress = target.address;
+  }
+  for (const b of blocks.values()) {
+    b.multiplier = clampMultiplier(b.exponent);
+  }
+  // True surfacing frequency per ring, from the offer telemetry — this is the
+  // "retrieval activity" lane the landscape draws (resonance is NOT a hit count).
+  const recallHits = {};
+  for (const e of await readOfferEvents()) {
+    for (const c of e.data?.candidates || []) {
+      if (c.chosen) recallHits[c.i] = (recallHits[c.i] || 0) + 1;
+    }
+  }
+  return {
+    etchRecallN: overview.onchain?.etchRecallN ?? 3,
+    approval: overview.onchain?.approval ?? 'require',
+    blocks: [...blocks.values()].sort((a, b) => a.index - b.index),
+    resonance,
+    recallHits,
+  };
+}
+
+// ---- Relevance realization: history (telemetry offers) + live preview ---- //
+
+// Every 'offer' event from the retrieval telemetry log, parsed leniently.
+async function readOfferEvents() {
+  const telPath = path.join(timechainRoot, 'chain', 'telemetry.jsonl');
+  if (!fsSync.existsSync(telPath)) return [];
+  const events = [];
+  for (const line of (await fs.readFile(telPath, 'utf8')).split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const e = JSON.parse(line);
+      if (e.event === 'offer') events.push(e);
+    } catch { /* torn line — skip */ }
+  }
+  return events;
+}
+
+async function retrievalHistory(url) {
+  const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit') || 12)));
+  const offers = [];
+  const perRing = new Map();
+  let totalOffers = 0;
+  for (const e of await readOfferEvents()) {
+    totalOffers += 1;
+    const d = e.data || {};
+    for (const c of d.candidates || []) {
+      const s = perRing.get(c.i) || { index: c.i, considered: 0, chosen: 0, bestRank: null, lastRank: null, lastTs: null, cphy: null, etched: null };
+      s.considered += 1;
+      if (c.chosen) s.chosen += 1;
+      if (s.bestRank == null || c.rank < s.bestRank) s.bestRank = c.rank;
+      s.lastRank = c.rank;
+      s.lastTs = e.ts || s.lastTs;
+      if (c.parts?.cphy != null) s.cphy = Math.max(Number(s.cphy || 0), Number(c.parts.cphy));
+      if (c.parts?.etched != null) s.etched = Number(c.parts.etched);
+      perRing.set(c.i, s);
+    }
+    // Keep the top 16 by log order PLUS every chosen candidate past the cut —
+    // an ε-exploration pick can rank ~appetite+window deep, and dropping it
+    // would hide a block that actually surfaced.
+    const rawCandidates = d.candidates || [];
+    const kept = rawCandidates.slice(0, 16);
+    for (const c of rawCandidates.slice(16)) if (c.chosen) kept.push(c);
+    offers.push({
+      ts: e.ts || null,
+      headIndex: e.head_index ?? null,
+      scorer: d.scorer || e.scorer_version || null,
+      queryKeywords: d.query_keywords || [],
+      queryEntities: d.query_entities || [],
+      dissonance: d.dissonance ?? null,
+      appetite: d.appetite ?? null,
+      threshold: d.threshold ?? null,
+      considered: d.considered ?? null,
+      returned: d.returned ?? null,
+      candidates: kept.map((c) => ({
+        index: c.i, rank: c.rank, score: c.score, chosen: Boolean(c.chosen),
+        explore: Boolean(c.explore), parts: c.parts || {},
+      })),
+    });
+  }
+  return {
+    totalOffers,
+    offers: offers.slice(-limit).reverse(),
+    rings: [...perRing.values()].sort((a, b) => b.chosen - a.chosen || b.considered - a.considered).slice(0, 40),
+  };
+}
+
+// Live preview: run the skill's OWN retrieval twice (with and without the CPHY
+// overlay) so the token bias is shown, never inferred. CT_TELEMETRY=off keeps
+// preview queries out of the learner's credit-assignment log.
+const PREVIEW_SCRIPT = `
+import json, random, sys
+root = sys.argv[1]
+sys.path.insert(0, root)
+from recall import Recall
+query = sys.argv[2]
+max_blocks = int(sys.argv[3])
+budget = int(sys.argv[4])
+out = {}
+for key, no_overlay in (("with_overlay", False), ("without_overlay", True)):
+    # Same seed for both runs: epsilon-exploration draws identical rolls, so a
+    # random explore pick cannot appear in only one run and read as a CPHY effect.
+    random.seed(0xC1A5)
+    r = Recall(root).retrieve(query, budget_tokens=budget, max_blocks=max_blocks, no_overlay=no_overlay)
+    # Deterministic tie-break (scores arrive rounded to 3 decimals): equal scores
+    # resolve by chain index IDENTICALLY in both runs, so the with/without
+    # comparison never reports a phantom rank delta on a tie.
+    blocks = sorted(r.get("blocks", []), key=lambda b: (-(b.get("score") or 0), b.get("index") or 0))
+    scorer = str(r.get("scorer") or "")
+    out[key] = {
+        "dissonance": r.get("dissonance"), "appetite": r.get("appetite"),
+        "threshold": r.get("threshold"), "considered": r.get("considered"),
+        "returned": r.get("returned"), "scorer": r.get("scorer"),
+        # retrieve() always reports the HAND blend here even when the trained
+        # scorer produced the ranking (learned weights go only to telemetry) ->
+        # suppress weights for trained runs so the UI never mislabels the bars.
+        "weights": (None if scorer.startswith("trained") else r.get("weights")),
+        "blocks": [{
+            "index": b.get("index"), "type": b.get("type"),
+            "score": b.get("score"), "parts": b.get("score_parts") or {},
+            "explore": bool(b.get("explore")),
+            "salience": (b.get("labels") or {}).get("salience"),
+            "excerpt": (b.get("excerpt") or "")[:280],
+        } for b in blocks],
+    }
+print(json.dumps(out))
+`;
+
+async function retrievalPreview(body) {
+  const query = String(body.query || '').trim();
+  if (!query) throw httpError('A query is required for a retrieval preview.');
+  if (query.length > 2000) throw httpError('Preview query too long (2000 chars max).');
+  const maxBlocks = Math.max(1, Math.min(16, Number(body.maxBlocks) || 8));
+  const budget = Math.max(200, Math.min(8000, Number(body.budget) || 1600));
+  // A preview is read-only (CT_TELEMETRY=off, no chain write) so it runs on the
+  // bounded READ pool, not the write queue — it must never stall the owner's
+  // mutations, and the pool caps concurrent python forks.
+  const run = await enqueueRead(() => execFileAsync('python3', ['-c', PREVIEW_SCRIPT, timechainRoot, query, String(maxBlocks), String(budget)], {
+    cwd: timechainRoot,
+    timeout: PY_READ_TIMEOUT_MS,
+    maxBuffer: 8 * 1024 * 1024,
+    env: { ...process.env, CT_TELEMETRY: 'off' },
+  }).then(
+    ({ stdout }) => ({ ok: true, stdout }),
+    (error) => ({ ok: false, message: error.message, stderr: error.stderr || '' }),
+  ));
+  if (!run.ok) throw httpError(`Retrieval preview failed: ${(run.stderr || run.message || '').slice(0, 400)}`, 502);
+  const parsed = parseMaybeJson(run.stdout);
+  if (!parsed) throw httpError('Retrieval preview returned no JSON.', 502);
+  const withB = parsed.with_overlay?.blocks || [];
+  const withoutRank = new Map((parsed.without_overlay?.blocks || []).map((b, i) => [b.index, i]));
+  for (let i = 0; i < withB.length; i += 1) {
+    const organic = withoutRank.get(withB[i].index);
+    withB[i].rank = i;
+    withB[i].organicRank = organic ?? null;
+    withB[i].rankDelta = organic == null ? null : organic - i;
+  }
+  return { query, maxBlocks, budget, ...parsed };
+}
+
+// ---- Scars, lineage, forks ---- //
+
+async function immuneOverview() {
+  const immunePath = path.join(timechainRoot, 'chain', 'immune.json');
+  const state = await readJsonSafe(immunePath, { locked: false, safe_height: null, quarantine: [], scars: [] });
+  const lockedFlag = fsSync.existsSync(path.join(timechainRoot, 'chain', 'LOCKED'));
+  const paused = await readJsonSafe(path.join(timechainRoot, 'chain', 'PAUSED'), null);
+  return {
+    locked: Boolean(state.locked) || lockedFlag,
+    safeHeight: state.safe_height ?? null,
+    quarantine: state.quarantine || [],
+    scars: (state.scars || []).map((scar) => ({ id: scar.id, blocks: scar.blocks || [], lesson: scar.lesson || '' })),
+    paused: paused ? { since: paused.since, reason: paused.reason, height: paused.paused_at_height } : null,
+    doctrine: 'Scars are inert records since v3.26 — quarantined rings stay on disk, excluded from the active self, never deleted.',
+  };
+}
+
+function contiguousRanges(indices) {
+  const sorted = [...new Set(indices.map(Number))].sort((a, b) => a - b);
+  const ranges = [];
+  for (const idx of sorted) {
+    const last = ranges.at(-1);
+    if (last && idx === last.to + 1) last.to = idx;
+    else ranges.push({ from: idx, to: idx });
+  }
+  return ranges;
+}
+
+async function forkTree() {
+  const rings = await loadRings();
+  const immune = await immuneOverview();
+  const head = rings.at(-1) || null;
+  const recoveries = rings.filter((r) => r.ring_type === 'recovery').map((r) => ({
+    index: r.index,
+    ts: r.timestamp,
+    resumedFromHeight: r.payload?.resumed_from_height ?? null,
+    quarantined: r.payload?.quarantined || [],
+    scar: r.payload?.scar || null,
+    summary: truncate(String(r.payload?.summary || ''), 240),
+  }));
+  const grafts = rings.filter((r) => r.ring_type === 'imported').map((r) => ({
+    index: r.index,
+    ts: r.timestamp,
+    originAuthor: r.payload?.origin_author || null,
+    originIndex: r.payload?.origin_index ?? null,
+    originHash: r.payload?.origin_hash || null,
+    originPack: r.payload?.origin_pack || null,
+    trust: r.payload?.trust || null,
+    summary: truncate(String(r.payload?.summary || ''), 240),
+  }));
+  const synthesisForks = rings
+    .filter((r) => r.ring_type === 'synthesis' && Array.isArray(r.payload?.considered_forks))
+    .slice(-12)
+    .map((r) => ({
+      index: r.index,
+      ts: r.timestamp,
+      summary: truncate(String(r.payload?.summary || ''), 200),
+      chosen: r.payload?.chosen_perspective || null,
+      forks: (r.payload.considered_forks || []).slice(0, 10).map((f) => ({
+        perspective: f.perspective, kind: f.kind, visits: f.visits, value: f.value,
+      })),
+    }));
+  const ledger = await readLedgerEvents();
+  const exchanges = ledger
+    .filter((ev) => ev.kind === 'export' || ev.kind === 'import')
+    .map((ev) => ({ kind: ev.kind, ts: ev.ts, pack: ev.pack || null, author: ev.author || null, rings: ev.rings ?? ev.sealed ?? null, price: ev.price ?? null }));
+  const epochs = rings.filter((r) => r.ring_type === 'epoch');
+  return {
+    head: head ? { index: head.index, hash: head.ring_hash, ts: head.timestamp } : null,
+    rings: rings.length,
+    quarantineBranches: contiguousRanges(immune.quarantine).map((range) => {
+      const recovery = recoveries.find((rec) => (rec.quarantined || []).includes(range.from));
+      return { ...range, scarId: recovery?.scar?.id || null, recoveryRing: recovery?.index ?? null, resumedFromHeight: recovery?.resumedFromHeight ?? null };
+    }),
+    recoveries,
+    grafts,
+    synthesisForks,
+    exchanges,
+    epochCount: epochs.length,
+    latestEpoch: epochs.at(-1)?.index ?? null,
+    checkpoints: (await readJsonlSafe(path.join(timechainRoot, 'chain', 'checkpoints.jsonl'))).map((c) => c.index),
+  };
+}
+
+async function readJsonlSafe(file) {
+  if (!fsSync.existsSync(file)) return [];
+  const text = await fs.readFile(file, 'utf8');
+  return text.split(/\r?\n/).filter(Boolean).map((line) => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(Boolean);
+}
+
+// ---- Mutations: the owner's hands on their own blockspace ---- //
+// Every mutation requires either the paired bridge token (remote page) or a
+// trusted local direct request — and is serialized through one queue because
+// the skill's writers assume a single writer per chain root.
+
+function requireMutationAuth(req) {
+  if (bridgeRecord(req)) return;
+  if (isTrustedLocalDirectRequest(req) && !isRemoteOrigin(req)) return;
+  throw httpError('Mutations require a paired bridge (enter the pairing code first).', 401);
+}
+
+async function mutateViaCli(scriptName, args, { timeout = PY_MUTATE_TIMEOUT_MS } = {}) {
+  const run = await enqueueMutation(() => runSkillCli(scriptName, args, { timeout }));
+  const parsed = parseMaybeJson(run.stdout);
+  if (!run.ok) {
+    const detail = (run.stderr || run.stdout || run.message || '').trim().slice(0, 600);
+    throw httpError(detail || `${scriptName} ${args[0]} failed.`, 422);
+  }
+  return { ok: true, result: parsed ?? run.stdout.trim(), stderr: run.stderr?.trim() || '' };
+}
+
+function requireRingIndex(value, name = 'ring') {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) throw httpError(`${name} must be a non-negative ring index.`);
+  return n;
+}
+
+function cleanMemo(value, cap = 400) {
+  return String(value || '').replace(/[\r\n]+/g, ' ').slice(0, cap);
+}
+
+async function handleCphyMutation(req, url) {
+  requireMutationAuth(req);
+  const pendingMatch = url.pathname.match(/^\/api\/cphy\/pending\/([0-9a-f]{6,64})\/(approve|reject)$/);
+  if (pendingMatch) {
+    return mutateViaCli('cphy.py', [pendingMatch[2], pendingMatch[1]]);
+  }
+  if (url.pathname === '/api/cphy/lock') {
+    const body = await jsonBody(req);
+    const op = body.op === 'shadow' ? 'shadow' : 'basin';
+    const amount = Number(body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) throw httpError('amount must be a positive number of CPHY.');
+    const args = ['lock', op, '--amount', String(amount), '--memo', cleanMemo(body.memo)];
+    if (body.match) {
+      args.push('--match', String(body.match).slice(0, 200));
+    } else {
+      args.push('--from', String(requireRingIndex(body.from, 'from')), '--to', String(requireRingIndex(body.to, 'to')));
+    }
+    return mutateViaCli('cphy.py', args);
+  }
+  if (url.pathname === '/api/cphy/release') {
+    const body = await jsonBody(req);
+    const lockId = String(body.lockId || '').trim();
+    if (!/^[0-9a-f]{6,32}$/.test(lockId)) throw httpError('lockId must be a lock id from the active locks table.');
+    return mutateViaCli('cphy.py', ['release', lockId]);
+  }
+  if (url.pathname === '/api/cphy/etch-recall-n') {
+    const body = await jsonBody(req);
+    const n = Number(body.n);
+    if (!Number.isInteger(n) || n < 0 || n > 64) throw httpError('n must be an integer 0-64.');
+    return mutateViaCli('cphy.py', ['etch', 'n', '--set', String(n)]);
+  }
+  if (url.pathname === '/api/cphy/target') {
+    const body = await jsonBody(req);
+    const from = requireRingIndex(body.from, 'from');
+    const to = requireRingIndex(body.to ?? body.from, 'to');
+    if (to < from || to - from > 32) throw httpError('Register at most 33 rings per call (from <= to).');
+    return mutateViaCli('cphy.py', ['onchain', 'target', '--from', String(from), '--to', String(to)]);
+  }
+  return null;
+}
+
+async function handlePackMutation(req, url) {
+  requireMutationAuth(req);
+  if (url.pathname === '/api/pack/export') {
+    const body = await jsonBody(req);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const packsDir = ensureInsideRoot(path.join(timechainRoot, 'chain', 'packs'));
+    await fs.mkdir(packsDir, { recursive: true });
+    const outPath = path.join(packsDir, `pack-${stamp}.json`);
+    const args = ['export-pack', '--out', outPath, '--memo', cleanMemo(body.memo)];
+    if (body.match) {
+      args.push('--match', String(body.match).slice(0, 200));
+    } else {
+      args.push('--from', String(requireRingIndex(body.from, 'from')), '--to', String(requireRingIndex(body.to, 'to')));
+    }
+    if (body.price != null && Number(body.price) > 0) args.push('--price', String(Number(body.price)));
+    if (body.expires) args.push('--expires', String(body.expires).slice(0, 40));
+    if (body.grantTo) args.push('--grant-to', cleanMemo(body.grantTo, 80));
+    const outcome = await mutateViaCli('cphy.py', args);
+    let pack = null;
+    try {
+      const raw = await fs.readFile(outPath, 'utf8');
+      if (raw.length <= 4 * 1024 * 1024) pack = JSON.parse(raw);
+    } catch {
+      pack = null;
+    }
+    return { ...outcome, packPath: outPath, pack };
+  }
+  if (url.pathname === '/api/pack/import') {
+    const body = await jsonBody(req, MAX_PACK_BODY_BYTES);
+    const pack = body.pack;
+    if (!pack || typeof pack !== 'object' || !Array.isArray(pack.rings)) {
+      throw httpError('Body must carry {pack} — a Cypher Tempre pack object with rings[].');
+    }
+    const packsDir = ensureInsideRoot(path.join(timechainRoot, 'chain', 'packs'));
+    await fs.mkdir(packsDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const inPath = path.join(packsDir, `import-${stamp}.json`);
+    await fs.writeFile(inPath, JSON.stringify(pack));
+    return mutateViaCli('cphy.py', ['import-pack', inPath]);
+  }
+  return null;
+}
+
+async function handleChainMutation(req, url) {
+  requireMutationAuth(req);
+  if (url.pathname === '/api/ring/seal') {
+    const body = await jsonBody(req);
+    const summary = String(body.summary || '').trim();
+    if (summary.length < 8) throw httpError('A sealed annotation needs a real summary (8+ chars).');
+    if (summary.length > 4000) throw httpError('Summary too long (4000 chars max).');
+    const type = /^[a-z][a-z-]{1,30}$/.test(String(body.type || '')) ? String(body.type) : 'annotation';
+    return mutateViaCli('recall_cli.py', ['seal', summary, '--type', type]);
+  }
+  if (url.pathname === '/api/immune/forget-scar') {
+    const body = await jsonBody(req);
+    const id = String(body.id || '').trim();
+    if (!/^scar\d{1,6}$/.test(id)) throw httpError('id must look like scarN.');
+    return mutateViaCli('immune.py', ['forget-scar', '--id', id]);
+  }
+  if (url.pathname === '/api/immune/rollback') {
+    const body = await jsonBody(req);
+    const height = requireRingIndex(body.height, 'height');
+    if (String(body.confirm || '') !== `QUARANTINE ${height}`) {
+      throw httpError(`Confirmation phrase required: "QUARANTINE ${height}". Ring ${height} is treated as the FIRST BAD ring — it and everything after it are quarantined (kept on disk as a scar, excluded from the active self).`, 428);
+    }
+    const lesson = cleanMemo(body.lesson || 'dashboard-initiated rollback', 400);
+    return mutateViaCli('immune.py', ['rollback', '--height', String(height), '--lesson', lesson]);
+  }
+  return null;
+}
+
+async function jsonBody(req, limitBytes = MAX_JSON_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_JSON_BODY_BYTES) {
+    if (size > limitBytes) {
       throw httpError('Request body too large.', 413);
     }
     chunks.push(chunk);
@@ -913,6 +1626,44 @@ async function handle(req, res) {
     if (blobMatch) {
       sendJson(res, 200, await blobPreview(blobMatch[1]));
       return;
+    }
+    if (url.pathname === '/api/cphy/overview') {
+      sendJson(res, 200, await cphyOverview());
+      return;
+    }
+    if (url.pathname === '/api/cphy/blocks') {
+      sendJson(res, 200, await cphyBlocks());
+      return;
+    }
+    if (url.pathname === '/api/cphy/ledger') {
+      sendJson(res, 200, { events: await readLedgerEvents() });
+      return;
+    }
+    if (url.pathname === '/api/retrieval/history') {
+      sendJson(res, 200, await retrievalHistory(url));
+      return;
+    }
+    if (url.pathname === '/api/retrieval/preview' && req.method === 'POST') {
+      sendJson(res, 200, await retrievalPreview(await jsonBody(req)));
+      return;
+    }
+    if (url.pathname === '/api/immune') {
+      sendJson(res, 200, await immuneOverview());
+      return;
+    }
+    if (url.pathname === '/api/forks') {
+      sendJson(res, 200, await forkTree());
+      return;
+    }
+    if (req.method === 'POST' && (url.pathname.startsWith('/api/cphy/') || url.pathname.startsWith('/api/pack/')
+        || url.pathname === '/api/ring/seal' || url.pathname.startsWith('/api/immune/'))) {
+      const outcome = (await handleCphyMutation(req, url))
+        ?? (await handlePackMutation(req, url))
+        ?? (await handleChainMutation(req, url));
+      if (outcome) {
+        sendJson(res, 200, outcome);
+        return;
+      }
     }
     if (url.pathname.startsWith('/api/')) {
       sendJson(res, 404, { error: 'Not found.' });
