@@ -131,6 +131,22 @@ Timechain your single source of truth, turn OpenClaw memory search off in `openc
 - Active memory is a separate plugin-owned feature; if you use it, disable it under
   `plugins.entries.active-memory` as documented by your OpenClaw version.
 
+**Also edit the workspace bootstrap files.** The config change turns off memory *recall*;
+the workspace `AGENTS.md` (`~/.openclaw/workspace/AGENTS.md`, loaded into the system prompt
+every session) may still instruct the agent to *write* memory files. Remove its
+memory-keeping section so the two doctrines don't compete — but distinguish memory from
+state before deleting:
+
+- **Recall memory** (remembering what happened — notes, learnings, "save important
+  context") is the Timechain's job now. Remove these instructions.
+- **Operational state** (e.g. `memory/heartbeat-state.json` heartbeat bookkeeping) is
+  ephemeral scratch data, not memory. Keep or relocate those references; deleting them
+  breaks the feature that uses them.
+
+Have the agent make (or at least seal) the edit itself as a turn ring, so the
+workspace-doctrine change is on its chain and future recall can cite why the memory
+section disappeared.
+
 Restart the gateway after editing (`openclaw gateway restart`).
 
 > Verified against OpenClaw docs as of June 2026 (`docs.openclaw.ai/reference/memory-config`);
