@@ -1763,8 +1763,8 @@ function requireMutationAuth(req) {
   throw httpError('Mutations require a paired bridge (enter the pairing code first).', 401);
 }
 
-async function mutateViaCli(scriptName, args, { timeout = PY_MUTATE_TIMEOUT_MS } = {}) {
-  const run = await enqueueMutation(() => runSkillCli(scriptName, args, { timeout }));
+async function mutateViaCli(scriptName, args, { timeout = PY_MUTATE_TIMEOUT_MS, env = {} } = {}) {
+  const run = await enqueueMutation(() => runSkillCli(scriptName, args, { timeout, env }));
   const parsed = parseMaybeJson(run.stdout);
   if (!run.ok) {
     const detail = (run.stderr || run.stdout || run.message || '').trim().slice(0, 600);
@@ -1976,7 +1976,11 @@ async function handleRegistryMutation(req, url) {
       // --function=/--code= forms: argparse never misreads the value as a flag.
       const args = ['propose-op', name, '--kind', kind, `--function=${func}`, '--category', category, `--code=${code}`];
       if (seedTerms.length) args.push('--seed-terms', ...seedTerms);
-      outcome = await mutateViaCli('cambium.py', args);
+      // On forks where autoexec is armed (CT_AUTOEXEC default on), propose-op
+      // routes to autoexec and the pasted code would EXECUTE from birth turn —
+      // pin it off so the dashboard paste lane stays inert as promised above;
+      // the agent's own in-loop autoexec is unaffected.
+      outcome = await mutateViaCli('cambium.py', args, { env: { CT_AUTOEXEC: '0' } });
     } else {
       const inputText = [name, ...seedTerms, func].join(' ').slice(0, 600);
       const args = ['grow', inputText, '--mode', 'sprout', '--kind', kind, `--name=${name}`];
