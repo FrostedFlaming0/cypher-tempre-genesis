@@ -32,6 +32,21 @@ https://github.com/FrostedFlaming0/cypher-tempre-plugin (`openclaw/`). They
 compose: the window plugin keeps the agent wearing the skill and the context
 bounded; the enforcement plugin holds turns open until a ring seals.
 
+For the full experience, install both plugins:
+
+```bash
+# 1. Enforcement (turn-level blocking) — from this bundle
+openclaw plugins install ~/.openclaw/workspace/skills/cypher-tempre-self-model/openclaw-plugin
+openclaw config set 'plugins.entries.cypher-tempre-enforcement.hooks.allowConversationAccess' true --strict-json
+
+# 2. Wearing/window (context engine + primer auto-append) — from separate repo
+# See: https://github.com/FrostedFlaming0/cypher-tempre-plugin (openclaw/)
+```
+
+```bash
+openclaw gateway restart
+```
+
 The strongest OpenClaw path is the native plugin included in this bundle. It
 uses typed OpenClaw plugin hooks: `before_prompt_build` marks the turn, and
 `before_agent_finalize` requests one more model pass if `enforce.py stop-check`
@@ -79,6 +94,24 @@ openclaw gateway restart
 ```
 
 See `openclaw-plugin/README.md`.
+
+### If you pin `plugins.allow`
+
+OpenClaw's gateway warning suggests pinning trust via `plugins.allow`. That
+list is an **exclusive allow-list**: once it is non-empty, any discovered
+(non-bundled) plugin missing from it is **silently skipped at load** —
+including this enforcement plugin and the wearing/window plugin. If you pin
+it, include every Cypher Tempre plugin id you use, plus any other non-bundled
+plugins:
+
+```json5
+{ plugins: { allow: ["cypher-tempre", "cypher-tempre-enforcement"] } }
+```
+
+Leaving `plugins.allow` empty is also fine — the warning is informational. The
+failure mode of an incomplete list is silent: the agent simply stops wearing
+the skill (no primer, no per-turn reminder, no pinned window, no seal
+enforcement) with no error.
 
 Fallback for runtimes where plugins are unavailable:
 
