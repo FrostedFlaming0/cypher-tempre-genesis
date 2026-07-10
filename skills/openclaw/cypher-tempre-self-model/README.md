@@ -24,6 +24,14 @@ python3 timechain.py verify
 
 ## OpenClaw Enforcement
 
+Two DISTINCT plugins exist for OpenClaw — don't conflate them. This bundle
+ships `cypher-tempre-enforcement` (the turn-level enforcement spine, below).
+The separate **wearing/window plugin** (`cypher-tempre`: pinned-window context
+engine + primer/reminder auto-append) lives in its own repository:
+https://github.com/FrostedFlaming0/cypher-tempre-plugin (`openclaw/`). They
+compose: the window plugin keeps the agent wearing the skill and the context
+bounded; the enforcement plugin holds turns open until a ring seals.
+
 The strongest OpenClaw path is the native plugin included in this bundle. It
 uses typed OpenClaw plugin hooks: `before_prompt_build` marks the turn, and
 `before_agent_finalize` requests one more model pass if `enforce.py stop-check`
