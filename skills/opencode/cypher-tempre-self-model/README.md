@@ -44,30 +44,7 @@ cp <cypher-tempre-plugin>/opencode/cypher-tempre.js ~/.config/opencode/plugins/
 
 Pair it with `"compaction": {"auto": false}` in `opencode.jsonc` so the
 built-in summarizer never races the window engine. The plugin's knobs
-(`CT_OC_*`) are documented in its own README. Plugin ≥ the version that
-stamps `turn_trajectory` is needed for trajectory-bound training export
-(below).
-
-## Training-data collection on OpenCode
-
-OpenCode stores sessions in **sqlite** (`~/.local/share/opencode/opencode.db`,
-`message` + `part` tables), not jsonl — `training.py` speaks that format
-natively:
-
-```bash
-# mine failure->repair transitions from an OpenCode session
-python3 training.py mine ~/.local/share/opencode/opencode.db \
-    --format opencode --session-id ses_… --out repairs.jsonl
-
-# bind turn rings to their session slice (the plugin stamps this per turn;
-# env is the manual fallback)
-export CT_SESSION_DB=~/.local/share/opencode/opencode.db
-export CT_SESSION_ID=ses_…
-```
-
-`training.py export --with-trajectory` then resolves each ring's
-`trajectory_ref` into its redacted tool-event slice. Everything else in
-`TRAINING.md` applies unchanged.
+(`CT_OC_*`) are documented in its own README.
 
 ## What's in the bundle
 

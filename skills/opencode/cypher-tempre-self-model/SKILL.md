@@ -283,70 +283,11 @@ This is a **persistent memory system**, so be deliberate about what enters it:
   built-in expiry. Do not seal secrets, credentials, or PII a user would not
   want retained indefinitely; if such content arrives, summarize around it rather than
   committing it verbatim, or suggest the user pause for that exchange.
-- **On this fork, `recall.py turn` persists the request verbatim** (`CT_STORE_INPUT`, ON by
-  default): a cleanly-screened `--input` is secret-redacted (Continuum's redactor), capped at
-  `CT_STORE_INPUT_MAX` chars (default 4000), and sealed as `payload.input` beside the summary —
-  so a turn ring carries the full instruction-response pair (the post-training use case).
-  Tainted-admitted or unscreened input is never persisted, and a REJECT refusal record never
-  carries a request payload (no-launder). Set `CT_STORE_INPUT=0` to restore paraphrase-only
-  retention; the PII discipline above applies with full force while it is on.
-- **With `CT_CAPTURE_REJECTS=1` (OFF by default), turn rings also retain rejected
-  candidates** — secret-redacted, capped at `CT_REJECT_MAX` chars each (default 2000) —
-  and rings may carry `verification` results and a `trajectory_ref` pointer to the
-  harness session log (`CT_TRAJECTORY_REF=0` opts out). The same no-launder rule holds:
-  a covenant/consistency REJECT's content is never persisted, only quality refusals
-  (see *The chain as training data*). The PII discipline applies to rejects doubly —
-  they are by definition unvetted content.
 - **Nothing leaves the machine by default.** The engine is stdlib-only and the default
   embedder is local (`hashing`). The **optional** OpenAI / Voyage / sentence-transformers
   embedders (OFF by default; need a key or extra library) transmit the embedded text — which
   may include memory chunks or source excerpts — to that third party. Keep the local embedder
   unless the user has accepted that transmission.
-
-## The chain as training data — process capture & export (fork)
-
-Full operator directions live in `TRAINING.md` (same directory); this section is the
-in-loop summary. Input→output pairs behavior-clone the ARTIFACT; training a coding agent
-needs the PROCESS — tool calls, mistakes, recovery. The doctrine is **bind, don't copy** (the
-harness session log already holds the full trajectory; rings carry judgment +
-attestation) and **mistakes train as negatives** (preference pairs), never as cloned
-behavior. Four surfaces in `training.py`:
-
-```
-python3 training.py mine <session.jsonl> --format claude-code|openclaw [--out t.jsonl]
-python3 training.py run-verified --out verif.json -- <test command>
-python3 recall.py turn "<thought>" --verification-file verif.json [--rejected-file r.json]
-python3 training.py export --root <chain> --out rows.jsonl [--with-trajectory]
-                    [--strip-skill-calls] [--include-self-report] [--rings LO HI]
-```
-
-- **Rejects (`CT_CAPTURE_REJECTS=1`, OFF by default).** Three channels, all
-  secret-redacted and capped (`CT_REJECT_MAX`): (1) a quality-refused `poq.py audit`
-  candidate is buffered (`chain/pending_rejects.json`, keyed to the turn mark) and
-  harvested by this turn's seal; (2) the uncertainty-led reseal captures the original
-  confident form + its verdict automatically (the reseal pair); (3) `--rejected-file`
-  attaches failed attempts with their test results. **No-launder:** a REJECT
-  (covenant/consistency) refusal's content is never persisted through any channel.
-  Rejects are **fetch-only evidence**: excluded from grep/retrieve/label surfaces,
-  hidden on `fetch` unless `--with-rejects`, rendered clearly labeled REJECTED —
-  never ground a claim on one.
-- **Verification is measured, not claimed.** `run-verified` executes the command
-  itself and writes `{command, exit_code, output_sha256, provenance: harness}`.
-  Inline `--verification` JSON is stamped `self-report` and the exporter filters it
-  by default — post-training on claimed test results is the exact failure the
-  conscience exists to prevent.
-- **`trajectory_ref` (ON by default, `CT_TRAJECTORY_REF=0` opts out).** The mark hook
-  stamps `{session_file, session_id, line_start}` at turn start; the seal binds the
-  ring to its trajectory slice. Runtimes without the hook can export
-  `CT_SESSION_FILE`/`CT_SESSION_ID`. `export --with-trajectory` resolves the pointer
-  into a redacted, hashed event slice; `--strip-skill-calls` drops skill-machinery
-  calls (default keeps them — a model that will wear the skill learns the loop).
-- **Export** emits training rows (`input`, `accepted`, PoQ `scores`, `rejected[]`,
-  `verification`, trajectory) plus **preference pairs** (`prompt`, `chosen`,
-  `rejected`, `margin` from mean PoQ deltas) to `<out>.pairs.jsonl`; `mine` harvests
-  failure→repair transitions from any session log with structured-error-first
-  detection (read-tool results are exempt from content matching; partial shell noise
-  is excluded unless `--include-partial`).
 
 ## Growth (Cambium) — when you hit your limits
 
@@ -1236,7 +1177,6 @@ python3 immune.py forget-scar --id scar1                # retire a scar record (
 | `learner.py` | the decisions learner — trained scorer + calibrated appetite/thresholds, sealed operators, rollback |
 | `faculties.py` | gift — export/import faculty packs with provenance (tools travel, histories don't) |
 | `replay.py` | economy — the antecedent cache: match/confirm/accept, calibrated threshold, depth guard |
-| `training.py` | harvest — the chain as a post-training dataset: reject capture, provenance-stamped verification, trajectory binding, mine failure→repair, export rows + preference pairs |
 | `guard.py` | microscope — span-level grounding; FORCE_UNCERTAINTY names the fabricated clause |
 | `lens.py` | the representation learner — trainable projection over the frozen embedder, sealed operators |
 | `extractor.py` | the extractor learner — distilled labeler, confidence routing, teach pairs, falling annotation cost |
@@ -1273,7 +1213,6 @@ policy.py          show                                            (covenant tol
 learner.py         train [--adopt] | rollback | appetite | calibrate-poq | status   (the decisions learner)
 faculties.py       author | export | import [--dry-run] | show     (faculty packs: designed or grown; screened, deduped, provenance-sealed)
 replay.py          match | accept | reject | refresh | stats | calibrate   (answer from the chain when it already knows)
-training.py        mine | run-verified | export                    (process-data capture & training export; CT_CAPTURE_REJECTS, no-launder)
 guard.py           audit "<text>" [--embed]                         (span-level grounding report)
 lens.py            train [--adopt] | status | rollback | sim        (representation learner; recall --provider lens)
 extractor.py       label | teach | train [--adopt] | rollback | status  (distilled labeler; routing rate falls)

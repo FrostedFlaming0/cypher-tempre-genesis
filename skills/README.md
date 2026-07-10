@@ -11,7 +11,7 @@ registries, plus a runtime-specific `SKILL.md`.
 | OpenClaw skill version | `openclaw/cypher-tempre-self-model/` | OpenClaw compatible bundle with OpenClaw frontmatter, `.clawhubignore`, native plugin enforcement, and self-enforcement fallback. |
 | Hermes skill version | `hermes/cypher-tempre-self-model/` | Hermes-discoverable bundle with explicit mark/seal/stop-check self-enforcement plus Hermes subagent notes. |
 | NanoClaw skill version | `nanoclaw/cypher-tempre-self-model/` | NanoClaw-discoverable bundle copied from the OpenClaw implementation. |
-| OpenCode skill version | `opencode/cypher-tempre-self-model/` | OpenCode bundle: install to `~/.opencode/skills/` (one chain per agent — see its README's isolation warning); wearing rides the separate [cypher-tempre-plugin](https://github.com/FrostedFlaming0/cypher-tempre-plugin) repo; `training.py` reads OpenCode's sqlite sessions natively (`--format opencode`). |
+| OpenCode skill version | `opencode/cypher-tempre-self-model/` | OpenCode bundle: install to `~/.opencode/skills/` (one chain per agent — see its README's isolation warning); wearing rides the separate [cypher-tempre-plugin](https://github.com/FrostedFlaming0/cypher-tempre-plugin) repo. |
 
 ## Shared file set
 

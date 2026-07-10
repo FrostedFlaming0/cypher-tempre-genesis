@@ -2,7 +2,7 @@
 
 ## FrostedFlaming0 Fork
 
-### OpenCode bundle + sqlite trajectory support — 2026-07-08 (v3.30.0)
+### OpenCode bundle — 2026-07-08 (v3.30.0)
 
 Sixth runtime bundle: `skills/opencode/cypher-tempre-self-model/` (byte-identical
 engine, enforced by the selftest parity check). Its README leads with the
@@ -11,88 +11,9 @@ point `CT_OC_SKILL_DIR` at another agent's install — and cross-references the
 separate plugin repository (cypher-tempre-plugin) for the wearing/window
 plugin: plugins are host integration, this repo is the mind.
 
-Engine (all bundles): `training.py` reads OpenCode's sqlite session store
-natively — `load_events_opencode` joins the `message`+`part` tables (tool
-parts are self-contained; `status == "error"` is the structured channel),
-`mine --format opencode [--session-id]`, trajectory refs carry
-`{session_db, session_id, message_id_start}` with the stamped user message's
-rowid as the slice boundary, and `CT_SESSION_DB`/`CT_SESSION_ID` join the env
-binding fallbacks. Measured live: 286 tool events, 14 failures, 5 repairs
-across the real opencode.db.
-
 Also: the openclaw README now distinguishes the TWO OpenClaw plugins (the
 bundled `cypher-tempre-enforcement` spine vs the plugin repo's
-`cypher-tempre` window engine — previously easy to conflate). 1 new test
-(18 total in `tests/test_training.py`).
-
-### Export enrichment: declared evidence, judgment + utility signals — 2026-07-08 (v3.29.1)
-
-Fixes the `used_rings` export bug found by a live agent review (the exporter
-read `payload.labels.used_rings`, a field that never existed): `recall.seal`
-now persists the DECLARED `--used-rings` list on the ring payload, and export
-reads it with a fallback to the gate's overlap-cited rings
-(`used_rings_declared` distinguishes the two). Export rows also gain the
-judgment and utility layers (the 2026-07-07 signal-table doctrine): `at_risk`
-(+`at_risk_auto`), the `poq_verdict` struct (decision, cited rings,
-span-grounding credit), `labels` (faculty tags — the turn's mental-state
-record: senses, modalities, keywords, entities, salience, dissonance),
-`prev_hash` lineage, and `replay`/`falsified` utility annotations joined from
-`chain/replay.json` and telemetry falsify events ("which answers were actually
-useful in practice"). 2 new tests (17 total in `tests/test_training.py`).
-
-### The chain as training data: process capture & export — 2026-07-08
-
-New `training.py` (v3.29.0): the process-data layer scoped in sealed rings
-3024/3026/3033/3036. Input→output pairs behavior-clone the artifact; training a
-coding agent needs the process — tool calls, mistakes, recovery — so the chain
-now captures judgment and binds trajectories, and exports both.
-
-- **Reject capture** (`CT_CAPTURE_REJECTS=1`, OFF by default): quality-refused
-  candidates persist on the turn ring via three channels — `poq.py audit`
-  refusals buffered turn-keyed in `chain/pending_rejects.json` and harvested by
-  the seal; the uncertainty-led reseal capturing the original confident form
-  (the automatic preference pair); explicit `--rejected-file` for test-failed
-  attempts. No-launder holds everywhere: a covenant/consistency REJECT's
-  content is never persisted, and the refusal record carries no process data.
-  Rejects are fetch-only (`fetch --with-rejects`, labeled REJECTED), excluded
-  from the grep/retrieve/label surface via `recall.block_text`, secret-redacted,
-  capped at `CT_REJECT_MAX` (default 2000).
-- **Provenance-stamped verification**: `training.py run-verified -- <cmd>`
-  executes the command and writes `{command, exit_code, output_sha256,
-  provenance: harness}`; `recall.py turn --verification-file` attaches it.
-  Inline `--verification` is stamped `self-report` and filtered from export by
-  default — test results are measured, never typed.
-- **Trajectory binding** (`CT_TRAJECTORY_REF`, ON): the mark hook stamps
-  `{session_file, session_id, line_start}` at turn start; the seal binds the
-  ring to its harness-log slice (bind, don't copy — rings stay lean).
-  `CT_SESSION_FILE`/`CT_SESSION_ID` env fallback for hook-less runtimes.
-- **Miner**: `training.py mine` harvests failure→repair transitions from
-  openclaw / Claude Code session logs — structured-error-first detection,
-  read-tool exemption, partial-noise override (measured on live corpora:
-  576 tool events → 22 failures → 11 resolved repairs).
-- **Export**: `training.py export` emits training rows (input, accepted, PoQ
-  scores, rejects, verification, redacted trajectory slice) and preference
-  pairs with PoQ-margin (`<out>.pairs.jsonl`); `--strip-skill-calls` for
-  general-coder training (default keeps the loop — a model that will wear the
-  skill learns the loop).
-- 15 new tests (`tests/test_training.py`); full selftest, smoke (106), and
-  gate-discrimination (12) pass across all five bundles.
-
-### Turn rings carry the instruction-response pair — 2026-07-07
-
-`recall.py turn` now persists the screened request as `payload.input` beside
-`payload.summary` (`CT_STORE_INPUT`, ON by default on this fork), closing the
-training-pair gap: the one-call wrapper consumed `--input` operationally
-(immune screen, recall probe, guard tripwire) but never sealed it, so 0 of 604
-turn rings carried the request the summary answered — while the hand-driven
-loop's documented convention (`poq.py seal --context "<request>"`) always
-persisted it. Mechanics: rides the `extra_payload` seam and merges AFTER the
-gate evaluates (never influences the PoQ verdict); secret-redacted via
-Continuum's `redact_secrets`; capped at `CT_STORE_INPUT_MAX` chars (default
-4000). Discipline: only a cleanly-screened input persists — tainted-admitted
-or unscreened input never does, the uncertainty-led reseal carries it (an
-honest turn), and the REJECT refusal record never does (no-launder).
-`CT_STORE_INPUT=0` restores paraphrase-only retention.
+`cypher-tempre` window engine — previously easy to conflate).
 
 ### Merged upstream v3.28.0 — 2026-07-06
 
