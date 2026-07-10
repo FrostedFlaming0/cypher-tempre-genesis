@@ -582,7 +582,16 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
     validator = (modality_ops._isolated_autoexec_op if modality_ops.autoexec_mode() == "isolated"
                  else modality_ops._compile_autoexec_op)
     if validator(code) is None:
-        return {"ok": False, "reason": "op code did not compile into a usable op(text, context) -> dict"}, None
+        # Say exactly what shape is expected: the observed live failure mode is a
+        # model authoring `def sense(...)`/custom params, then burning a round
+        # reading engine source to discover the contract.
+        return {"ok": False, "reason": (
+            "op code did not compile into a usable op. Required contract:\n"
+            "  def op(text, context=\"\"):\n"
+            "      ...\n"
+            "      return {\"<signal>\": <value>}\n"
+            "(function must be named `op`, take (text, context), return a dict; "
+            "stdlib `re` and the `mo` helper namespace are available)")}, None
     # Snapshot the registries so a failed audit seal rolls the whole activation back:
     # no op enters the every-turn execution surface without its sealed ring.
     reg_snapshots = {p: (p.read_bytes() if p.is_file() else None)
@@ -662,6 +671,17 @@ def autoexec(root: Path, name: str, code: str, kind: str = "sense", function: st
     try:
         import enforce
         enforce.clear_op_need(root, f"authored op '{name}'")
+    except Exception:
+        pass
+    # Re-anchor the registry epoch: autoexec mutated emergent.json/grown.json/
+    # autoexec_ops.json AFTER the last epoch ring, and timechain.verify checks
+    # live registries against that anchor — without this, every successful
+    # autoexec after an epoch left the chain failing verify with an
+    # 'unsealed mutation' on emergent.json (first observed live: opencode
+    # chain rings 285/287-292). Same pattern as wake/prune.
+    try:
+        import epochs as _epochs
+        _epochs.seal_epoch(root, reason=f"autoexec: {name}")
     except Exception:
         pass
     return {"ok": True, "name": name, "kind": k, "promoted_to_id": new_id,
